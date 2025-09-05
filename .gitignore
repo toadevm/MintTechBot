@@ -1,0 +1,15 @@
+node_modules/
+.env
+*.log
+database.sqlite
+.DS_Store
+dist/
+build/
+
+# Hardhat
+cache/
+artifacts/
+typechain-types/
+coverage/
+coverage.json
+deployments.json

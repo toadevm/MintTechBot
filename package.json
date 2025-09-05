@@ -1,0 +1,47 @@
+{
+  "name": "candy_rush",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node test.js",
+    "test-setup": "node test.js",
+    "compile": "hardhat compile",
+    "test-contracts": "hardhat test",
+    "deploy": "hardhat run scripts/deploy.js --network sepolia",
+    "deploy-nft": "hardhat run scripts/deploy-nft.js --network sepolia",
+    "deploy-local": "hardhat run scripts/deploy.js --network hardhat",
+    "deploy-nft-local": "hardhat run scripts/deploy-nft.js --network hardhat",
+    "verify": "hardhat verify --network sepolia",
+    "clean": "hardhat clean",
+    "coverage": "hardhat coverage",
+    "node": "hardhat node",
+    "mint": "node mint-test.js",
+    "mint-batch": "node mint-test.js batch",
+    "mint-help": "node mint-test.js --help"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.4.0",
+    "alchemy-sdk": "^3.6.3",
+    "body-parser": "^2.2.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "ethers": "^6.15.0",
+    "express": "^5.1.0",
+    "sqlite3": "^5.1.7",
+    "telegraf": "^4.16.3",
+    "winston": "^3.17.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^6.1.0",
+    "@nomicfoundation/hardhat-verify": "^2.1.1",
+    "@typechain/ethers-v6": "^0.5.1",
+    "@typechain/hardhat": "^9.1.0",
+    "hardhat": "^2.26.3"
+  }
+}

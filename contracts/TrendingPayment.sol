@@ -2,13 +2,21 @@
 pragma solidity ^0.8.19;
 
 /**
- * @title TrendingPayment
- * @dev Simple contract to handle ETH payments for NFT trending promotion
- * @dev Designed for Sepolia testnet deployment
+ * @title MintTechBot
+ * @dev Smart contract to handle ETH payments for NFT trending promotion
+ * @dev Supports both normal and premium trending with different pricing tiers
  */
-contract TrendingPayment {
+contract MintTechBot {
     address public owner;
-    uint256 public baseFee; // Base fee in Wei (0.01 ETH = 10^16 Wei)
+    
+    // Pricing tiers for normal trending (in Wei)
+    mapping(uint256 => uint256) public normalTrendingFees;
+    
+    // Pricing tiers for premium trending (in Wei)  
+    mapping(uint256 => uint256) public premiumTrendingFees;
+    
+    // Valid duration options in hours
+    uint256[] public validDurations = [6, 12, 18, 24];
     
     struct Payment {
         address payer;
@@ -16,7 +24,9 @@ contract TrendingPayment {
         uint256 timestamp;
         uint256 duration; // Duration in hours
         string tokenAddress; // NFT contract address
+        bool isPremium; // Whether this is premium trending
         bool isActive;
+        bool processed; // Whether the payment has been processed by the bot
     }
     
     mapping(uint256 => Payment) public payments;
@@ -28,10 +38,12 @@ contract TrendingPayment {
         address indexed payer,
         string indexed tokenAddress,
         uint256 amount,
-        uint256 duration
+        uint256 duration,
+        bool isPremium
     );
     
     event PaymentExpired(uint256 indexed paymentId);
+    event FeesUpdated(string trendingType, uint256 duration, uint256 newFee);
     
     modifier onlyOwner() {
         require(msg.sender == owner, "Not the contract owner");
@@ -40,22 +52,35 @@ contract TrendingPayment {
     
     constructor() {
         owner = msg.sender;
-        baseFee = 0.01 ether; // 0.01 ETH base fee
+        
+        // Initialize normal trending fees (in Wei)
+        normalTrendingFees[6] = 0.0625 ether;   // 6hrs: 0.0625 ETH
+        normalTrendingFees[12] = 0.1125 ether;  // 12hrs: 0.1125 ETH
+        normalTrendingFees[18] = 0.151 ether;   // 18hrs: 0.151 ETH
+        normalTrendingFees[24] = 0.20 ether;    // 24hrs: 0.20 ETH
+        
+        // Initialize premium trending fees (in Wei)
+        premiumTrendingFees[6] = 0.125 ether;   // 6hrs: 0.125 ETH
+        premiumTrendingFees[12] = 0.225 ether;  // 12hrs: 0.225 ETH
+        premiumTrendingFees[18] = 0.32 ether;   // 18hrs: 0.32 ETH
+        premiumTrendingFees[24] = 0.40 ether;   // 24hrs: 0.40 ETH
     }
     
     /**
      * @dev Pay for trending promotion
      * @param tokenAddress The NFT contract address to promote
-     * @param duration Duration in hours (1-168, max 1 week)
+     * @param duration Duration in hours (6, 12, 18, or 24)
+     * @param isPremium Whether to use premium trending
      */
     function payForTrending(
         string memory tokenAddress,
-        uint256 duration
+        uint256 duration,
+        bool isPremium
     ) external payable returns (uint256 paymentId) {
-        require(duration >= 1 && duration <= 168, "Duration must be 1-168 hours");
+        require(isValidDuration(duration), "Invalid duration. Use 6, 12, 18, or 24 hours");
         require(bytes(tokenAddress).length == 42, "Invalid token address format");
         
-        uint256 requiredAmount = calculateFee(duration);
+        uint256 requiredAmount = getFee(duration, isPremium);
         require(msg.value >= requiredAmount, "Insufficient payment");
         
         paymentCounter++;
@@ -67,24 +92,140 @@ contract TrendingPayment {
             timestamp: block.timestamp,
             duration: duration,
             tokenAddress: tokenAddress,
-            isActive: true
+            isPremium: isPremium,
+            isActive: true,
+            processed: false
         });
         
         tokenPayments[tokenAddress].push(paymentId);
         
-        emit PaymentReceived(paymentId, msg.sender, tokenAddress, msg.value, duration);
+        emit PaymentReceived(paymentId, msg.sender, tokenAddress, msg.value, duration, isPremium);
         
         return paymentId;
     }
     
     /**
-     * @dev Calculate required fee based on duration
+     * @dev Receive function to accept plain ETH transfers
+     * Creates payment record for bot to match later
+     */
+    receive() external payable {
+        require(msg.value > 0, "Payment amount must be greater than 0");
+        
+        paymentCounter++;
+        uint256 paymentId = paymentCounter;
+        
+        payments[paymentId] = Payment({
+            payer: msg.sender,
+            amount: msg.value,
+            timestamp: block.timestamp,
+            duration: 0, // Will be set by bot when matched
+            tokenAddress: "", // Will be set by bot when matched
+            isPremium: false, // Will be set by bot when matched
+            isActive: false, // Only becomes active when processed by bot
+            processed: false
+        });
+        
+        emit PaymentReceived(paymentId, msg.sender, "", msg.value, 0, false);
+    }
+    
+    /**
+     * @dev Mark payment as processed and set details (called by bot)
+     * @param paymentId The payment ID to process
+     * @param tokenAddress The NFT contract address being promoted
+     * @param duration The duration in hours
+     * @param isPremium Whether this is premium trending
+     */
+    function processSimplePayment(
+        uint256 paymentId, 
+        string memory tokenAddress, 
+        uint256 duration,
+        bool isPremium
+    ) external onlyOwner {
+        require(paymentId <= paymentCounter && paymentId > 0, "Invalid payment ID");
+        require(!payments[paymentId].processed, "Payment already processed");
+        require(isValidDuration(duration), "Invalid duration. Use 6, 12, 18, or 24 hours");
+        require(bytes(tokenAddress).length == 42, "Invalid token address format");
+        
+        payments[paymentId].tokenAddress = tokenAddress;
+        payments[paymentId].duration = duration;
+        payments[paymentId].isPremium = isPremium;
+        payments[paymentId].isActive = true;
+        payments[paymentId].processed = true;
+        
+        tokenPayments[tokenAddress].push(paymentId);
+        
+        emit PaymentReceived(paymentId, payments[paymentId].payer, tokenAddress, payments[paymentId].amount, duration, isPremium);
+    }
+    
+    /**
+     * @dev Get recent unprocessed payments (for bot to match)
+     * @param since Timestamp to search from
+     * @param maxResults Maximum number of results to return
+     */
+    function getUnprocessedPayments(
+        uint256 since, 
+        uint256 maxResults
+    ) external view returns (
+        uint256[] memory paymentIds,
+        address[] memory payers,
+        uint256[] memory amounts,
+        uint256[] memory timestamps
+    ) {
+        // Count unprocessed payments since timestamp
+        uint256 count = 0;
+        for (uint256 i = paymentCounter; i > 0 && count < maxResults; i--) {
+            if (payments[i].timestamp >= since && !payments[i].processed && payments[i].amount > 0) {
+                count++;
+            }
+        }
+        
+        // Create arrays with exact size
+        paymentIds = new uint256[](count);
+        payers = new address[](count);
+        amounts = new uint256[](count);
+        timestamps = new uint256[](count);
+        
+        // Fill arrays
+        uint256 index = 0;
+        for (uint256 i = paymentCounter; i > 0 && index < count; i--) {
+            if (payments[i].timestamp >= since && !payments[i].processed && payments[i].amount > 0) {
+                paymentIds[index] = i;
+                payers[index] = payments[i].payer;
+                amounts[index] = payments[i].amount;
+                timestamps[index] = payments[i].timestamp;
+                index++;
+            }
+        }
+    }
+    
+    /**
+     * @dev Get fee for specific duration and trending type
      * @param duration Duration in hours
+     * @param isPremium Whether premium trending is requested
      * @return Required fee in Wei
      */
-    function calculateFee(uint256 duration) public view returns (uint256) {
-        // Base fee + 0.001 ETH per hour
-        return baseFee + (duration * 0.001 ether);
+    function getFee(uint256 duration, bool isPremium) public view returns (uint256) {
+        require(isValidDuration(duration), "Invalid duration");
+        
+        if (isPremium) {
+            return premiumTrendingFees[duration];
+        } else {
+            return normalTrendingFees[duration];
+        }
+    }
+    
+    /**
+     * @dev Check if duration is valid
+     * @param duration Duration to check
+     * @return Whether the duration is valid
+     */
+    function isValidDuration(uint256 duration) public view returns (bool) {
+        for (uint256 i = 0; i < validDurations.length; i++) {
+            if (validDurations[i] == duration) {
+                return true;
+            }
+        }
+        return false;
     }
     
     /**
@@ -143,11 +284,79 @@ contract TrendingPayment {
     }
     
     /**
-     * @dev Update base fee (owner only)
-     * @param newBaseFee New base fee in Wei
+     * @dev Update normal trending fee for specific duration (owner only)
+     * @param duration Duration in hours (6, 12, 18, or 24)
+     * @param newFee New fee in Wei
      */
-    function updateBaseFee(uint256 newBaseFee) external onlyOwner {
-        baseFee = newBaseFee;
+    function updateNormalTrendingFee(uint256 duration, uint256 newFee) external onlyOwner {
+        require(isValidDuration(duration), "Invalid duration");
+        normalTrendingFees[duration] = newFee;
+        emit FeesUpdated("normal", duration, newFee);
+    }
+    
+    /**
+     * @dev Update premium trending fee for specific duration (owner only)
+     * @param duration Duration in hours (6, 12, 18, or 24)
+     * @param newFee New fee in Wei
+     */
+    function updatePremiumTrendingFee(uint256 duration, uint256 newFee) external onlyOwner {
+        require(isValidDuration(duration), "Invalid duration");
+        premiumTrendingFees[duration] = newFee;
+        emit FeesUpdated("premium", duration, newFee);
+    }
+    
+    /**
+     * @dev Update multiple normal trending fees at once (owner only)
+     * @param durations Array of durations
+     * @param newFees Array of corresponding fees
+     */
+    function updateMultipleNormalTrendingFees(
+        uint256[] memory durations, 
+        uint256[] memory newFees
+    ) external onlyOwner {
+        require(durations.length == newFees.length, "Arrays length mismatch");
+        
+        for (uint256 i = 0; i < durations.length; i++) {
+            require(isValidDuration(durations[i]), "Invalid duration");
+            normalTrendingFees[durations[i]] = newFees[i];
+            emit FeesUpdated("normal", durations[i], newFees[i]);
+        }
+    }
+    
+    /**
+     * @dev Update multiple premium trending fees at once (owner only)
+     * @param durations Array of durations
+     * @param newFees Array of corresponding fees
+     */
+    function updateMultiplePremiumTrendingFees(
+        uint256[] memory durations, 
+        uint256[] memory newFees
+    ) external onlyOwner {
+        require(durations.length == newFees.length, "Arrays length mismatch");
+        
+        for (uint256 i = 0; i < durations.length; i++) {
+            require(isValidDuration(durations[i]), "Invalid duration");
+            premiumTrendingFees[durations[i]] = newFees[i];
+            emit FeesUpdated("premium", durations[i], newFees[i]);
+        }
+    }
+    
+    /**
+     * @dev Get all current fees
+     */
+    function getAllFees() external view returns (
+        uint256[] memory durations,
+        uint256[] memory normalFees,
+        uint256[] memory premiumFees
+    ) {
+        durations = validDurations;
+        normalFees = new uint256[](validDurations.length);
+        premiumFees = new uint256[](validDurations.length);
+        
+        for (uint256 i = 0; i < validDurations.length; i++) {
+            normalFees[i] = normalTrendingFees[validDurations[i]];
+            premiumFees[i] = premiumTrendingFees[validDurations[i]];
+        }
     }
     
     /**
@@ -178,8 +387,9 @@ contract TrendingPayment {
         uint256 timestamp,
         uint256 duration,
         string memory tokenAddress,
+        bool isPremium,
         bool isActive,
-        bool isExpired
+        bool processed
     ) {
         Payment memory payment = payments[paymentId];
         return (
@@ -188,8 +398,9 @@ contract TrendingPayment {
             payment.timestamp,
             payment.duration,
             payment.tokenAddress,
+            payment.isPremium,
             payment.isActive,
-            !isPaymentActive(paymentId)
+            payment.processed
         );
     }
     

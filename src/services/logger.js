@@ -9,17 +9,17 @@ const logger = winston.createLogger({
     winston.format.errors({ stack: true }),
     winston.format.json()
   ),
-  defaultMeta: { service: 'nft-buybot' },
+  defaultMeta: { service: 'minttechbot' },
   transports: [
     new winston.transports.File({ 
       filename: 'error.log', 
       level: 'error',
-      maxsize: 5242880, // 5MB
+      maxsize: 5242880,
       maxFiles: 5,
     }),
     new winston.transports.File({ 
       filename: 'combined.log',
-      maxsize: 5242880, // 5MB
+      maxsize: 5242880,
       maxFiles: 5,
     }),
   ],

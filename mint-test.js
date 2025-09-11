@@ -8,7 +8,7 @@ async function mintTestNFT() {
   try {
     logger.info('🎨 Starting NFT minting test...');
 
-    // Contract details
+
     const nftAddress = process.env.SAMPLE_NFT_CONTRACT_ADDRESS;
     const privateKey = process.env.PRIVATE_KEY;
 
@@ -16,14 +16,12 @@ async function mintTestNFT() {
       throw new Error('Missing SAMPLE_NFT_CONTRACT_ADDRESS or PRIVATE_KEY in .env file');
     }
 
-    // Connect to Sepolia network
+
     const provider = new ethers.JsonRpcProvider(
       `https://eth-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
     );
-    
     const wallet = new ethers.Wallet(privateKey, provider);
-    
-    // Contract ABI for minting
+
     const simpleNFTABI = [
       "function quickMint() external payable",
       "function mint(address to) external payable", 
@@ -38,7 +36,7 @@ async function mintTestNFT() {
 
     const contract = new ethers.Contract(nftAddress, simpleNFTABI, wallet);
 
-    // Get current state
+
     const mintPrice = await contract.mintPrice();
     const initialSupply = await contract.totalSupply();
     const walletBalance = await provider.getBalance(wallet.address);
@@ -54,7 +52,7 @@ async function mintTestNFT() {
       throw new Error(`Insufficient balance: Need ${ethers.formatEther(mintPrice)} ETH, have ${ethers.formatEther(walletBalance)} ETH`);
     }
 
-    // Ask user what to mint
+
     const args = process.argv.slice(2);
     let mintType = 'quick';
     let quantity = 1;
@@ -68,7 +66,7 @@ async function mintTestNFT() {
         }
       } else if (args[0] === 'to' && args[1]) {
         mintType = 'to';
-        // Mint to specific address
+
       }
     }
 
@@ -78,7 +76,7 @@ async function mintTestNFT() {
     logger.info(`\n🎨 Minting ${quantity} NFT${quantity > 1 ? 's' : ''}...`);
     logger.info(`   Total Cost: ${ethers.formatEther(totalCost)} ETH`);
 
-    // Execute mint based on type
+
     if (mintType === 'batch' && quantity > 1) {
       tx = await contract.batchMint(quantity, { 
         value: totalCost,
@@ -98,14 +96,12 @@ async function mintTestNFT() {
       });
       logger.info(`📤 Quick mint transaction sent: ${tx.hash}`);
     }
-    
     logger.info(`⏳ Waiting for confirmation...`);
     const receipt = await tx.wait();
-    
     logger.info(`✅ Transaction confirmed in block: ${receipt.blockNumber}`);
     logger.info(`💰 Gas used: ${receipt.gasUsed.toString()}`);
 
-    // Check new state
+
     const newSupply = await contract.totalSupply();
     const newBalance = await contract.balanceOf(wallet.address);
 
@@ -113,18 +109,17 @@ async function mintTestNFT() {
     logger.info(`   Total Supply: ${newSupply} (was ${initialSupply})`);
     logger.info(`   Your NFTs: ${newBalance}`);
 
-    // Show minted token details
+
     if (newBalance > 0) {
       try {
         const lastTokenId = newSupply - 1n;
         const tokenOwner = await contract.ownerOf(lastTokenId);
         const tokenURI = await contract.tokenURI(lastTokenId);
-        
         logger.info(`\n🎉 Latest NFT Minted:`);
         logger.info(`   Token ID: ${lastTokenId}`);
         logger.info(`   Owner: ${tokenOwner}`);
         logger.info(`   Metadata: ${tokenURI}`);
-        logger.info(`   View on Etherscan: https://sepolia.etherscan.io/tx/${tx.hash}`);
+        logger.info(`   View on Etherscan: https://sepolia.etherscan.io/token/${nftAddress}?a=${newTokenId}`);
       } catch (error) {
         logger.warn(`Could not get token details: ${error.message}`);
       }
@@ -132,14 +127,13 @@ async function mintTestNFT() {
 
     logger.info(`\n🎯 Minting completed successfully!`);
     logger.info(`🤖 Check your Telegram bot for webhook notifications!`);
-    
   } catch (error) {
     logger.error('❌ Minting failed:', error.message);
     process.exit(1);
   }
 }
 
-// Display usage if help requested
+
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
   console.log(`
 🎨 SimpleNFT Minting Script
@@ -159,5 +153,5 @@ Contract: ${process.env.SAMPLE_NFT_CONTRACT_ADDRESS || 'Not configured'}
   process.exit(0);
 }
 
-// Run the minting
+
 mintTestNFT();

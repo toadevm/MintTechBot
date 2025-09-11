@@ -23,7 +23,7 @@ class Database {
 
   async createTables() {
     const tables = [
-      // Users table
+
       `CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         telegram_id TEXT UNIQUE NOT NULL,
@@ -35,7 +35,7 @@ class Database {
         is_active BOOLEAN DEFAULT 1
       )`,
 
-      // Tracked tokens table
+
       `CREATE TABLE IF NOT EXISTS tracked_tokens (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         contract_address TEXT NOT NULL,
@@ -53,7 +53,7 @@ class Database {
         UNIQUE(contract_address)
       )`,
 
-      // User token subscriptions (many-to-many relationship)
+
       `CREATE TABLE IF NOT EXISTS user_subscriptions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -65,13 +65,30 @@ class Database {
         UNIQUE(user_id, token_id)
       )`,
 
-      // Trending payments table
+
+      `CREATE TABLE IF NOT EXISTS pending_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token_id INTEGER NOT NULL,
+        expected_amount TEXT NOT NULL, -- Amount in Wei user should pay
+        duration_hours INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME NOT NULL, -- Pending payments expire after 30 minutes
+        is_matched BOOLEAN DEFAULT 0,
+        matched_tx_hash TEXT,
+        matched_at DATETIME,
+        FOREIGN KEY (user_id) REFERENCES users (id),
+        FOREIGN KEY (token_id) REFERENCES tracked_tokens (id)
+      )`,
+
+
       `CREATE TABLE IF NOT EXISTS trending_payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         token_id INTEGER NOT NULL,
         payment_amount TEXT NOT NULL, -- Amount in Wei
         transaction_hash TEXT UNIQUE NOT NULL,
+        payer_address TEXT NOT NULL, -- Ethereum address that sent the payment
         trending_duration INTEGER NOT NULL, -- Duration in hours
         start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
         end_time DATETIME,
@@ -81,7 +98,7 @@ class Database {
         FOREIGN KEY (token_id) REFERENCES tracked_tokens (id)
       )`,
 
-      // NFT activity log
+
       `CREATE TABLE IF NOT EXISTS nft_activities (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         contract_address TEXT NOT NULL,
@@ -96,7 +113,7 @@ class Database {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`,
 
-      // Channels table for bot deployment
+
       `CREATE TABLE IF NOT EXISTS channels (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         telegram_chat_id TEXT UNIQUE NOT NULL,
@@ -109,7 +126,7 @@ class Database {
         FOREIGN KEY (added_by_user_id) REFERENCES users (id)
       )`,
 
-      // Webhook logs for debugging
+
       `CREATE TABLE IF NOT EXISTS webhook_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         webhook_type TEXT NOT NULL,
@@ -124,10 +141,8 @@ class Database {
       for (const table of tables) {
         await this.run(table);
       }
-      
-      // Create indexes for better performance
+
       await this.createIndexes();
-      
       logger.info('Database tables created successfully');
       return true;
     } catch (error) {
@@ -153,7 +168,7 @@ class Database {
     }
   }
 
-  // Utility methods for database operations
+
   run(sql, params = []) {
     return new Promise((resolve, reject) => {
       this.db.run(sql, params, function(err) {
@@ -190,7 +205,7 @@ class Database {
     });
   }
 
-  // User management methods
+
   async createUser(telegramId, username, firstName) {
     const sql = `INSERT OR IGNORE INTO users (telegram_id, username, first_name) 
                  VALUES (?, ?, ?)`;
@@ -202,13 +217,8 @@ class Database {
     return await this.get(sql, [telegramId]);
   }
 
-  async updateUserWallet(telegramId, walletAddress) {
-    const sql = `UPDATE users SET wallet_address = ?, updated_at = CURRENT_TIMESTAMP 
-                 WHERE telegram_id = ?`;
-    return await this.run(sql, [walletAddress, telegramId]);
-  }
 
-  // Token management methods
+
   async addTrackedToken(contractAddress, tokenData, addedByUserId, webhookId) {
     const sql = `INSERT OR REPLACE INTO tracked_tokens 
                  (contract_address, token_name, token_symbol, token_type, total_supply, 
@@ -226,7 +236,7 @@ class Database {
   }
 
   async getTrackedToken(contractAddress) {
-    const sql = 'SELECT * FROM tracked_tokens WHERE contract_address = ?';
+    const sql = 'SELECT * FROM tracked_tokens WHERE LOWER(contract_address) = LOWER(?)';
     return await this.get(sql, [contractAddress]);
   }
 
@@ -244,7 +254,7 @@ class Database {
     return await this.all(sql, [userId]);
   }
 
-  // Subscription management
+
   async subscribeUserToToken(userId, tokenId) {
     const sql = `INSERT OR IGNORE INTO user_subscriptions (user_id, token_id) 
                  VALUES (?, ?)`;
@@ -256,13 +266,51 @@ class Database {
     return await this.run(sql, [userId, tokenId]);
   }
 
-  // Trending system methods
-  async addTrendingPayment(userId, tokenId, paymentAmount, transactionHash, durationHours) {
+
+  async createPendingPayment(userId, tokenId, expectedAmount, durationHours) {
+    const expiresAt = new Date(Date.now() + (30 * 60 * 1000)).toISOString();
+    const sql = `INSERT INTO pending_payments 
+                 (user_id, token_id, expected_amount, duration_hours, expires_at) 
+                 VALUES (?, ?, ?, ?, ?)`;
+    return await this.run(sql, [userId, tokenId, expectedAmount, durationHours, expiresAt]);
+  }
+
+  async getPendingPayment(userId, tokenId, amount) {
+    const sql = `SELECT * FROM pending_payments 
+                 WHERE user_id = ? AND token_id = ? AND expected_amount = ? 
+                 AND is_matched = 0 AND expires_at > datetime('now')
+                 ORDER BY created_at DESC LIMIT 1`;
+    return await this.get(sql, [userId, tokenId, amount]);
+  }
+
+  async markPendingPaymentMatched(pendingPaymentId, txHash) {
+    const sql = `UPDATE pending_payments 
+                 SET is_matched = 1, matched_tx_hash = ?, matched_at = CURRENT_TIMESTAMP 
+                 WHERE id = ?`;
+    return await this.run(sql, [txHash, pendingPaymentId]);
+  }
+
+  async cleanupExpiredPendingPayments() {
+    const sql = `DELETE FROM pending_payments WHERE expires_at <= datetime('now')`;
+    return await this.run(sql);
+  }
+
+  async getUserPendingPayments(userId) {
+    const sql = `SELECT pp.*, tt.token_name, tt.contract_address 
+                 FROM pending_payments pp
+                 JOIN tracked_tokens tt ON pp.token_id = tt.id
+                 WHERE pp.user_id = ? AND pp.is_matched = 0 AND pp.expires_at > datetime('now')
+                 ORDER BY pp.created_at DESC`;
+    return await this.all(sql, [userId]);
+  }
+
+
+  async addTrendingPayment(userId, tokenId, paymentAmount, transactionHash, durationHours, payerAddress = null) {
     const endTime = new Date(Date.now() + (durationHours * 60 * 60 * 1000)).toISOString();
     const sql = `INSERT INTO trending_payments 
-                 (user_id, token_id, payment_amount, transaction_hash, trending_duration, end_time) 
-                 VALUES (?, ?, ?, ?, ?, ?)`;
-    return await this.run(sql, [userId, tokenId, paymentAmount, transactionHash, durationHours, endTime]);
+                 (user_id, token_id, payment_amount, transaction_hash, payer_address, trending_duration, end_time) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`;
+    return await this.run(sql, [userId, tokenId, paymentAmount, transactionHash, payerAddress, durationHours, endTime]);
   }
 
   async getTrendingTokens() {
@@ -281,7 +329,7 @@ class Database {
     return await this.run(sql);
   }
 
-  // Activity logging
+
   async logNFTActivity(activityData) {
     const sql = `INSERT INTO nft_activities 
                  (contract_address, token_id, activity_type, from_address, to_address, 
@@ -300,7 +348,7 @@ class Database {
     ]);
   }
 
-  // Channel management
+
   async addChannel(telegramChatId, channelTitle, addedByUserId) {
     const sql = `INSERT OR IGNORE INTO channels 
                  (telegram_chat_id, channel_title, added_by_user_id) 
@@ -313,7 +361,7 @@ class Database {
     return await this.all(sql);
   }
 
-  // Webhook logging
+
   async logWebhook(webhookType, payload, processed = false, errorMessage = null) {
     const sql = `INSERT INTO webhook_logs (webhook_type, payload, processed, error_message) 
                  VALUES (?, ?, ?, ?)`;

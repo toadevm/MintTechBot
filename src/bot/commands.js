@@ -1,22 +1,23 @@
 const { Markup } = require('telegraf');
 const logger = require('../services/logger');
+const { ethers } = require('ethers');
 
 class BotCommands {
-  constructor(database, alchemyService, walletService, tokenTracker, trendingService, channelService) {
+  constructor(database, alchemyService, tokenTracker, trendingService, channelService) {
     this.db = database;
     this.alchemy = alchemyService;
-    this.wallet = walletService;
     this.tokenTracker = tokenTracker;
     this.trending = trendingService;
     this.channels = channelService;
-    
-    // User session state management
-    this.userStates = new Map(); // userId -> state
-    this.STATE_EXPECTING_WALLET = 'expecting_wallet';
+
+    this.userStates = new Map();
     this.STATE_EXPECTING_CONTRACT = 'expecting_contract';
+    this.STATE_EXPECTING_TX_HASH = 'expecting_tx_hash';
+
+    this.pendingPayments = new Map();
   }
 
-  // Helper methods for state management
+
   setUserState(userId, state) {
     this.userStates.set(userId.toString(), state);
     logger.debug(`Set user ${userId} state to: ${state}`);
@@ -32,14 +33,12 @@ class BotCommands {
   }
 
   async setupCommands(bot) {
-    // Start command
-    bot.start(async (ctx) => {
+
+    bot.command('startcandy', async (ctx) => {
       const user = ctx.from;
-      
-      // Create user in database
+
       await this.db.createUser(user.id.toString(), user.username, user.first_name);
-      
-      const welcomeMessage = `🚀 *Welcome to NFT BuyBot!* 🚀
+      const welcomeMessage = `🚀 <b>Welcome to MintTechBot!</b> 🚀
 
 I help you track NFT collections and get real-time alerts for:
 • New mints and transfers
@@ -47,64 +46,49 @@ I help you track NFT collections and get real-time alerts for:
 • Trending collections
 • Custom token monitoring
 
-*Quick Start Commands:*
-• /add\\_token - Add NFT contract to track
-• /my\\_tokens - View your tracked tokens
+<b>Quick Start Commands:</b>
+• /add_token - Add NFT contract to track
+• /my_tokens - View your tracked tokens
 • /trending - See trending NFT collections
-• /wallet - Connect your wallet
+• /buy_trending - Boost NFT trending
 • /help - Full command list
 
-Ready to start tracking NFTs? Use the buttons below or /add\\_token!`;
-      
+Ready to start tracking NFTs? Use the buttons below or /add_token!`;
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📈 View Trending', 'view_trending')],
         [Markup.button.callback('➕ Add Token', 'add_token_start')],
-        [Markup.button.callback('👛 Connect Wallet', 'connect_wallet')]
+        [Markup.button.callback('🚀 Boost NFT', 'boost_trending')]
       ]);
 
-      await ctx.replyWithMarkdown(welcomeMessage, keyboard);
+      await ctx.replyWithHTML(welcomeMessage, keyboard);
       logger.info(`New user started bot: ${user.id} (${user.username})`);
     });
 
-    // Help command
+
     bot.help(async (ctx) => {
-      const helpMessage = `📋 *NFT BuyBot Commands*
+      const helpMessage = `📋 <b>MintTechBot Commands</b>
 
-*Basic Commands:*
-• /start - Welcome message and setup
-• /help - Show this help message
-• /status - Show your account status
+🎯 <b>Token Management:</b>
+• /add_token - Add NFT contract to track
+• /remove_token - Remove tracked NFT  
+• /my_tokens - View your tracked tokens
 
-*Token Management:*
-• /add\\_token - Add NFT contract to track
-• /remove\\_token - Remove tracked token
-• /my\\_tokens - View your tracked tokens
-• /search - Search for NFT collections
-
-*Wallet & Payments:*
-• /wallet - Connect/manage your wallet  
-• /balance - Check your wallet balance
-• /pay\\_trending - Pay to promote token
-
-*Trending & Analytics:*
+💰 <b>Trending &amp; Boost:</b>
 • /trending - View trending collections
-• /stats - Collection statistics
-• /floor\\_price - Check floor prices
+• /buy_trending - Boost NFT trending
 
-*Channel Management:*
-• /add\\_channel - Add bot to channel
-• /channel\\_settings - Configure channel alerts
+📺 <b>Channel Commands:</b>
+• /add_channel - Add bot to channel
+• /channel_settings - Configure channel alerts
 
-*Admin Commands:*
-• /admin - Admin panel (admin only)
-• /broadcast - Send message to all users (admin only)
+• /startcandy - Welcome message
+• /help - Show this help
 
-Need help with a specific command? Just type it!`;
-      
-      await ctx.replyWithMarkdown(helpMessage);
+Simple and focused - boost your NFTs easily! 🚀`;
+      await ctx.replyWithHTML(helpMessage);
     });
 
-    // Add token command
+
     bot.command('add_token', async (ctx) => {
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('🔍 Search by Name', 'search_token')],
@@ -117,21 +101,19 @@ Need help with a specific command? Just type it!`;
       );
     });
 
-    // My tokens command
+
     bot.command('my_tokens', async (ctx) => {
       try {
         const user = await this.db.getUser(ctx.from.id.toString());
         if (!user) {
-          return ctx.reply('Please start the bot first with /start');
+          return ctx.reply('Please start the bot first with /startcandy');
         }
 
         const tokens = await this.db.getUserTrackedTokens(user.id);
-        
         if (tokens.length === 0) {
           const keyboard = Markup.inlineKeyboard([
             [Markup.button.callback('➕ Add Your First Token', 'add_token_start')]
           ]);
-          
           return ctx.reply(
             '🔍 You haven\'t added any tokens yet!\n\nUse /add_token to start tracking NFT collections.',
             keyboard
@@ -145,7 +127,6 @@ Need help with a specific command? Just type it!`;
           message += `${index + 1}. *${token.token_name || 'Unknown'}* (${token.token_symbol || 'N/A'})\n`;
           message += `   📮 \`${token.contract_address}\`\n`;
           message += `   🔔 Notifications: ${token.notification_enabled ? '✅' : '❌'}\n\n`;
-          
           keyboard.push([
             Markup.button.callback(
               `${token.notification_enabled ? '🔕' : '🔔'} ${token.token_name || token.contract_address.slice(0, 8)}...`, 
@@ -157,27 +138,74 @@ Need help with a specific command? Just type it!`;
         keyboard.push([Markup.button.callback('➕ Add More Tokens', 'add_token_start')]);
 
         await ctx.replyWithMarkdown(message, Markup.inlineKeyboard(keyboard));
-        
       } catch (error) {
         logger.error('Error in my_tokens command:', error);
         ctx.reply('❌ Error retrieving your tokens. Please try again.');
       }
     });
 
-    // Trending command
+
+    bot.command('remove_token', async (ctx) => {
+      try {
+        const user = await this.db.getUser(ctx.from.id.toString());
+        if (!user) {
+          return ctx.reply('Please start the bot first with /startcandy');
+        }
+
+        const tokens = await this.db.getUserTrackedTokens(user.id);
+        if (!tokens || tokens.length === 0) {
+          const keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('➕ Add Token', 'add_token_start')]
+          ]);
+          return ctx.reply(
+            '📝 You have no tracked tokens to remove.\n\nAdd some tokens first!',
+            keyboard
+          );
+        }
+
+        let message = `🗑️ <b>Remove Tracked Token</b>\n\nSelect a token to remove from tracking:\n\n`;
+        const keyboard = [];
+        tokens.forEach((token, index) => {
+          message += `${index + 1}. <b>${token.token_name || 'Unknown Collection'}</b>\n`;
+          message += `   📮 <code>${token.contract_address}</code>\n\n`;
+          keyboard.push([{
+            text: `🗑️ Remove ${token.token_name || `Token ${index + 1}`}`,
+            callback_data: `remove_token_${token.id}`
+          }]);
+        });
+
+        keyboard.push([{
+          text: '❌ Cancel',
+          callback_data: 'main_menu'
+        }]);
+
+        await ctx.replyWithHTML(message, {
+          reply_markup: {
+            inline_keyboard: keyboard
+          }
+        });
+      } catch (error) {
+        logger.error('Error in remove_token command:', error);
+        ctx.reply('❌ Error loading your tokens. Please try again.');
+      }
+    });
+
+
+
     bot.command('trending', async (ctx) => {
       try {
-        await this.db.expireTrendingPayments(); // Clean up expired trending
+        await this.db.expireTrendingPayments();
         const trendingTokens = await this.db.getTrendingTokens();
-        
         if (trendingTokens.length === 0) {
           const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('💰 Promote Your Token', 'promote_token')]
+            [Markup.button.callback('🚀 Boost Your Token', 'promote_token')]
           ]);
-          
           return ctx.reply(
-            '📊 *No trending tokens right now*\n\nBe the first to promote your NFT collection!',
-            keyboard
+            '📊 *No trending tokens right now*\n\nBe the first to boost your NFT collection!',
+            { 
+              parse_mode: 'Markdown',
+              reply_markup: keyboard 
+            }
           );
         }
 
@@ -187,103 +215,122 @@ Need help with a specific command? Just type it!`;
         trendingTokens.forEach((token, index) => {
           const endTime = new Date(token.trending_end_time);
           const hoursLeft = Math.max(0, Math.ceil((endTime - new Date()) / (1000 * 60 * 60)));
-          
           message += `${index + 1}. *${token.token_name || 'Unknown Collection'}*\n`;
           message += `   📮 \`${token.contract_address}\`\n`;
           message += `   ⏱️ ${hoursLeft}h left\n`;
-          message += `   💰 Paid: ${this.wallet.formatEther(token.payment_amount)} ETH\n\n`;
-          
+          message += `   💰 Paid: ${ethers.formatEther(token.payment_amount)} ETH\n\n`;
           keyboard.push([
             Markup.button.callback(`📊 ${token.token_name || 'View'} Stats`, `stats_${token.id}`)
           ]);
         });
 
-        keyboard.push([Markup.button.callback('💰 Promote Your Token', 'promote_token')]);
+        keyboard.push([Markup.button.callback('💰 Boost Your Token', 'promote_token')]);
 
         await ctx.replyWithMarkdown(message, Markup.inlineKeyboard(keyboard));
-        
       } catch (error) {
         logger.error('Error in trending command:', error);
         ctx.reply('❌ Error retrieving trending tokens. Please try again.');
       }
     });
 
-    // Wallet command
-    bot.command('wallet', async (ctx) => {
+
+    bot.command('buy_trending', async (ctx) => {
+      const message = `🚀 *NFT Boost Menu*
+
+Select an option to boost your NFT collections:`;
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🔥 View Trending', 'view_trending')],
+        [Markup.button.callback('🚀 Boost My Token', 'promote_token')],
+        [Markup.button.callback('📊 My Tokens', 'my_tokens')]
+      ]);
+
+      await ctx.replyWithMarkdown(message, keyboard);
+    });
+
+
+    bot.command('add_channel', async (ctx) => {
       try {
-        const user = await this.db.getUser(ctx.from.id.toString());
-        if (!user) {
-          return ctx.reply('Please start the bot first with /start');
+        const chatId = ctx.chat.id.toString();
+        const chatType = ctx.chat.type;
+
+        if (chatType !== 'channel' && chatType !== 'supergroup') {
+          return ctx.reply('❌ This command only works in channels or groups. Add me to a channel first, then use this command there.');
         }
-
-        if (user.wallet_address) {
-          const balance = await this.wallet.getBalance(user.wallet_address);
-          
-          const message = `
-👛 *Your Wallet*
-
-📮 Address: \`${user.wallet_address}\`
-💰 Balance: ${this.wallet.formatEther(balance)} ETH
-
-*What you can do:*
-• Pay for trending promotion
-• Receive NFT sale notifications
-• Track your collection activities
-          `;
-
-          const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('🔄 Change Wallet', 'change_wallet')],
-            [Markup.button.callback('💰 Promote Token', 'promote_token')]
-          ]);
-
-          await ctx.replyWithMarkdown(message, keyboard);
-        } else {
-          // Set user state to expecting wallet address
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_WALLET);
-          await this.showConnectWallet(ctx);
+        const channelTitle = ctx.chat.title || 'Unknown Channel';
+        const userId = ctx.from?.id;
+        if (!userId) {
+          return ctx.reply('❌ Unable to identify user. Please try again.');
         }
-        
+        const result = await this.channels.addChannel(chatId, channelTitle, userId);
+        await ctx.reply(result.message);
       } catch (error) {
-        logger.error('Error in wallet command:', error);
-        ctx.reply('❌ Error retrieving wallet information. Please try again.');
+        logger.error('Error in add_channel command:', error);
+        ctx.reply('❌ Error adding channel. Please try again.');
       }
     });
 
-    // Callback query handlers
+    bot.command('channel_settings', async (ctx) => {
+      try {
+        const chatId = ctx.chat.id.toString();
+        const chatType = ctx.chat.type;
+
+        if (chatType !== 'channel' && chatType !== 'supergroup') {
+          return ctx.reply('❌ This command only works in channels or groups.');
+        }
+        await this.channels.handleChannelSettingsCommand(ctx, chatId);
+      } catch (error) {
+        logger.error('Error in channel_settings command:', error);
+        ctx.reply('❌ Error retrieving channel settings. Please try again.');
+      }
+    });
+
+    bot.command('get_chat_id', async (ctx) => {
+      try {
+        const chatId = ctx.chat.id;
+        const chatType = ctx.chat.type;
+        const chatTitle = ctx.chat.title || ctx.chat.first_name || 'Unknown';
+        const message = `
+🆔 *Chat Information*
+
+**Chat ID:** \`${chatId}\`
+**Type:** ${chatType}
+**Title:** ${chatTitle}
+
+*Use this chat ID to configure notifications in your bot settings.*
+        `;
+        await ctx.replyWithMarkdown(message);
+      } catch (error) {
+        logger.error('Error in get_chat_id command:', error);
+        ctx.reply('❌ Error getting chat information.');
+      }
+    });
+
+
     bot.on('callback_query', async (ctx) => {
       const data = ctx.callbackQuery.data;
-      
       try {
         if (data === 'view_trending') {
           await ctx.answerCbQuery();
-          return this.showTrendingTokens(ctx);
+          return this.showTrendingCommand(ctx);
         }
-        
         if (data === 'add_token_start') {
           await ctx.answerCbQuery();
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);
           return ctx.reply('📝 Please enter the NFT contract address to track:');
         }
-        
-        if (data === 'connect_wallet') {
+        if (data === 'boost_trending') {
           await ctx.answerCbQuery();
-          // Set user state to expecting wallet address
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_WALLET);
-          return this.showConnectWallet(ctx);
+          return this.showPromoteTokenMenu(ctx);
         }
 
         if (data === 'enter_contract') {
           await ctx.answerCbQuery();
-          // Set user state to expecting contract address
+
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);
           ctx.reply('📝 Please enter the NFT contract address:');
           return;
         }
 
-        if (data === 'search_token') {
-          await ctx.answerCbQuery();
-          return ctx.reply('🔍 Please enter the NFT collection name to search:');
-        }
 
         if (data.startsWith('toggle_')) {
           const tokenId = data.replace('toggle_', '');
@@ -297,30 +344,23 @@ Need help with a specific command? Just type it!`;
           return;
         }
 
+        if (data.startsWith('remove_token_')) {
+          const tokenId = data.replace('remove_token_', '');
+          await ctx.answerCbQuery();
+          await this.handleRemoveToken(ctx, tokenId);
+          return;
+        }
+
         if (data === 'promote_token') {
           await ctx.answerCbQuery();
           return this.showPromoteTokenMenu(ctx);
         }
 
-        // Handle wallet/contract disambiguation callbacks
-        if (data.startsWith('wallet_')) {
-          const address = data.replace('wallet_', '');
-          await ctx.answerCbQuery();
-          await this.handleWalletAddress(ctx, address);
-          return;
-        }
 
         if (data.startsWith('contract_')) {
           const address = data.replace('contract_', '');
           await ctx.answerCbQuery();
           await this.handleContractAddress(ctx, address);
-          return;
-        }
-
-        if (data === 'cancel_wallet_connection') {
-          await ctx.answerCbQuery();
-          this.clearUserState(ctx.from.id);
-          ctx.reply('✅ Wallet connection cancelled.');
           return;
         }
 
@@ -343,169 +383,261 @@ Need help with a specific command? Just type it!`;
           return this.showPaymentInstructions(ctx, tokenId, duration);
         }
 
+        if (data.startsWith('submit_tx_')) {
+          const parts = data.split('_');
+          const tokenId = parts[2];
+          const duration = parseInt(parts[3]);
+          await ctx.answerCbQuery();
+
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_TX_HASH);
+          const message = `📝 **Submit Transaction Hash**
+
+Please send your Ethereum transaction hash now.
+
+The transaction hash should:
+• Start with 0x
+• Be 66 characters long
+• Be from a transaction sent to: \`${process.env.TRENDING_CONTRACT_ADDRESS}\`
+
+Example: \`0x1234567890abcdef...\`
+
+Type "cancel" to abort this process.`;
+
+          return ctx.replyWithMarkdown(message);
+        }
+
+
+        if (data === 'channel_settings') {
+          await ctx.answerCbQuery();
+          const chatId = ctx.chat.id.toString();
+          return this.channels.handleChannelSettingsCommand(ctx, chatId);
+        }
+
+        if (data === 'channel_toggle_trending') {
+          await ctx.answerCbQuery();
+          const chatId = ctx.chat.id.toString();
+
+          const settings = await this.channels.getChannelSettings(chatId);
+          if (settings.success) {
+            const newValue = !settings.settings.show_trending;
+            const result = await this.channels.updateChannelSettings(chatId, {
+              show_trending: newValue ? 1 : 0
+            });
+            if (result.success) {
+
+              return this.channels.handleChannelSettingsCommand(ctx, chatId);
+            } else {
+              return ctx.reply(result.message);
+            }
+          } else {
+            return ctx.reply(settings.message);
+          }
+        }
+
+        if (data === 'channel_toggle_activity') {
+          await ctx.answerCbQuery();
+          const chatId = ctx.chat.id.toString();
+
+          const settings = await this.channels.getChannelSettings(chatId);
+          if (settings.success) {
+            const newValue = !settings.settings.show_all_activities;
+            const result = await this.channels.updateChannelSettings(chatId, {
+              show_all_activities: newValue ? 1 : 0
+            });
+            if (result.success) {
+
+              return this.channels.handleChannelSettingsCommand(ctx, chatId);
+            } else {
+              return ctx.reply(result.message);
+            }
+          } else {
+            return ctx.reply(settings.message);
+          }
+        }
+
         await ctx.answerCbQuery('Feature coming soon!');
-        
       } catch (error) {
         logger.error('Error handling callback query:', error);
         await ctx.answerCbQuery('❌ Error processing request');
       }
     });
 
-    // Text message handlers
+
     bot.on('text', async (ctx) => {
       const text = ctx.message.text;
       const userId = ctx.from.id;
       const userState = this.getUserState(userId);
-      
-      // Check if it's an Ethereum address (42 chars starting with 0x)
+
       if (text.match(/^0x[a-fA-F0-9]{40}$/)) {
-        // Determine if user is expecting a wallet address or contract address
-        if (userState === this.STATE_EXPECTING_WALLET) {
-          await this.handleWalletAddress(ctx, text);
-          return;
-        } else if (userState === this.STATE_EXPECTING_CONTRACT) {
+        if (userState === this.STATE_EXPECTING_CONTRACT) {
           await this.handleContractAddress(ctx, text);
           return;
         } else {
-          // No specific state - ask user what they want to do
-          const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('👛 Connect as Wallet', `wallet_${text}`)],
-            [Markup.button.callback('📊 Track as NFT Contract', `contract_${text}`)]
-          ]);
-          
-          await ctx.reply(
-            '🤔 I see you sent an Ethereum address. What would you like to do with it?',
-            keyboard
-          );
+
+          await this.handleContractAddress(ctx, text);
           return;
         }
       }
-      
-      // Handle cancel commands
+
       if (text.toLowerCase() === 'cancel' || text.toLowerCase() === '/cancel') {
         this.clearUserState(userId);
         ctx.reply('✅ Operation cancelled.');
         return;
       }
-      
-      // Default response for unrecognized text
-      if (userState === this.STATE_EXPECTING_WALLET) {
-        ctx.reply('👛 Please send a valid Ethereum wallet address (starts with 0x and is 42 characters long), or type "cancel" to abort.');
-      } else if (userState === this.STATE_EXPECTING_CONTRACT) {
-        ctx.reply('📊 Please send a valid NFT contract address (starts with 0x and is 42 characters long), or type "cancel" to abort.');
+
+      if (userState === this.STATE_EXPECTING_CONTRACT) {
+        await this.handleContractAddress(ctx, text);
+        return;
+      } else if (userState === this.STATE_EXPECTING_TX_HASH) {
+        if (text.toLowerCase() === 'cancel') {
+          this.clearUserState(ctx.from.id);
+          this.pendingPayments.delete(ctx.from.id.toString());
+          ctx.reply('✅ Transaction submission cancelled.');
+          return;
+        }
+        await this.handleTransactionHash(ctx, text);
+        return;
       } else {
-        ctx.reply('🤖 I didn\'t understand that. Use /help to see available commands.');
+
+        return;
       }
     });
 
-    // Error handling
-    bot.catch((err, ctx) => {
-      logger.error('Bot error:', err);
-      ctx.reply('❌ Something went wrong. Please try again.');
+
+    bot.on('channel_post', async (ctx) => {
+      try {
+        const text = ctx.channelPost.text;
+        if (!text) return;
+
+        logger.debug(`Channel post received: "${text}" in channel ${ctx.chat.id}`);
+
+
+        let command = null;
+        if (text.startsWith('/')) {
+
+          command = text.split(' ')[0].replace('/', '');
+        } else if (text.includes('@testcandybot')) {
+
+          const parts = text.split(' ');
+          const mentionedCommand = parts.find(part => part.includes('@testcandybot'));
+          if (mentionedCommand && mentionedCommand.startsWith('/')) {
+            command = mentionedCommand.split('@')[0].replace('/', '');
+          }
+        }
+
+        if (!command) return;
+
+        logger.info(`Processing channel command: ${command} in channel ${ctx.chat.id}`);
+
+
+        switch (command) {
+          case 'add_channel':
+            const chatId = ctx.chat.id.toString();
+            const chatType = ctx.chat.type;
+            if (chatType !== 'channel' && chatType !== 'supergroup') {
+              return ctx.reply('❌ This command only works in channels or groups. Add me to a channel first, then use this command there.');
+            }
+            const channelTitle = ctx.chat.title || 'Unknown Channel';
+
+            let userId = null;
+            if (ctx.from) {
+
+              userId = ctx.from.id.toString();
+            } else {
+
+              try {
+                const chatAdmins = await ctx.telegram.getChatAdministrators(chatId);
+                const owner = chatAdmins.find(admin => admin.status === 'creator');
+                if (owner && owner.user) {
+                  userId = owner.user.id.toString();
+                  logger.info(`Using channel owner ${userId} for anonymous channel post`);
+                } else {
+
+                  userId = `channel_${chatId}`;
+                  logger.info(`Using channel ID ${userId} for anonymous channel post`);
+                }
+              } catch (error) {
+                logger.warn('Could not get channel admins, using channel ID as user:', error.message);
+                userId = `channel_${chatId}`;
+              }
+            }
+            const result = await this.channels.addChannel(chatId, channelTitle, userId);
+            await ctx.reply(result.message);
+            break;
+
+          case 'channel_settings':
+            const settingsChatId = ctx.chat.id.toString();
+            const settingsChatType = ctx.chat.type;
+            if (settingsChatType !== 'channel' && settingsChatType !== 'supergroup') {
+              return ctx.reply('❌ This command only works in channels or groups.');
+            }
+            await this.channels.handleChannelSettingsCommand(ctx, settingsChatId);
+            break;
+
+          case 'get_chat_id':
+            const chatInfo = {
+              id: ctx.chat.id,
+              type: ctx.chat.type,
+              title: ctx.chat.title || 'N/A'
+            };
+            await ctx.reply(`📋 Chat Info:\nID: ${chatInfo.id}\nType: ${chatInfo.type}\nTitle: ${chatInfo.title}`);
+            break;
+
+          case 'help':
+            const helpMessage = `📋 <b>MintTechBot Commands</b>
+
+🎯 <b>Token Management:</b>
+• /add_token - Add NFT contract to track
+• /remove_token - Remove tracked NFT  
+• /my_tokens - View your tracked tokens
+
+💰 <b>Trending &amp; Boost:</b>
+• /trending - View trending collections
+• /buy_trending - Boost NFT trending
+
+📺 <b>Channel Commands:</b>
+• /add_channel - Add bot to channel
+• /channel_settings - Configure channel alerts
+
+• /startcandy - Welcome message
+• /help - Show this help
+
+Simple and focused - boost your NFTs easily! 🚀`;
+            await ctx.replyWithHTML(helpMessage);
+            break;
+
+          default:
+            logger.debug(`Unhandled channel command: ${command}`);
+            break;
+        }
+
+      } catch (error) {
+        logger.error('Error handling channel post:', error);
+        try {
+          await ctx.reply('❌ An error occurred processing the command. Please try again.');
+        } catch (replyError) {
+          logger.error('Failed to send error message for channel post:', replyError);
+        }
+      }
     });
 
     logger.info('Bot commands setup completed');
   }
 
-  async showConnectWallet(ctx) {
-    const message = `👛 *Connect Your Wallet*
-
-To unlock premium features like trending promotion and advanced analytics, connect your Ethereum wallet.
-
-🔹 **What to send:** Your Ethereum wallet address (starts with 0x)
-🔹 **Example:** \`0x742d35Cc6334C4532AB1b1b8c8e2e9dE4DFaB36c\`
-🔹 **Network:** Ethereum Sepolia (for testing)
-
-🔒 **Security Note:** I only need your PUBLIC wallet address for read-only access. Never share your private keys!
-
-📲 **How to find your address:**
-• Copy from MetaMask, Trust Wallet, or your wallet app
-• Make sure it's 42 characters long and starts with "0x"
-
-💡 Type "cancel" anytime to abort this process.
-
-Please send your wallet address below:`;
-
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('❌ Cancel', 'cancel_wallet_connection')]
-    ]);
-
-    await ctx.replyWithMarkdown(message, keyboard);
-  }
-
-  async handleWalletAddress(ctx, walletAddress) {
-    try {
-      const user = await this.db.getUser(ctx.from.id.toString());
-      if (!user) {
-        return ctx.reply('Please start the bot first with /start');
-      }
-
-      // Validate wallet address format
-      if (!this.wallet.isValidAddress(walletAddress)) {
-        this.clearUserState(ctx.from.id);
-        return ctx.reply('❌ Invalid wallet address format. Please try again with a valid Ethereum address.');
-      }
-
-      ctx.reply('💫 Connecting your wallet...');
-
-      try {
-        // Update user's wallet address in database
-        await this.db.updateUserWallet(ctx.from.id.toString(), walletAddress);
-        
-        // Get wallet balance
-        const balance = await this.wallet.getBalance(walletAddress);
-        
-        // Clear the expecting wallet state
-        this.clearUserState(ctx.from.id);
-        
-        const message = `✅ *Wallet Connected Successfully!*
-
-👛 **Your Wallet Details:**
-📮 Address: \`${walletAddress}\`
-💰 Balance: ${this.wallet.formatEther(balance)} ETH
-
-🎉 **Premium Features Unlocked:**
-• Pay to promote your NFT collections
-• Advanced analytics and tracking
-• Priority notifications
-• Channel trending broadcasts
-
-💡 Use /trending to see promoted collections or promote your own!`;
-
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('🔥 View Trending', 'view_trending')],
-          [Markup.button.callback('💰 Promote Token', 'promote_token')]
-        ]);
-
-        await ctx.replyWithMarkdown(message, keyboard);
-        logger.info(`Wallet connected: ${walletAddress} for user ${user.id}`);
-        
-      } catch (dbError) {
-        logger.error('Error saving wallet address:', dbError);
-        this.clearUserState(ctx.from.id);
-        ctx.reply('❌ Error saving wallet address. Please try again.');
-      }
-      
-    } catch (error) {
-      logger.error('Error handling wallet address:', error);
-      this.clearUserState(ctx.from.id);
-      ctx.reply('❌ Error connecting wallet. Please try again.');
-    }
-  }
 
   async handleContractAddress(ctx, contractAddress) {
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /start');
+        return ctx.reply('Please start the bot first with /startcandy');
       }
 
       ctx.reply('🔍 Validating and adding contract...');
 
-      // Clear any expecting contract state
+
       this.clearUserState(ctx.from.id);
 
-      // Use token tracker to add the token
+
       const result = await this.tokenTracker.addToken(
         contractAddress, 
         user.id, 
@@ -518,7 +650,6 @@ Please send your wallet address below:`;
       } else {
         await ctx.reply(result.message);
       }
-      
     } catch (error) {
       logger.error('Error handling contract address:', error);
       this.clearUserState(ctx.from.id);
@@ -526,16 +657,124 @@ Please send your wallet address below:`;
     }
   }
 
+  async handleTransactionHash(ctx, txHash) {
+    try {
+      const userId = ctx.from.id.toString();
+      const pendingPayment = this.pendingPayments.get(userId);
+      if (!pendingPayment) {
+        this.clearUserState(userId);
+        return ctx.reply('❌ No pending payment found. Please start the boost process again.');
+      }
+
+
+      if (!txHash.match(/^0x[a-fA-F0-9]{64}$/)) {
+        return ctx.reply('❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).\n\nOr type "cancel" to abort.');
+      }
+
+      ctx.reply('🔍 Validating your transaction... This may take a few moments.');
+
+
+      const result = await this.trending.processSimplePayment(
+        userId,
+        txHash
+      );
+
+      this.clearUserState(userId);
+      this.pendingPayments.delete(userId);
+
+      if (result.success) {
+        const successMessage = `✅ **Payment Confirmed!**
+
+🔥 **${result.tokenName}** is now trending for ${result.duration} hour${result.duration > 1 ? 's' : ''}!
+
+💰 Amount: ${ethers.formatEther(result.amount)} ETH
+📝 Transaction: \`${txHash}\`
+🆔 Payment ID: ${result.paymentId}
+
+Your collection will appear in the trending list and be promoted in channels. Thank you for boosting the ecosystem! 🚀`;
+
+        await ctx.replyWithMarkdown(successMessage);
+      } else {
+        const errorMessage = `❌ **Payment Validation Failed**
+
+${result.error}
+
+Please check:
+• Transaction was sent to: \`${process.env.TRENDING_CONTRACT_ADDRESS}\`
+• Exact amount was sent: ${ethers.formatEther(pendingPayment.expectedAmount)} ETH
+• Transaction is confirmed on blockchain
+
+You can try again with a different transaction hash or contact support.`;
+
+        await ctx.replyWithMarkdown(errorMessage);
+      }
+
+    } catch (error) {
+      logger.error('Error handling transaction hash:', error);
+      this.clearUserState(ctx.from.id);
+      this.pendingPayments.delete(ctx.from.id.toString());
+      ctx.reply('❌ Error validating transaction. Please try again or contact support.');
+    }
+  }
+
+  async handleRemoveToken(ctx, tokenId) {
+    try {
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startcandy');
+      }
+
+
+      const token = await this.db.get(
+        'SELECT * FROM tracked_tokens WHERE id = ? AND added_by_user_id = ?',
+        [tokenId, user.id]
+      );
+
+      if (!token) {
+        return ctx.reply('❌ Token not found or you don\'t have permission to remove it.');
+      }
+
+
+      await this.db.run(
+        'UPDATE tracked_tokens SET is_active = 0 WHERE id = ? AND added_by_user_id = ?',
+        [tokenId, user.id]
+      );
+
+
+      if (token.webhook_id && this.alchemy) {
+        try {
+          await this.alchemy.deleteWebhook(token.webhook_id);
+          logger.info(`Webhook removed for token: ${token.contract_address}`);
+        } catch (webhookError) {
+          logger.warn(`Failed to remove webhook for ${token.contract_address}:`, webhookError.message);
+        }
+      }
+
+      const successMessage = `✅ <b>Token Removed Successfully</b>
+
+🗑️ <b>${token.token_name || 'Unknown Collection'}</b> has been removed from your tracking list.
+
+📮 Contract: <code>${token.contract_address}</code>
+
+You will no longer receive notifications for this token.`;
+
+      await ctx.replyWithHTML(successMessage);
+      logger.info(`Token removed: ${token.contract_address} by user ${user.id}`);
+
+    } catch (error) {
+      logger.error('Error removing token:', error);
+      ctx.reply('❌ Error removing token. Please try again.');
+    }
+  }
+
   async toggleTokenNotification(ctx, tokenId) {
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
-      // This would toggle the notification setting in the database
-      // Implementation depends on specific database schema
-      
+
+
       await ctx.answerCbQuery('Notification setting updated!');
-      // Refresh the tokens list
+
       return this.showMyTokens(ctx);
-      
     } catch (error) {
       logger.error('Error toggling notification:', error);
       await ctx.answerCbQuery('❌ Error updating notification setting');
@@ -544,60 +783,91 @@ Please send your wallet address below:`;
 
   async showTokenStats(ctx, tokenId) {
     try {
-      // Get token data and show statistics
-      // This would fetch from database and Alchemy
+
+
       await ctx.answerCbQuery('Loading statistics...');
       ctx.reply('📊 Token statistics feature coming soon!');
-      
     } catch (error) {
       logger.error('Error showing token stats:', error);
       await ctx.answerCbQuery('❌ Error loading statistics');
     }
   }
 
+  async showTrendingCommand(ctx) {
+    try {
+      await this.db.expireTrendingPayments();
+      const trendingTokens = await this.db.getTrendingTokens();
+      if (trendingTokens.length === 0) {
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('💰 Boost Your Token', 'promote_token')]
+        ]);
+        return ctx.reply(
+          '📊 *No trending tokens right now*\n\nBe the first to boost your NFT collection!',
+          { 
+            parse_mode: 'Markdown',
+            reply_markup: keyboard 
+          }
+        );
+      }
+
+      let message = '🔥 *Trending NFT Collections*\n\n';
+      const keyboard = [];
+
+      trendingTokens.forEach((token, index) => {
+        const endTime = new Date(token.trending_end_time);
+        const hoursLeft = Math.max(0, Math.ceil((endTime - new Date()) / (1000 * 60 * 60)));
+        message += `${index + 1}. *${token.token_name || 'Unknown Collection'}*\n`;
+        message += `   📮 \`${token.contract_address}\`\n`;
+        message += `   ⏱️ ${hoursLeft}h left\n`;
+        message += `   💰 Paid: ${ethers.formatEther(token.payment_amount)} ETH\n\n`;
+        keyboard.push([
+          Markup.button.callback(`📊 ${token.token_name || 'View'} Stats`, `stats_${token.id}`)
+        ]);
+      });
+
+      keyboard.push([Markup.button.callback('💰 Boost Your Token', 'promote_token')]);
+
+      await ctx.replyWithMarkdown(message, Markup.inlineKeyboard(keyboard));
+    } catch (error) {
+      logger.error('Error in showTrendingCommand:', error);
+      ctx.reply('❌ Error loading trending tokens. Please try again.');
+    }
+  }
+
   async showPromoteTokenMenu(ctx) {
     try {
-      const userId = ctx.from.id.toString();
-      const userTokens = await this.db.getUserTokens(userId);
-      
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startcandy');
+      }
+      const userTokens = await this.tokenTracker.getUserTokens(user.id);
       if (!userTokens || userTokens.length === 0) {
         return ctx.reply(
-          '📝 You need to add some NFT collections first!\n\nUse /add\\_token to track your first NFT collection.',
+          '📝 You need to add some NFT collections first!\n\nUse /add_token to track your first NFT collection.',
           { parse_mode: 'Markdown' }
         );
       }
 
-      const trendingOptions = await this.trending.getTrendingOptions();
-      
-      let message = '🔥 *Promote Your NFT Collection*\n\n';
-      message += 'Choose a collection to promote and select duration:\n\n';
-      message += '*Available Collections:*\n';
-      
-      userTokens.forEach((token, index) => {
-        message += `${index + 1}. ${token.token_name || 'Unknown Collection'}\n`;
-        message += `   📮 \`${token.contract_address}\`\n`;
-      });
-
-      message += '\n*Trending Pricing:*\n';
-      trendingOptions.forEach(option => {
-        message += `• ${option.label}: ${option.feeEth} ETH\n`;
-      });
+      const message = '🚀 Select an NFT collection to boost:';
 
       const keyboard = [];
-      
-      // Add token selection buttons
+
       userTokens.forEach((token, index) => {
-        keyboard.push([Markup.button.callback(
-          `Promote ${token.token_name || `Token ${index + 1}`}`, 
-          `promote_${token.id}`
-        )]);
+        keyboard.push([{
+          text: `🚀 ${token.token_name || `Token ${index + 1}`}`,
+          callback_data: `promote_${token.id}`
+        }]);
       });
 
-      keyboard.push([Markup.button.callback('◀️ Back to Menu', 'main_menu')]);
+      keyboard.push([{
+        text: '◀️ Back to Menu',
+        callback_data: 'main_menu'
+      }]);
 
       return ctx.reply(message, {
-        parse_mode: 'Markdown',
-        reply_markup: Markup.inlineKeyboard(keyboard)
+        reply_markup: {
+          inline_keyboard: keyboard
+        }
       });
 
     } catch (error) {
@@ -618,27 +888,30 @@ Please send your wallet address below:`;
       }
 
       const trendingOptions = await this.trending.getTrendingOptions();
-      
-      let message = `🔥 *Promote: ${token.token_name || 'Unknown Collection'}*\n\n`;
-      message += `📮 \`${token.contract_address}\`\n\n`;
-      message += '*Select promotion duration:*\n\n';
+      logger.info(`Trending options loaded: ${trendingOptions.length} options`);
+      let message = `🚀 <b>Boost: ${token.token_name || 'Unknown Collection'}</b>\n\n`;
+      message += `📮 <code>${token.contract_address}</code>\n\n`;
+      message += '<b>Select boost duration:</b>';
 
-      const keyboard = [];
-      
+      const buttons = [];
       trendingOptions.forEach(option => {
-        message += `💰 **${option.label}**: ${option.feeEth} ETH\n`;
-        keyboard.push([Markup.button.callback(
-          `${option.label} - ${option.feeEth} ETH`, 
+        buttons.push([Markup.button.callback(
+          `💰 ${option.label} - ${option.feeEth} ETH`, 
           `duration_${tokenId}_${option.duration}`
         )]);
       });
 
-      keyboard.push([Markup.button.callback('◀️ Back', 'promote_token')]);
+      buttons.push([Markup.button.callback('◀️ Back', 'promote_token')]);
 
-      return ctx.reply(message, {
-        parse_mode: 'Markdown',
-        reply_markup: Markup.inlineKeyboard(keyboard)
-      });
+      const keyboard = Markup.inlineKeyboard(buttons);
+
+      try {
+        return await ctx.replyWithHTML(message, keyboard);
+      } catch (replyError) {
+        logger.error('Error sending duration menu message:', replyError);
+
+        return await ctx.reply(`🚀 Boost: ${token.token_name || 'Unknown Collection'}\n\nSelect boost duration:`, keyboard);
+      }
 
     } catch (error) {
       logger.error('Error showing promote duration menu:', error);
@@ -651,12 +924,10 @@ Please send your wallet address below:`;
       [Markup.button.callback('🔥 View Trending', 'view_trending')],
       [Markup.button.callback('➕ Add Token', 'add_token_start')],
       [Markup.button.callback('📊 My Tokens', 'my_tokens')],
-      [Markup.button.callback('🔍 Search', 'search_token')],
-      [Markup.button.callback('💼 Connect Wallet', 'connect_wallet')],
-      [Markup.button.callback('🚀 Promote Token', 'promote_token')]
+      [Markup.button.callback('🚀 Boost Token', 'promote_token')]
     ];
 
-    const message = `🚀 *NFT BuyBot Main Menu*
+    const message = `🚀 *MintTechBot Main Menu*
 
 Choose an option:`;
 
@@ -668,25 +939,32 @@ Choose an option:`;
 
   async showPaymentInstructions(ctx, tokenId, duration) {
     try {
-      const instructions = await this.trending.generatePaymentInstructions(tokenId, duration);
-      
-      let message = `💳 *Payment Instructions*\n\n`;
+      const userId = ctx.from.id.toString();
+      const instructions = await this.trending.generatePaymentInstructions(tokenId, duration, userId);
+      let message = `💳 *Simple Payment Instructions*\n\n`;
       message += `🔥 **Collection**: ${instructions.tokenName}\n`;
       message += `📮 **Contract**: \`${instructions.tokenAddress}\`\n`;
       message += `⏱️ **Duration**: ${duration} hour${duration > 1 ? 's' : ''}\n`;
       message += `💰 **Fee**: ${instructions.feeEth} ETH\n\n`;
-      
-      message += `🏦 **Contract Address**:\n\`${instructions.contractAddress}\`\n\n`;
-      
-      message += `📋 **Instructions**:\n`;
+      message += `🏦 **Payment Address**:\n\`${instructions.contractAddress}\`\n\n`;
+      message += `🔗 **View on Etherscan**: ${instructions.etherscanUrl}\n\n`;
+      message += `📋 **Payment Instructions**:\n`;
       instructions.instructions.forEach((instruction, index) => {
         message += `${index + 1}. ${instruction}\n`;
       });
-      
-      message += `\n⚠️ **Important**: Send exactly ${instructions.feeEth} ETH to the contract address above.\n\n`;
-      message += `After payment, send the transaction hash to this bot to activate your promotion!`;
+      message += `\n✅ **Simple Process**: Just send a regular ETH transfer - no complex contract calls needed!\n`;
+      message += `⏰ **Payment expires in 30 minutes**\n\n`;
+      message += `After successful transaction, submit your transaction hash below:`;
+
+
+      this.pendingPayments.set(userId, {
+        tokenId: tokenId,
+        duration: duration,
+        expectedAmount: instructions.fee
+      });
 
       const keyboard = [
+        [Markup.button.callback('📝 Submit Transaction Hash', `submit_tx_${tokenId}_${duration}`)],
         [Markup.button.callback('◀️ Back to Duration', `promote_${tokenId}`)],
         [Markup.button.callback('🏠 Main Menu', 'main_menu')]
       ];

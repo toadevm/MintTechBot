@@ -5,6 +5,7 @@ database.sqlite
 .DS_Store
 dist/
 build/
+.claude/
 
 # Hardhat
 cache/

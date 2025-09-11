@@ -6,21 +6,10 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "test": "node test.js",
-    "test-setup": "node test.js",
     "compile": "hardhat compile",
     "test-contracts": "hardhat test",
     "deploy": "hardhat run scripts/deploy.js --network sepolia",
-    "deploy-nft": "hardhat run scripts/deploy-nft.js --network sepolia",
-    "deploy-local": "hardhat run scripts/deploy.js --network hardhat",
-    "deploy-nft-local": "hardhat run scripts/deploy-nft.js --network hardhat",
-    "verify": "hardhat verify --network sepolia",
-    "clean": "hardhat clean",
-    "coverage": "hardhat coverage",
-    "node": "hardhat node",
-    "mint": "node mint-test.js",
-    "mint-batch": "node mint-test.js batch",
-    "mint-help": "node mint-test.js --help"
+    "mint": "node mint-test.js"
   },
   "keywords": [],
   "author": "",

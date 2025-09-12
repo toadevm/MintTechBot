@@ -1,10 +1,11 @@
 const logger = require('../services/logger');
 
 class WebhookHandlers {
-  constructor(database, bot, trendingService = null) {
+  constructor(database, bot, trendingService = null, secureTrendingService = null) {
     this.db = database;
     this.bot = bot;
     this.trending = trendingService;
+    this.secureTrending = secureTrendingService;
     this.processedTransactions = new Map();
     this.CACHE_EXPIRY_MS = 10 * 60 * 1000;
     setInterval(() => {
@@ -114,11 +115,6 @@ class WebhookHandlers {
       const contractAddress = activity.contractAddress;
       const txHash = activity.hash;
 
-      if (this.isTransactionProcessed(txHash)) {
-        logger.debug(`Transaction ${txHash} already processed, skipping`);
-        return;
-      }
-
       const tokenId = activity.tokenId || 
                      activity.token?.tokenId ||
                      activity.erc721TokenId ||
@@ -126,6 +122,19 @@ class WebhookHandlers {
                      this.extractTokenIdFromTx(activity.hash);
 
       const activityType = this.determineActivityType(activity);
+
+      // Create a unique key for deduplication based on contract + token + action
+      const deduplicationKey = `${contractAddress}:${tokenId}:${activityType}:${txHash}`;
+      
+      logger.info(`Checking deduplication key: ${deduplicationKey}`);
+      if (this.isTransactionProcessed(deduplicationKey)) {
+        logger.info(`Activity ${deduplicationKey} already processed, skipping`);
+        return;
+      }
+
+      // Mark as being processed immediately to prevent race conditions
+      this.markTransactionProcessed(deduplicationKey);
+      logger.info(`Marked as processing: ${deduplicationKey}`);
 
       logger.info(`Processing NFT activity: ${activityType} for ${contractAddress}:${tokenId}`);
       logger.debug(`Full activity data:`, JSON.stringify(activity, null, 2));
@@ -164,7 +173,7 @@ class WebhookHandlers {
         logger.debug(`Token ${token.token_name} - no channels configured for notifications`);
       }
 
-      this.markTransactionProcessed(txHash);
+      // Already marked as processed at the start
     } catch (error) {
       logger.error('Error processing NFT activity:', error);
       throw error;
@@ -294,7 +303,7 @@ class WebhookHandlers {
       const adminChatId = process.env.ADMIN_CHAT_ID;
       if (adminChatId) {
         try {
-          await this.sendNotificationWithImage(adminChatId, message, token);
+          await this.sendNotificationWithImage(adminChatId, message, token, activityData);
           logger.info(`Sent notification to group chat ${adminChatId} for token ${token.contract_address}`);
         } catch (error) {
           logger.error(`Failed to send notification to group chat ${adminChatId}:`, error);
@@ -306,7 +315,7 @@ class WebhookHandlers {
 
       for (const user of users) {
         try {
-          await this.sendNotificationWithImage(user.telegram_id, message, token);
+          await this.sendNotificationWithImage(user.telegram_id, message, token, activityData);
           logger.debug(`Notified user ${user.telegram_id} about ${token.contract_address} activity`);
         } catch (error) {
           logger.error(`Failed to notify user ${user.telegram_id}:`, error);
@@ -327,6 +336,42 @@ class WebhookHandlers {
     }
   }
 
+  // Check if token is trending in either service (secure service first)
+  async isTokenTrending(contractAddress) {
+    try {
+      // Check secure trending service first (preferred)
+      if (this.secureTrending) {
+        try {
+          const isTrendingSecure = await this.secureTrending.isTokenTrending(contractAddress);
+          if (isTrendingSecure) {
+            logger.debug(`Token ${contractAddress} is trending via secure service`);
+            return true;
+          }
+        } catch (error) {
+          logger.error('Error checking secure trending service:', error);
+        }
+      }
+      
+      // Fall back to old trending service
+      if (this.trending) {
+        try {
+          const isTrendingOld = await this.trending.isTokenTrending(contractAddress);
+          if (isTrendingOld) {
+            logger.debug(`Token ${contractAddress} is trending via old service`);
+            return true;
+          }
+        } catch (error) {
+          logger.error('Error checking old trending service:', error);
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      logger.error('Error in unified trending check:', error);
+      return false;
+    }
+  }
+
   async shouldNotifyChannelsForToken(contractAddress) {
     try {
 
@@ -340,10 +385,7 @@ class WebhookHandlers {
       }
 
 
-      let isTrending = false;
-      if (this.trending) {
-        isTrending = await this.trending.isTokenTrending(contractAddress);
-      }
+      const isTrending = await this.isTokenTrending(contractAddress);
 
 
       const eligibleChannels = allChannels.filter(channel => {
@@ -521,15 +563,37 @@ class WebhookHandlers {
 
   async handleAddressActivity(payload) {
     try {
+      logger.info('Address activity webhook received:', JSON.stringify(payload, null, 2));
 
+      if (!payload.event || !payload.event.activity) {
+        logger.warn('Invalid address activity payload structure');
+        return false;
+      }
 
-      logger.info('Address activity webhook received (not implemented)');
-      return false;
+      const activities = Array.isArray(payload.event.activity) 
+        ? payload.event.activity 
+        : [payload.event.activity];
+
+      let processedCount = 0;
+
+      for (const activity of activities) {
+        try {
+          // Address activities are handled manually via /validate command
+          // No automatic ETH transfer processing to prevent race conditions
+          logger.debug('Address activity received - manual validation required via /validate command');
+        } catch (error) {
+          logger.error(`Error processing individual address activity:`, error);
+        }
+      }
+
+      logger.info(`Processed ${processedCount}/${activities.length} address activities`);
+      return processedCount > 0;
     } catch (error) {
       logger.error('Error handling address activity:', error);
       return false;
     }
   }
+
 
 
   async handleHealthCheck(req, res) {
@@ -570,35 +634,114 @@ class WebhookHandlers {
     }
   }
 
-  async sendNotificationWithImage(chatId, message, token) {
+  async sendNotificationWithImage(chatId, message, token, activityData) {
+    const NFTMetadataService = require('../services/nftMetadataService');
+    const metadataService = new NFTMetadataService();
+    
     try {
-      const fs = require('fs').promises;
-      const path = require('path');
-
-      const tokenName = token.token_name || '';
-      const isCandyCollection = tokenName.toLowerCase().includes('candy') || 
-                               tokenName.toLowerCase() === 'simplenft';
-      const imagePath = path.join(__dirname, '../candy.jpg');
-
-      if (isCandyCollection) {
-        try {
-
-          await fs.access(imagePath);
-
-          await this.bot.telegram.sendPhoto(
-            chatId,
-            { source: imagePath },
-            {
-              caption: message,
-              parse_mode: 'Markdown'
-            }
-          );
-          return;
-        } catch (imageError) {
-          logger.warn(`Failed to send image notification, falling back to text: ${imageError.message}`);
+      logger.info('Attempting to fetch NFT metadata with traits for notification');
+      
+      let nftData;
+      let imagePath = null;
+      
+      // Check if this is our MongsInspired contract
+      const mongsInspiredContract = process.env.MONGS_INSPIRED_CONTRACT_ADDRESS;
+      if (token.contract_address.toLowerCase() === mongsInspiredContract?.toLowerCase()) {
+        // Use the actual minted token ID from activity data
+        const actualTokenId = activityData?.tokenId;
+        if (actualTokenId) {
+          try {
+            nftData = await metadataService.getMongsInspiredToken(token.contract_address, actualTokenId);
+          } catch (error) {
+            logger.warn(`Failed to fetch MongsInspired token ${actualTokenId}, falling back to MONGS: ${error.message}`);
+            nftData = await metadataService.getRandomMongsToken();
+          }
+        } else {
+          logger.warn(`No token ID found in activity data for MongsInspired contract, falling back to MONGS`);
+          nftData = await metadataService.getRandomMongsToken();
+        }
+      } else {
+        // Fall back to MONGS mainnet for other tokens
+        nftData = await metadataService.getRandomMongsToken();
+      }
+      
+      // Download and resize image if available
+      let originalImagePath = null;
+      if (nftData.metadata.image) {
+        originalImagePath = await metadataService.downloadImage(nftData.metadata.image, nftData.tokenId);
+        if (originalImagePath) {
+          imagePath = await metadataService.resizeImage(originalImagePath, 300, 300);
         }
       }
+      
+      // Format the enhanced message with traits
+      const nftMessage = metadataService.formatMetadataForTelegram(nftData);
+      
+      // Extract NFT name from the formatted message
+      const nftNameMatch = nftMessage.match(/🎨 \*\*(.*?)\*\*/);
+      const nftName = nftNameMatch ? nftNameMatch[1] : '';
+      
+      // Split the original message to insert NFT name after the activity title
+      const messageParts = message.split('\n\n');
+      const activityTitle = messageParts[0]; // "✨ MONGS Inspired Activity"
+      const restOfMessage = messageParts.slice(1).join('\n\n');
+      
+      const enhancedMessage = nftName 
+        ? `${activityTitle}\n🎨 **${nftName}**\n\n${restOfMessage}\n\n${nftMessage.replace(/🎨 \*\*.*?\*\*\n\n/, '')}`
+        : `${message}\n\n${nftMessage}`;
+      
+      const boostButton = {
+        reply_markup: {
+          inline_keyboard: [[
+            { 
+              text: 'BOOST YOUR NFT🟢', 
+              url: `https://t.me/testcandybot?start=buy_trending`
+            }
+          ]]
+        }
+      };
 
+      if (imagePath) {
+        await this.bot.telegram.sendPhoto(
+          chatId,
+          { source: imagePath },
+          {
+            caption: enhancedMessage,
+            parse_mode: 'Markdown',
+            ...boostButton
+          }
+        );
+      } else {
+        await this.bot.telegram.sendMessage(
+          chatId,
+          enhancedMessage,
+          { 
+            parse_mode: 'Markdown',
+            ...boostButton
+          }
+        );
+      }
+      
+      // Cleanup downloaded images after a delay
+      const imagesToCleanup = [originalImagePath, imagePath].filter(Boolean);
+      if (imagesToCleanup.length > 0) {
+        setTimeout(async () => {
+          for (const imageToCleanup of imagesToCleanup) {
+            try {
+              await require('fs').promises.unlink(imageToCleanup);
+              logger.info(`Cleaned up image: ${imageToCleanup}`);
+            } catch (error) {
+              logger.warn(`Failed to cleanup image ${imageToCleanup}: ${error.message}`);
+            }
+          }
+        }, 60000); // Cleanup after 1 minute
+      }
+      logger.info(`Successfully sent notification with NFT metadata and traits`);
+      return;
+      
+    } catch (imageError) {
+      logger.warn(`Failed to fetch external NFT image, falling back to text: ${imageError.message}`);
+      
       await this.bot.telegram.sendMessage(
         chatId,
         message,
@@ -607,9 +750,6 @@ class WebhookHandlers {
           disable_web_page_preview: true 
         }
       );
-    } catch (error) {
-      logger.error(`Error in sendNotificationWithImage:`, error);
-      throw error;
     }
   }
 

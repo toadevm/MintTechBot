@@ -91,11 +91,25 @@ class Database {
         payer_address TEXT NOT NULL, -- Ethereum address that sent the payment
         trending_duration INTEGER NOT NULL, -- Duration in hours
         start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-        end_time DATETIME,
+        end_time DATETIME NOT NULL, -- Auto-calculated end time
         is_active BOOLEAN DEFAULT 1,
+        is_validated BOOLEAN DEFAULT 0, -- Whether transaction was verified on blockchain
+        validation_timestamp DATETIME, -- When the transaction was validated
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users (id),
         FOREIGN KEY (token_id) REFERENCES tracked_tokens (id)
+      )`,
+
+      // New table for tracking processed transaction hashes to prevent duplicates
+      `CREATE TABLE IF NOT EXISTS processed_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_hash TEXT UNIQUE NOT NULL,
+        contract_address TEXT NOT NULL,
+        payer_address TEXT NOT NULL,
+        amount TEXT NOT NULL,
+        block_number INTEGER,
+        processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        purpose TEXT -- 'trending_payment', 'direct_payment', etc.
       )`,
 
 
@@ -158,6 +172,9 @@ class Database {
       'CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_id ON user_subscriptions(user_id)',
       'CREATE INDEX IF NOT EXISTS idx_user_subscriptions_token_id ON user_subscriptions(token_id)',
       'CREATE INDEX IF NOT EXISTS idx_trending_payments_active ON trending_payments(is_active, end_time)',
+      'CREATE INDEX IF NOT EXISTS idx_trending_payments_tx_hash ON trending_payments(transaction_hash)',
+      'CREATE INDEX IF NOT EXISTS idx_processed_transactions_hash ON processed_transactions(transaction_hash)',
+      'CREATE INDEX IF NOT EXISTS idx_processed_transactions_contract ON processed_transactions(contract_address)',
       'CREATE INDEX IF NOT EXISTS idx_nft_activities_contract ON nft_activities(contract_address)',
       'CREATE INDEX IF NOT EXISTS idx_nft_activities_created_at ON nft_activities(created_at)',
       'CREATE INDEX IF NOT EXISTS idx_channels_chat_id ON channels(telegram_chat_id)'
@@ -308,9 +325,29 @@ class Database {
   async addTrendingPayment(userId, tokenId, paymentAmount, transactionHash, durationHours, payerAddress = null) {
     const endTime = new Date(Date.now() + (durationHours * 60 * 60 * 1000)).toISOString();
     const sql = `INSERT INTO trending_payments 
-                 (user_id, token_id, payment_amount, transaction_hash, payer_address, trending_duration, end_time) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`;
+                 (user_id, token_id, payment_amount, transaction_hash, payer_address, trending_duration, end_time, is_validated, validation_timestamp) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`;
     return await this.run(sql, [userId, tokenId, paymentAmount, transactionHash, payerAddress, durationHours, endTime]);
+  }
+
+  async isTransactionProcessed(transactionHash) {
+    const sql = 'SELECT id FROM processed_transactions WHERE transaction_hash = ?';
+    const result = await this.get(sql, [transactionHash]);
+    return !!result;
+  }
+
+  async markTransactionProcessed(transactionHash, contractAddress, payerAddress, amount, blockNumber, purpose = 'trending_payment') {
+    const sql = `INSERT OR IGNORE INTO processed_transactions 
+                 (transaction_hash, contract_address, payer_address, amount, block_number, purpose) 
+                 VALUES (?, ?, ?, ?, ?, ?)`;
+    return await this.run(sql, [transactionHash, contractAddress, payerAddress, amount, blockNumber, purpose]);
+  }
+
+  async validateTrendingPayment(trendingPaymentId, transactionHash) {
+    const sql = `UPDATE trending_payments 
+                 SET is_validated = 1, validation_timestamp = CURRENT_TIMESTAMP 
+                 WHERE id = ? AND transaction_hash = ?`;
+    return await this.run(sql, [trendingPaymentId, transactionHash]);
   }
 
   async getTrendingTokens() {

@@ -10,6 +10,7 @@ const BotCommands = require('./src/bot/commands');
 const WebhookHandlers = require('./src/webhooks/handlers');
 const TokenTracker = require('./src/services/tokenTracker');
 const TrendingService = require('./src/services/trendingService');
+const SecureTrendingService = require('./src/services/secureTrendingService');
 const ChannelService = require('./src/services/channelService');
 
 class MintTechBot {
@@ -78,6 +79,16 @@ class MintTechBot {
         };
       }
 
+      // Initialize secure trending service (no private keys)
+      try {
+        this.services.secureTrending = new SecureTrendingService(this.services.db);
+        await this.services.secureTrending.initialize();
+        logger.info('🔒 Secure trending service initialized (no private keys)');
+      } catch (error) {
+        logger.warn('Secure trending service not available:', error.message);
+        this.services.secureTrending = null;
+      }
+
       try {
         this.services.tokenTracker = new TokenTracker(
           this.services.db,
@@ -93,7 +104,8 @@ class MintTechBot {
       this.services.channelService = new ChannelService(
         this.services.db,
         this.bot,
-        this.services.trending
+        this.services.trending,
+        this.services.secureTrending
       );
       await this.services.channelService.initialize();
       logger.info('Channel service initialized');
@@ -110,7 +122,8 @@ class MintTechBot {
         this.services.alchemy,
         this.services.tokenTracker,
         this.services.trending,
-        this.services.channelService
+        this.services.channelService,
+        this.services.secureTrending
       );
       await botCommands.setupCommands(this.bot);
       logger.info('Bot commands setup completed');
@@ -205,7 +218,8 @@ class MintTechBot {
     const webhookHandlers = new WebhookHandlers(
       this.services.db,
       this.bot,
-      this.services.trending
+      this.services.trending,
+      this.services.secureTrending
     );
 
 

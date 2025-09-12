@@ -3,11 +3,12 @@ const logger = require('../services/logger');
 const { ethers } = require('ethers');
 
 class BotCommands {
-  constructor(database, alchemyService, tokenTracker, trendingService, channelService) {
+  constructor(database, alchemyService, tokenTracker, trendingService, channelService, secureTrendingService = null) {
     this.db = database;
     this.alchemy = alchemyService;
     this.tokenTracker = tokenTracker;
     this.trending = trendingService;
+    this.secureTrending = secureTrendingService;
     this.channels = channelService;
 
     this.userStates = new Map();
@@ -64,6 +65,36 @@ Ready to start tracking NFTs? Use the buttons below or /add_token!`;
       logger.info(`New user started bot: ${user.id} (${user.username})`);
     });
 
+    // Add /start command that works the same as /startcandy
+    bot.start(async (ctx) => {
+      const user = ctx.from;
+
+      await this.db.createUser(user.id.toString(), user.username, user.first_name);
+      const welcomeMessage = `🚀 <b>Welcome to MintTechBot!</b> 🚀
+
+I help you track NFT collections and get real-time alerts for:
+• New mints and transfers
+• Sales and price updates  
+• Trending collections
+• Custom token monitoring
+
+<b>Quick Start Commands:</b>
+• /add_token - Add NFT contract to track
+• /my_tokens - View your tracked tokens
+• /trending - See trending NFT collections
+• /buy_trending - Boost NFT trending
+• /help - Full command list
+
+Ready to start tracking NFTs? Use the buttons below or /add_token!`;
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('📈 View Trending', 'view_trending')],
+        [Markup.button.callback('➕ Add Token', 'add_token_start')],
+        [Markup.button.callback('🚀 Boost NFT', 'boost_trending')]
+      ]);
+
+      await ctx.replyWithHTML(welcomeMessage, keyboard);
+      logger.info(`New user started bot: ${user.id} (${user.username})`);
+    });
 
     bot.help(async (ctx) => {
       const helpMessage = `📋 <b>MintTechBot Commands</b>
@@ -76,6 +107,7 @@ Ready to start tracking NFTs? Use the buttons below or /add_token!`;
 💰 <b>Trending &amp; Boost:</b>
 • /trending - View trending collections
 • /buy_trending - Boost NFT trending
+• /validate &lt;txhash&gt; - Validate trending payment
 
 📺 <b>Channel Commands:</b>
 • /add_channel - Add bot to channel
@@ -86,6 +118,60 @@ Ready to start tracking NFTs? Use the buttons below or /add_token!`;
 
 Simple and focused - boost your NFTs easily! 🚀`;
       await ctx.replyWithHTML(helpMessage);
+    });
+
+    // Manual transaction validation command
+    bot.command('validate', async (ctx) => {
+      try {
+        const userId = ctx.from.id;
+        const args = ctx.message.text.split(' ').slice(1);
+        
+        if (args.length === 0) {
+          await ctx.reply(
+            '❌ Please provide a transaction hash.\n\n' +
+            'Usage: `/validate 0xabc123...`\n\n' +
+            'After sending ETH for trending, use this command to validate your payment.',
+            { parse_mode: 'Markdown' }
+          );
+          return;
+        }
+
+        const txHash = args[0];
+        
+        // Validate transaction hash format
+        if (!txHash.startsWith('0x') || txHash.length !== 66) {
+          await ctx.reply('❌ Invalid transaction hash format. Must start with 0x and be 66 characters long.');
+          return;
+        }
+
+        await ctx.reply('🔍 Validating your transaction... Please wait.');
+
+        // Use secure trending service for validation
+        if (!this.secureTrending) {
+          await ctx.reply('❌ Validation service not available. Please try again later.');
+          return;
+        }
+
+        const result = await this.secureTrending.validateUserTransaction(userId, txHash);
+        
+        if (result.success) {
+          const successMessage = `✅ **Payment Validated Successfully!**\n\n` +
+            `🎯 **${result.tokenName}** trending activated!\n` +
+            `⏱️ Duration: ${result.duration} hours\n` +
+            `💰 Amount: ${result.amountEth} ETH\n` +
+            `🔗 TX: \`${txHash}\`\n\n` +
+            `Your NFT is now trending! 🚀`;
+          
+          await ctx.replyWithMarkdown(successMessage);
+          logger.info(`Manual validation successful: user=${userId}, tx=${txHash}`);
+        } else {
+          await ctx.reply(`❌ **Validation Failed**\n\n${result.error}`);
+          logger.warn(`Manual validation failed: user=${userId}, tx=${txHash}, error=${result.error}`);
+        }
+      } catch (error) {
+        logger.error('Error in validate command:', error);
+        await ctx.reply('❌ An error occurred while validating your transaction. Please try again.');
+      }
     });
 
 
@@ -379,17 +465,26 @@ Select an option to boost your NFT collections:`;
           const parts = data.split('_');
           const tokenId = parts[1];
           const duration = parseInt(parts[2]);
+          const isPremium = parts[3] === 'premium';
           await ctx.answerCbQuery();
-          return this.showPaymentInstructions(ctx, tokenId, duration);
+          return this.showPaymentInstructions(ctx, tokenId, duration, isPremium);
         }
 
         if (data.startsWith('submit_tx_')) {
           const parts = data.split('_');
           const tokenId = parts[2];
           const duration = parseInt(parts[3]);
+          const isPremium = parts[4] === 'premium';
           await ctx.answerCbQuery();
 
+          // Store payment type for validation
+          const userId = ctx.from.id.toString();
+          const pendingPayment = this.pendingPayments.get(userId) || {};
+          pendingPayment.isPremium = isPremium;
+          this.pendingPayments.set(userId, pendingPayment);
+
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_TX_HASH);
+          const contractAddress = process.env.SIMPLE_PAYMENT_CONTRACT_ADDRESS || '0xd00D814Da87490eD9D29B645d1EF3946C19E4FD5';
           const message = `📝 **Submit Transaction Hash**
 
 Please send your Ethereum transaction hash now.
@@ -397,7 +492,7 @@ Please send your Ethereum transaction hash now.
 The transaction hash should:
 • Start with 0x
 • Be 66 characters long
-• Be from a transaction sent to: \`${process.env.TRENDING_CONTRACT_ADDRESS}\`
+• Be from a transaction sent to: \`${contractAddress}\`
 
 Example: \`0x1234567890abcdef...\`
 
@@ -594,6 +689,7 @@ Type "cancel" to abort this process.`;
 💰 <b>Trending &amp; Boost:</b>
 • /trending - View trending collections
 • /buy_trending - Boost NFT trending
+• /validate &lt;txhash&gt; - Validate trending payment
 
 📺 <b>Channel Commands:</b>
 • /add_channel - Add bot to channel
@@ -887,17 +983,32 @@ You will no longer receive notifications for this token.`;
         return ctx.reply('❌ Token not found.');
       }
 
-      const trendingOptions = await this.trending.getTrendingOptions();
+      // Use secure trending service with fallback to old service
+      const trendingService = this.secureTrending || this.trending;
+      const trendingOptions = await trendingService.getTrendingOptions();
       logger.info(`Trending options loaded: ${trendingOptions.length} options`);
+      
       let message = `🚀 <b>Boost: ${token.token_name || 'Unknown Collection'}</b>\n\n`;
       message += `📮 <code>${token.contract_address}</code>\n\n`;
-      message += '<b>Select boost duration:</b>';
+      message += '<b>Select boost duration and type:</b>';
 
       const buttons = [];
+      
+      // Add Normal trending options
+      message += '\n\n💫 <b>Normal Trending:</b>';
       trendingOptions.forEach(option => {
         buttons.push([Markup.button.callback(
-          `💰 ${option.label} - ${option.feeEth} ETH`, 
-          `duration_${tokenId}_${option.duration}`
+          `💰 ${option.duration}h Normal - ${option.normalFeeEth} ETH`, 
+          `duration_${tokenId}_${option.duration}_normal`
+        )]);
+      });
+
+      // Add Premium trending options  
+      message += '\n\n⭐ <b>Premium Trending:</b>';
+      trendingOptions.forEach(option => {
+        buttons.push([Markup.button.callback(
+          `🌟 ${option.duration}h Premium - ${option.premiumFeeEth} ETH`, 
+          `duration_${tokenId}_${option.duration}_premium`
         )]);
       });
 
@@ -937,42 +1048,43 @@ Choose an option:`;
     });
   }
 
-  async showPaymentInstructions(ctx, tokenId, duration) {
+  async showPaymentInstructions(ctx, tokenId, duration, isPremium = false) {
     try {
       const userId = ctx.from.id.toString();
-      const instructions = await this.trending.generatePaymentInstructions(tokenId, duration, userId);
-      let message = `💳 *Simple Payment Instructions*\n\n`;
-      message += `🔥 **Collection**: ${instructions.tokenName}\n`;
-      message += `📮 **Contract**: \`${instructions.tokenAddress}\`\n`;
-      message += `⏱️ **Duration**: ${duration} hour${duration > 1 ? 's' : ''}\n`;
-      message += `💰 **Fee**: ${instructions.feeEth} ETH\n\n`;
-      message += `🏦 **Payment Address**:\n\`${instructions.contractAddress}\`\n\n`;
-      message += `🔗 **View on Etherscan**: ${instructions.etherscanUrl}\n\n`;
-      message += `📋 **Payment Instructions**:\n`;
+      
+      // Use secure trending service with fallback to old service
+      const trendingService = this.secureTrending || this.trending;
+      const instructions = await trendingService.generatePaymentInstructions(tokenId, duration, userId, isPremium);
+      
+      let message = `💳 <b>Simple Payment Instructions</b>\n\n`;
+      message += `🔥 Collection: ${instructions.tokenName}\n`;
+      message += `📮 Contract: <code>${instructions.tokenAddress}</code>\n`;
+      message += `⏱️ Duration: ${duration} hours\n`;
+      message += `💰 Fee: ${instructions.feeEth} ETH\n\n`;
+      message += `🏦 Payment Address:\n<code>${instructions.contractAddress}</code>\n\n`;
+      message += `🔗 View on Etherscan: <a href="${instructions.etherscanUrl}">View Contract</a>\n\n`;
+      message += `📋 Payment Instructions:\n`;
       instructions.instructions.forEach((instruction, index) => {
         message += `${index + 1}. ${instruction}\n`;
       });
-      message += `\n✅ **Simple Process**: Just send a regular ETH transfer - no complex contract calls needed!\n`;
-      message += `⏰ **Payment expires in 30 minutes**\n\n`;
+      message += `\n✅ Simple Process: Just send a regular ETH transfer - no complex contract calls needed!\n`;
+      message += `⏰ Payment expires in 30 minutes\n\n`;
       message += `After successful transaction, submit your transaction hash below:`;
-
 
       this.pendingPayments.set(userId, {
         tokenId: tokenId,
         duration: duration,
+        isPremium: isPremium,
         expectedAmount: instructions.fee
       });
 
       const keyboard = [
-        [Markup.button.callback('📝 Submit Transaction Hash', `submit_tx_${tokenId}_${duration}`)],
+        [Markup.button.callback('📝 Submit Transaction Hash', `submit_tx_${tokenId}_${duration}_${isPremium ? 'premium' : 'normal'}`)],
         [Markup.button.callback('◀️ Back to Duration', `promote_${tokenId}`)],
         [Markup.button.callback('🏠 Main Menu', 'main_menu')]
       ];
 
-      return ctx.reply(message, {
-        parse_mode: 'Markdown',
-        reply_markup: Markup.inlineKeyboard(keyboard)
-      });
+      return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
 
     } catch (error) {
       logger.error('Error showing payment instructions:', error);

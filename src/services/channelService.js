@@ -1,10 +1,11 @@
 const logger = require('./logger');
 
 class ChannelService {
-  constructor(database, bot, trendingService) {
+  constructor(database, bot, trendingService, secureTrendingService = null) {
     this.db = database;
     this.bot = bot;
     this.trending = trendingService;
+    this.secureTrending = secureTrendingService;
     this.scheduledMessages = new Map();
   }
 
@@ -261,18 +262,42 @@ Use /channel_settings to configure alerts.`;
 
   async sendTrendingUpdate() {
     try {
-      if (!this.trending) {
-        logger.debug('Trending service not available, skipping broadcast');
-        return;
+      // Check both trending services for tokens
+      let trendingTokens = [];
+      
+      // First try secure trending service (preferred)
+      if (this.secureTrending) {
+        try {
+          const secureTrendingTokens = await this.secureTrending.getTrendingTokens();
+          trendingTokens = trendingTokens.concat(secureTrendingTokens);
+          logger.debug(`Found ${secureTrendingTokens.length} secure trending tokens`);
+        } catch (error) {
+          logger.error('Error getting secure trending tokens:', error);
+        }
+      }
+      
+      // Then try old trending service (fallback)
+      if (this.trending) {
+        try {
+          const oldTrendingTokens = await this.trending.getTrendingTokens();
+          trendingTokens = trendingTokens.concat(oldTrendingTokens);
+          logger.debug(`Found ${oldTrendingTokens.length} old trending tokens`);
+        } catch (error) {
+          logger.error('Error getting old trending tokens:', error);
+        }
       }
 
-      const trendingTokens = await this.trending.getTrendingTokens();
       if (trendingTokens.length === 0) {
-        logger.debug('No trending tokens, skipping broadcast');
+        logger.debug('No trending tokens from either service, skipping broadcast');
         return;
       }
 
-      const message = this.formatTrendingBroadcast(trendingTokens);
+      // Remove duplicates by contract address
+      const uniqueTrendingTokens = trendingTokens.filter((token, index, self) =>
+        index === self.findIndex(t => t.contract_address === token.contract_address)
+      );
+
+      const message = this.formatTrendingBroadcast(uniqueTrendingTokens);
       const result = await this.broadcastToChannels(
         message, 
         'show_trending = 1'

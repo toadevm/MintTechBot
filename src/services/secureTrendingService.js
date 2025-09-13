@@ -735,6 +735,111 @@ class SecureTrendingService {
     }
   }
 
+  async validateFooterPayment(contractAddress, txHash) {
+    try {
+      // Check if transaction already processed
+      if (await this.db.isTransactionProcessed(txHash)) {
+        return {
+          success: false,
+          error: 'This transaction has already been processed.'
+        };
+      }
+
+      // Get transaction data
+      const txData = await this.validateTransactionHelper(txHash);
+      if (!txData.success) {
+        return txData;
+      }
+
+      const paymentAmount = BigInt(txData.transaction.value);
+
+      // Verify correct amount (1.0 ETH)
+      if (paymentAmount.toString() !== this.footerFee.toString()) {
+        return {
+          success: false,
+          error: `Incorrect payment amount.\nExpected: ${ethers.formatEther(this.footerFee)} ETH\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+        };
+      }
+
+      // Check if footer ad already exists for this contract
+      const existingFooterAd = await this.db.getFooterAd(contractAddress);
+      if (existingFooterAd) {
+        return { success: false, error: 'Footer advertisement already active for this contract' };
+      }
+
+      return {
+        success: true,
+        paymentAmount: paymentAmount.toString(),
+        payerAddress: txData.transaction.from
+      };
+
+    } catch (error) {
+      logger.error(`Error validating footer payment: ${error.message}`);
+      return { success: false, error: 'Failed to validate payment. Please try again.' };
+    }
+  }
+
+  async finalizeFooterAd(contractAddress, txHash, customLink, userId) {
+    try {
+      // Get token info for symbol
+      const token = await this.db.getTrackedToken(contractAddress);
+      if (!token) {
+        return { success: false, error: 'Token not found in tracked tokens' };
+      }
+
+      // Double-check that transaction hasn't been processed yet
+      if (await this.db.isTransactionProcessed(txHash)) {
+        return {
+          success: false,
+          error: 'This transaction has already been processed.'
+        };
+      }
+
+      // Get transaction data for payer address
+      const txData = await this.validateTransactionHelper(txHash);
+      if (!txData.success) {
+        return txData;
+      }
+
+      const payerAddress = txData.transaction.from;
+      const paymentAmount = BigInt(txData.transaction.value);
+
+      // Add to database
+      const result = await this.db.addFooterAd(
+        userId,
+        contractAddress,
+        token.token_symbol || token.token_name || 'Unknown',
+        customLink,
+        paymentAmount.toString(),
+        txHash,
+        payerAddress
+      );
+
+      if (result.success) {
+        // Mark transaction as processed
+        await this.db.markTransactionProcessed(
+          txHash,
+          this.simplePaymentContract,
+          payerAddress,
+          paymentAmount.toString()
+        );
+
+        logger.info(`Footer ad finalized: ${contractAddress} - ${ethers.formatEther(paymentAmount)} ETH`);
+
+        return {
+          success: true,
+          message: `Footer advertisement activated!\n\n🎨 Token: ${token.token_symbol || 'Unknown'}\n💰 Payment: ${ethers.formatEther(paymentAmount)} ETH\n🔗 Link: ${customLink}\n⏰ Duration: 30 days\n\nYour ad will now appear in all NFT notifications for this collection!`
+        };
+      } else {
+        return { success: false, error: result.error };
+      }
+
+    } catch (error) {
+      logger.error(`Error finalizing footer ad: ${error.message}`);
+      return { success: false, error: 'Failed to create footer advertisement. Please try again.' };
+    }
+  }
+
   async getActiveFooterAds() {
     try {
       // Expire old footer ads

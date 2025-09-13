@@ -304,18 +304,28 @@ class Database {
   }
 
   async getUserTrackedTokens(userId) {
-    const sql = `SELECT tt.*, us.notification_enabled 
+    const sql = `SELECT tt.*, us.notification_enabled
                  FROM tracked_tokens tt
                  JOIN user_subscriptions us ON tt.id = us.token_id
-                 WHERE us.user_id = ? AND tt.is_active = 1 AND us.notification_enabled = 1
+                 WHERE us.user_id = ? AND tt.is_active = 1 AND (us.notification_enabled = 1 OR us.notification_enabled IS NULL)
                  ORDER BY tt.created_at DESC`;
+    return await this.all(sql, [userId]);
+  }
+
+  // Debug method to see all user subscriptions
+  async getAllUserSubscriptions(userId) {
+    const sql = `SELECT tt.*, us.notification_enabled, us.created_at as subscription_date
+                 FROM tracked_tokens tt
+                 JOIN user_subscriptions us ON tt.id = us.token_id
+                 WHERE us.user_id = ?
+                 ORDER BY us.created_at DESC`;
     return await this.all(sql, [userId]);
   }
 
 
   async subscribeUserToToken(userId, tokenId) {
-    const sql = `INSERT OR IGNORE INTO user_subscriptions (user_id, token_id) 
-                 VALUES (?, ?)`;
+    const sql = `INSERT OR IGNORE INTO user_subscriptions (user_id, token_id, notification_enabled)
+                 VALUES (?, ?, 1)`;
     return await this.run(sql, [userId, tokenId]);
   }
 

@@ -14,6 +14,14 @@ class BotCommands {
     this.userStates = new Map();
     this.STATE_EXPECTING_CONTRACT = 'expecting_contract';
     this.STATE_EXPECTING_TX_HASH = 'expecting_tx_hash';
+    this.STATE_EXPECTING_FOOTER_CONTRACT = 'expecting_footer_contract';
+    this.STATE_EXPECTING_FOOTER_TX_HASH = 'expecting_footer_tx_hash';
+    this.STATE_EXPECTING_FOOTER_LINK = 'expecting_footer_link';
+    this.STATE_EXPECTING_IMAGE_CONTRACT = 'expecting_image_contract';
+    this.STATE_EXPECTING_IMAGE_TX_HASH = 'expecting_image_tx_hash';
+    this.STATE_EXPECTING_VALIDATION_CONTRACT = 'expecting_validation_contract';
+    this.STATE_EXPECTING_VALIDATION_TX_HASH = 'expecting_validation_tx_hash';
+    this.STATE_EXPECTING_VALIDATION_LINK = 'expecting_validation_link';
 
     this.pendingPayments = new Map();
   }
@@ -31,6 +39,21 @@ class BotCommands {
   clearUserState(userId) {
     this.userStates.delete(userId.toString());
     logger.debug(`Cleared state for user ${userId}`);
+  }
+
+  clearUserSessionData(userId, type) {
+    const userIdStr = userId.toString();
+    if (type === 'footer') {
+      this.userStates.delete(userIdStr + '_footer_contract');
+      this.userStates.delete(userIdStr + '_footer_tx');
+    } else if (type === 'image') {
+      this.userStates.delete(userIdStr + '_image_contract');
+    } else if (type === 'validation') {
+      this.userStates.delete(userIdStr + '_validation_type');
+      this.userStates.delete(userIdStr + '_validation_contract');
+      this.userStates.delete(userIdStr + '_validation_tx');
+    }
+    logger.debug(`Cleared ${type} session data for user ${userId}`);
   }
 
   async setupCommands(bot) {
@@ -395,7 +418,22 @@ Simple and focused - boost your NFTs easily! 🚀`;
           return ctx.reply('Please start the bot first with /startcandy');
         }
 
+        logger.info(`/my_tokens - Telegram ID: ${ctx.from.id}, Database User ID: ${user.id}`);
+
+        // Debug: Get all subscriptions to see what's in the database
+        const allSubscriptions = await this.db.getAllUserSubscriptions(user.id);
+        logger.info(`All subscriptions for user ${user.id}:`, allSubscriptions.map(t => ({
+          id: t.id,
+          address: t.contract_address,
+          name: t.token_name,
+          notification_enabled: t.notification_enabled,
+          is_active: t.is_active,
+          subscription_date: t.subscription_date
+        })));
+
         const tokens = await this.db.getUserTrackedTokens(user.id);
+        logger.info(`Filtered tokens for user ${user.id}:`, tokens.map(t => ({ id: t.id, address: t.contract_address, name: t.token_name, notification_enabled: t.notification_enabled })));
+
         if (tokens.length === 0) {
           const keyboard = Markup.inlineKeyboard([
             [Markup.button.callback('➕ Add Your First Token', 'add_token_start')]
@@ -637,6 +675,26 @@ Select an option to boost your NFT collections:`;
           return this.showMainMenu(ctx);
         }
 
+        // Handle cancel operations - clear states and redirect to appropriate menu
+        if (data === 'cancel_footer' || (data === 'menu_footer' && this.getUserState(ctx.from.id))) {
+          await ctx.answerCbQuery();
+          this.clearUserState(ctx.from.id);
+          this.clearUserSessionData(ctx.from.id, 'footer');
+          return this.showFooterMenu(ctx);
+        }
+        if (data === 'cancel_images' || (data === 'menu_images' && this.getUserState(ctx.from.id))) {
+          await ctx.answerCbQuery();
+          this.clearUserState(ctx.from.id);
+          this.clearUserSessionData(ctx.from.id, 'image');
+          return this.showImagesMenu(ctx);
+        }
+        if (data === 'cancel_verify' || (data === 'menu_verify' && this.getUserState(ctx.from.id))) {
+          await ctx.answerCbQuery();
+          this.clearUserState(ctx.from.id);
+          this.clearUserSessionData(ctx.from.id, 'validation');
+          return this.showVerifyMenu(ctx);
+        }
+
         // Submenu handlers
         if (data === 'my_tokens') {
           await ctx.answerCbQuery();
@@ -674,16 +732,18 @@ Select an option to boost your NFT collections:`;
         }
         if (data === 'buy_image_menu') {
           await ctx.answerCbQuery();
-          return ctx.reply('💡 <b>Pay for Actual NFT Images</b>\n\nUse the command: <code>/buy_image &lt;contract_address&gt;</code>\n\nExample: <code>/buy_image 0x1234...abcd</code>', {
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_IMAGE_CONTRACT);
+          return ctx.reply('📝 <b>NFT Image Fee Setup</b>\n\nPlease send me the NFT contract address to enable actual images.\n\n💰 <b>Fee:</b> 0.0040 ETH for 30 days\n\n<i>Example: 0x1234567890abcdef...</i>\n\nType "cancel" to abort.', {
             parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]])
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_images')]])
           });
         }
         if (data === 'buy_footer_menu') {
           await ctx.answerCbQuery();
-          return ctx.reply('💡 <b>Pay for Footer Advertisement</b>\n\nUse the command: <code>/buy_footer &lt;contract_address&gt;</code>\n\nExample: <code>/buy_footer 0x1234...abcd</code>', {
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_CONTRACT);
+          return ctx.reply('📝 <b>Footer Advertisement Setup</b>\n\nPlease send me the NFT contract address you want to advertise.\n\n<i>Example: 0x1234567890abcdef...</i>\n\nType "cancel" to abort.', {
             parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Footer Menu', 'menu_footer')]])
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
           });
         }
         if (data === 'channel_add') {
@@ -703,23 +763,47 @@ Select an option to boost your NFT collections:`;
         }
         if (data === 'verify_trending') {
           await ctx.answerCbQuery();
-          return ctx.reply('💡 <b>Validate Trending Payment</b>\n\nUse the command: <code>/validate &lt;txhash&gt;</code>\n\nExample: <code>/validate 0xabc123...</code>', {
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
+          this.userStates.set(ctx.from.id.toString() + '_validation_type', 'trending');
+          return ctx.reply('🔍 <b>Validate Trending Payment</b>\n\nPlease send me your Ethereum transaction hash.\n\n<i>Example: 0xabc123456789def...</i>\n\nType "cancel" to abort.', {
             parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]])
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
           });
         }
         if (data === 'verify_image') {
           await ctx.answerCbQuery();
-          return ctx.reply('💡 <b>Validate Image Payment</b>\n\nUse the command: <code>/validate_image &lt;contract&gt; &lt;txhash&gt;</code>\n\nExample: <code>/validate_image 0x1234...abcd 0xabc123...</code>', {
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_CONTRACT);
+          this.userStates.set(ctx.from.id.toString() + '_validation_type', 'image');
+          return ctx.reply('🖼️ <b>Validate Image Payment</b>\n\nFirst, please send me the NFT contract address.\n\n<i>Example: 0x1234567890abcdef...</i>\n\nType "cancel" to abort.', {
             parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]])
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
           });
         }
         if (data === 'verify_footer') {
           await ctx.answerCbQuery();
-          return ctx.reply('💡 <b>Validate Footer Payment</b>\n\nUse the command: <code>/validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt;</code>\n\nExample: <code>/validate_footer 0x1234...abcd 0xabc123... https://mytoken.com</code>', {
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_CONTRACT);
+          this.userStates.set(ctx.from.id.toString() + '_validation_type', 'footer');
+          return ctx.reply('🔗 <b>Validate Footer Payment</b>\n\nFirst, please send me the NFT contract address.\n\n<i>Example: 0x1234567890abcdef...</i>\n\nType "cancel" to abort.', {
             parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]])
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
+          });
+        }
+
+        // Submit buttons for transactions
+        if (data === 'submit_footer_tx') {
+          await ctx.answerCbQuery();
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_TX_HASH);
+          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the footer payment.\n\n<i>Example: 0xabc123456789def...</i>\n\nType "cancel" to abort.', {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
+          });
+        }
+        if (data === 'submit_image_tx') {
+          await ctx.answerCbQuery();
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_IMAGE_TX_HASH);
+          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the image fee payment.\n\n<i>Example: 0xabc123456789def...</i>\n\nType "cancel" to abort.', {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_images')]])
           });
         }
 
@@ -877,23 +961,14 @@ Type "cancel" to abort this process.`;
       const userId = ctx.from.id;
       const userState = this.getUserState(userId);
 
-      if (text.match(/^0x[a-fA-F0-9]{40}$/)) {
-        if (userState === this.STATE_EXPECTING_CONTRACT) {
-          await this.handleContractAddress(ctx, text);
-          return;
-        } else {
-
-          await this.handleContractAddress(ctx, text);
-          return;
-        }
-      }
-
+      // Handle cancel command first
       if (text.toLowerCase() === 'cancel' || text.toLowerCase() === '/cancel') {
         this.clearUserState(userId);
         ctx.reply('✅ Operation cancelled.');
         return;
       }
 
+      // Route based on user state first (this takes priority)
       if (userState === this.STATE_EXPECTING_CONTRACT) {
         await this.handleContractAddress(ctx, text);
         return;
@@ -906,10 +981,40 @@ Type "cancel" to abort this process.`;
         }
         await this.handleTransactionHash(ctx, text);
         return;
-      } else {
-
+      } else if (userState === this.STATE_EXPECTING_FOOTER_CONTRACT) {
+        await this.handleFooterContract(ctx, text);
+        return;
+      } else if (userState === this.STATE_EXPECTING_FOOTER_TX_HASH) {
+        await this.handleFooterTxHash(ctx, text);
+        return;
+      } else if (userState === this.STATE_EXPECTING_FOOTER_LINK) {
+        await this.handleFooterLink(ctx, text);
+        return;
+      } else if (userState === this.STATE_EXPECTING_IMAGE_CONTRACT) {
+        await this.handleImageContract(ctx, text);
+        return;
+      } else if (userState === this.STATE_EXPECTING_IMAGE_TX_HASH) {
+        await this.handleImageTxHash(ctx, text);
+        return;
+      } else if (userState === this.STATE_EXPECTING_VALIDATION_CONTRACT) {
+        await this.handleValidationContract(ctx, text);
+        return;
+      } else if (userState === this.STATE_EXPECTING_VALIDATION_TX_HASH) {
+        await this.handleValidationTxHash(ctx, text);
+        return;
+      } else if (userState === this.STATE_EXPECTING_VALIDATION_LINK) {
+        await this.handleValidationLink(ctx, text);
         return;
       }
+
+      // Handle contract addresses without specific state (fallback for add_token)
+      if (text.match(/^0x[a-fA-F0-9]{40}$/)) {
+        await this.handleContractAddress(ctx, text);
+        return;
+      }
+
+      // No matching state or pattern - ignore
+      return;
     });
 
 
@@ -1046,23 +1151,40 @@ Simple and focused - boost your NFTs easily! 🚀`;
         return ctx.reply('Please start the bot first with /startcandy');
       }
 
+      logger.info(`Token addition - Telegram ID: ${ctx.from.id}, Database User ID: ${user.id}, Contract: ${contractAddress}`);
       ctx.reply('🔍 Validating and adding contract...');
-
 
       this.clearUserState(ctx.from.id);
 
-
       const result = await this.tokenTracker.addToken(
-        contractAddress, 
-        user.id, 
+        contractAddress,
+        user.id,
         ctx.from.id.toString()
       );
+
+      logger.info(`Token addition result for user ${user.id}:`, result.success);
 
       if (result.success) {
         await ctx.replyWithMarkdown(result.message);
         logger.info(`Token added: ${contractAddress} by user ${user.id}`);
+
+        // Immediately verify the token appears in user's list for better UX
+        setTimeout(async () => {
+          try {
+            const verifyTokens = await this.db.getUserTrackedTokens(user.id);
+            const addedToken = verifyTokens.find(t => t.contract_address.toLowerCase() === contractAddress.toLowerCase());
+            if (addedToken) {
+              await ctx.reply(`✅ Verification: Token is now in your tracking list! Use /my_tokens to view all your tokens.`);
+            } else {
+              await ctx.reply(`⚠️ Token was added but may not appear immediately. Use /my_tokens to check your list.`);
+            }
+          } catch (error) {
+            logger.error('Error in token verification:', error);
+          }
+        }, 2000);
       } else {
-        await ctx.reply(result.message);
+        await ctx.reply(`❌ ${result.message}\n\nIf you think this is a mistake, try again or contact support.`);
+        logger.error(`Failed to add token ${contractAddress} for user ${user.id}: ${result.message}`);
       }
     } catch (error) {
       logger.error('Error handling contract address:', error);
@@ -1541,6 +1663,492 @@ Choose an option:`;
       ctx.reply('❌ Error retrieving your tokens. Please try again.');
     }
   }
+
+  // Button-Driven Flow Handlers
+  async handleFooterContract(ctx, contractAddress) {
+    try {
+      if (contractAddress.toLowerCase() === 'cancel') {
+        this.clearUserState(ctx.from.id);
+        return this.showFooterMenu(ctx);
+      }
+
+      // Validate contract address format
+      if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
+        return ctx.reply('❌ Invalid contract address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+      }
+
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startcandy');
+      }
+
+      // Check if user has too many pending operations
+      const pendingCount = await this.checkUserPendingOperations(user.id);
+      if (pendingCount >= 5) {
+        this.clearUserState(ctx.from.id);
+        return ctx.reply('❌ You have too many pending operations. Please complete or cancel existing operations before starting new ones.');
+      }
+
+      // Check if contract is already tracked, if not validate and add it
+      ctx.reply('🔍 Validating contract address...');
+
+      let token = await this.db.getTrackedToken(contractAddress);
+      if (!token) {
+        // Contract not tracked yet, validate and add it
+        const result = await this.tokenTracker.addToken(contractAddress, user.id, ctx.from.id.toString());
+        if (!result.success) {
+          this.clearUserState(ctx.from.id);
+          return ctx.reply(`❌ Contract validation failed: ${result.error}`);
+        }
+        // Get the newly added token
+        token = await this.db.getTrackedToken(contractAddress);
+      }
+
+      // Store contract address and generate payment instructions
+      this.userStates.set(ctx.from.id.toString() + '_footer_contract', contractAddress);
+
+      const instructions = await this.secureTrending.generateFooterPaymentInstructions(contractAddress, user.id);
+
+      const message =
+        `💰 <b>Footer Advertisement Payment</b>\n\n` +
+        `🎨 <b>Collection:</b> ${instructions.tokenName || 'Unknown'}\n` +
+        `🎯 <b>Token:</b> ${instructions.tokenSymbol || 'N/A'}\n` +
+        `💸 <b>Fee:</b> ${instructions.feeEth || '1.0'} ETH\n` +
+        `⏰ <b>Duration:</b> ${instructions.duration || '30 days'}\n` +
+        `📮 <b>Contract:</b> <code>${instructions.contractAddress || contractAddress}</code>\n\n` +
+        `📋 <b>Payment Steps:</b>\n` +
+        (instructions.instructions || ['Send payment to contract address']).map((step, i) => `${i + 1}. ${step}`).join('\n') + '\n\n' +
+        (instructions.etherscanUrl ? `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n` : '');
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('📝 Submit Transaction Hash', 'submit_footer_tx')],
+        [Markup.button.callback('◀️ Back to Footer Menu', 'menu_footer')]
+      ]);
+
+      await ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error handling footer contract:', error);
+      this.clearUserState(ctx.from.id);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  async handleFooterTxHash(ctx, txHash) {
+    try {
+      if (txHash.toLowerCase() === 'cancel') {
+        this.clearUserState(ctx.from.id);
+        return this.showFooterMenu(ctx);
+      }
+
+      // Validate transaction hash format
+      if (!txHash.match(/^0x[a-fA-F0-9]{64}$/)) {
+        return ctx.reply('❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).\n\nType "cancel" to abort.');
+      }
+
+      const userId = ctx.from.id.toString();
+      const contractAddress = this.userStates.get(userId + '_footer_contract');
+
+      if (!contractAddress) {
+        this.clearUserState(ctx.from.id);
+        return ctx.reply('❌ Session expired. Please start again.');
+      }
+
+      await ctx.reply('⏳ Validating your footer advertisement payment...');
+
+      // Validate the payment first before asking for URL
+      const paymentValidation = await this.secureTrending.validateFooterPayment(contractAddress, txHash);
+
+      if (!paymentValidation.success) {
+        this.clearUserState(ctx.from.id);
+        return ctx.reply(`❌ Payment validation failed: ${paymentValidation.error}\n\nPlease ensure you sent exactly 1.0 ETH to the payment contract.`);
+      }
+
+      // Payment is valid, store tx hash and ask for link
+      this.userStates.set(userId + '_footer_tx', txHash);
+      this.userStates.set(userId + '_payment_validated', true);
+      this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_LINK);
+
+      return ctx.reply('✅ <b>Payment Verified!</b>\n\n🔗 <b>Custom Link</b>\n\nNow please send me the custom link you want to display in the footer ads.\n\n<i>Example: https://mytoken.com</i>\n\nType "cancel" to abort.', {
+        parse_mode: 'HTML',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
+      });
+    } catch (error) {
+      logger.error('Error handling footer tx hash:', error);
+      this.clearUserState(ctx.from.id);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  async handleFooterLink(ctx, customLink) {
+    try {
+      if (customLink.toLowerCase() === 'cancel') {
+        this.clearUserState(ctx.from.id);
+        return this.showFooterMenu(ctx);
+      }
+
+      const userId = ctx.from.id.toString();
+      const contractAddress = this.userStates.get(userId + '_footer_contract');
+      const txHash = this.userStates.get(userId + '_footer_tx');
+      const paymentValidated = this.userStates.get(userId + '_payment_validated');
+
+      if (!contractAddress || !txHash || !paymentValidated) {
+        this.clearUserState(ctx.from.id);
+        return ctx.reply('❌ Session expired or payment not validated. Please start again.');
+      }
+
+      // Validate URL format
+      try {
+        new URL(customLink);
+      } catch (e) {
+        return ctx.reply('❌ Invalid URL format. Please provide a valid URL (e.g., https://mytoken.com).\n\nType "cancel" to abort.');
+      }
+
+      await ctx.reply('⏳ Creating your footer advertisement...');
+
+      const user = await this.db.getUser(userId);
+      const result = await this.secureTrending.finalizeFooterAd(contractAddress, txHash, customLink, user.id);
+
+      this.clearUserState(ctx.from.id);
+      this.userStates.delete(userId + '_footer_contract');
+      this.userStates.delete(userId + '_footer_tx');
+      this.userStates.delete(userId + '_payment_validated');
+
+      if (result.success) {
+        await ctx.replyWithHTML(`✅ ${result.message}`, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Footer Menu', 'menu_footer')]]));
+      } else {
+        await ctx.replyWithHTML(`❌ ${result.error}`, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Footer Menu', 'menu_footer')]]));
+      }
+    } catch (error) {
+      logger.error('Error handling footer link:', error);
+      this.clearUserState(ctx.from.id);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  async handleImageContract(ctx, contractAddress) {
+    try {
+      if (contractAddress.toLowerCase() === 'cancel') {
+        this.clearUserState(ctx.from.id);
+        return this.showImagesMenu(ctx);
+      }
+
+      // Validate contract address format
+      if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
+        return ctx.reply('❌ Invalid contract address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+      }
+
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startcandy');
+      }
+
+      // Check if user has too many pending operations
+      const pendingCount = await this.checkUserPendingOperations(user.id);
+      if (pendingCount >= 5) {
+        this.clearUserState(ctx.from.id);
+        return ctx.reply('❌ You have too many pending operations. Please complete or cancel existing operations before starting new ones.');
+      }
+
+      // Check if contract is already tracked, if not validate and add it
+      ctx.reply('🔍 Validating contract address...');
+
+      let token = await this.db.getTrackedToken(contractAddress);
+      if (!token) {
+        // Contract not tracked yet, validate and add it
+        const result = await this.tokenTracker.addToken(contractAddress, user.id, ctx.from.id.toString());
+        if (!result.success) {
+          this.clearUserState(ctx.from.id);
+          return ctx.reply(`❌ Contract validation failed: ${result.error}`);
+        }
+        // Get the newly added token
+        token = await this.db.getTrackedToken(contractAddress);
+      }
+
+      // Check if image fee is already active
+      const isActive = await this.secureTrending.isImageFeeActive(contractAddress);
+      if (isActive) {
+        return ctx.reply('✅ Image fee is already active for this contract. Actual NFT images are being displayed.', {
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]])
+        });
+      }
+
+      const instructions = await this.secureTrending.generateImagePaymentInstructions(contractAddress, user.id);
+
+      const message = `💰 <b>Image Fee Payment Instructions</b>\n\n` +
+        `🎨 Collection: <b>${instructions.tokenName}</b>\n` +
+        `📮 Contract: <code>${instructions.tokenAddress}</code>\n` +
+        `💸 Fee: <b>${instructions.feeEth} ETH</b> (30 days)\n\n` +
+        `📋 <b>Payment Steps:</b>\n` +
+        instructions.instructions.join('\n') + '\n\n' +
+        `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n`;
+
+      // Store contract address for later validation
+      this.userStates.set(ctx.from.id.toString() + '_image_contract', contractAddress);
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('📝 Submit Transaction Hash', 'submit_image_tx')],
+        [Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]
+      ]);
+
+      await ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error handling image contract:', error);
+      this.clearUserState(ctx.from.id);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  async handleImageTxHash(ctx, txHash) {
+    try {
+      if (txHash.toLowerCase() === 'cancel') {
+        this.clearUserState(ctx.from.id);
+        return this.showImagesMenu(ctx);
+      }
+
+      // Validate transaction hash format
+      if (!txHash.match(/^0x[a-fA-F0-9]{64}$/)) {
+        return ctx.reply('❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).\n\nType "cancel" to abort.');
+      }
+
+      const userId = ctx.from.id.toString();
+      const contractAddress = this.userStates.get(userId + '_image_contract');
+
+      if (!contractAddress) {
+        this.clearUserState(ctx.from.id);
+        return ctx.reply('❌ Session expired. Please start again.');
+      }
+
+      await ctx.reply('⏳ Validating your image fee transaction...');
+
+      const user = await this.db.getUser(userId);
+      const result = await this.secureTrending.validateImageFeeTransaction(user.id, contractAddress, txHash);
+
+      this.clearUserState(ctx.from.id);
+      this.userStates.delete(userId + '_image_contract');
+
+      if (result.success) {
+        const successMessage = `✅ <b>Image Fee Payment Validated!</b>\n\n` +
+          `🎨 Collection: <b>${result.tokenName}</b>\n` +
+          `📮 Contract: <code>${result.contractAddress}</code>\n` +
+          `💰 Amount: ${result.amountEth} ETH\n` +
+          `📝 Transaction: <code>${result.txHash}</code>\n` +
+          `👤 Payer: <code>${result.payer}</code>\n\n` +
+          `🖼️ <b>Actual NFT images will now be displayed for this contract for 30 days!</b>`;
+
+        await ctx.replyWithHTML(successMessage, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]]));
+      } else {
+        await ctx.reply(`❌ Validation failed: ${result.error}`, {
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]])
+        });
+      }
+    } catch (error) {
+      logger.error('Error handling image tx hash:', error);
+      this.clearUserState(ctx.from.id);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  async handleValidationContract(ctx, contractAddress) {
+    try {
+      if (contractAddress.toLowerCase() === 'cancel') {
+        this.clearUserState(ctx.from.id);
+        return this.showVerifyMenu(ctx);
+      }
+
+      // Validate contract address format
+      if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
+        return ctx.reply('❌ Invalid contract address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+      }
+
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startcandy');
+      }
+
+      // Check if contract is already tracked, if not validate and add it
+      ctx.reply('🔍 Validating contract address...');
+
+      let token = await this.db.getTrackedToken(contractAddress);
+      if (!token) {
+        // Contract not tracked yet, validate and add it
+        const result = await this.tokenTracker.addToken(contractAddress, user.id, ctx.from.id.toString());
+        if (!result.success) {
+          this.clearUserState(ctx.from.id);
+          return ctx.reply(`❌ Contract validation failed: ${result.error}`);
+        }
+        // Get the newly added token
+        token = await this.db.getTrackedToken(contractAddress);
+      }
+
+      const userId = ctx.from.id.toString();
+      const validationType = this.userStates.get(userId + '_validation_type');
+
+      // Store contract address and move to next step
+      this.userStates.set(userId + '_validation_contract', contractAddress);
+      this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
+
+      return ctx.reply(`📝 <b>Transaction Hash Required</b>\n\nNow please send me the transaction hash for your ${validationType} payment.\n\n<i>Example: 0xabc123456789def...</i>\n\nType "cancel" to abort.`, {
+        parse_mode: 'HTML',
+        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
+      });
+    } catch (error) {
+      logger.error('Error handling validation contract:', error);
+      this.clearUserState(ctx.from.id);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  async handleValidationTxHash(ctx, txHash) {
+    try {
+      if (txHash.toLowerCase() === 'cancel') {
+        this.clearUserState(ctx.from.id);
+        return this.showVerifyMenu(ctx);
+      }
+
+      // Validate transaction hash format
+      if (!txHash.match(/^0x[a-fA-F0-9]{64}$/)) {
+        return ctx.reply('❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).\n\nType "cancel" to abort.');
+      }
+
+      const userId = ctx.from.id.toString();
+      const validationType = this.userStates.get(userId + '_validation_type');
+      const contractAddress = this.userStates.get(userId + '_validation_contract');
+
+      if (validationType === 'trending') {
+        // For trending, we can validate immediately
+        await ctx.reply('🔍 Validating your transaction... Please wait.');
+
+        const result = await this.secureTrending.validateUserTransaction(userId, txHash);
+
+        this.clearUserState(ctx.from.id);
+        this.userStates.delete(userId + '_validation_type');
+
+        if (result.success) {
+          const successMessage = `✅ **Payment Validated Successfully!**\n\n` +
+            `🎯 **${result.tokenName}** trending activated!\n` +
+            `⏱️ Duration: ${result.duration} hours\n` +
+            `💰 Amount: ${result.amountEth} ETH\n` +
+            `🔗 TX: \`${txHash}\`\n\n` +
+            `Your NFT is now trending! 🚀`;
+
+          await ctx.replyWithMarkdown(successMessage, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]]));
+        } else {
+          await ctx.reply(`❌ **Validation Failed**\n\n${result.error}`, {
+            parse_mode: 'Markdown',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]])
+          });
+        }
+      } else if (validationType === 'image') {
+        // For image validation, use contract + tx hash
+        if (!contractAddress) {
+          this.clearUserState(ctx.from.id);
+          return ctx.reply('❌ Session expired. Please start again.');
+        }
+
+        await ctx.reply('⏳ Validating your image fee transaction...');
+
+        const user = await this.db.getUser(userId);
+        const result = await this.secureTrending.validateImageFeeTransaction(user.id, contractAddress, txHash);
+
+        this.clearUserState(ctx.from.id);
+        this.userStates.delete(userId + '_validation_type');
+        this.userStates.delete(userId + '_validation_contract');
+
+        if (result.success) {
+          const successMessage = `✅ <b>Image Fee Payment Validated!</b>\n\n` +
+            `🎨 Collection: <b>${result.tokenName}</b>\n` +
+            `📮 Contract: <code>${result.contractAddress}</code>\n` +
+            `💰 Amount: ${result.amountEth} ETH\n` +
+            `📝 Transaction: <code>${result.txHash}</code>\n` +
+            `👤 Payer: <code>${result.payer}</code>\n\n` +
+            `🖼️ <b>Actual NFT images will now be displayed for this contract for 30 days!</b>`;
+
+          await ctx.replyWithHTML(successMessage, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]]));
+        } else {
+          await ctx.reply(`❌ Validation failed: ${result.error}`, {
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]])
+          });
+        }
+      } else if (validationType === 'footer') {
+        // For footer validation, we need to ask for the link next
+        this.userStates.set(userId + '_validation_tx', txHash);
+        this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_LINK);
+
+        return ctx.reply('🔗 <b>Custom Link Required</b>\n\nFinally, please send me the custom link for your footer advertisement.\n\n<i>Example: https://mytoken.com</i>\n\nType "cancel" to abort.', {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
+        });
+      }
+    } catch (error) {
+      logger.error('Error handling validation tx hash:', error);
+      this.clearUserState(ctx.from.id);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  async handleValidationLink(ctx, customLink) {
+    try {
+      if (customLink.toLowerCase() === 'cancel') {
+        this.clearUserState(ctx.from.id);
+        return this.showVerifyMenu(ctx);
+      }
+
+      const userId = ctx.from.id.toString();
+      const contractAddress = this.userStates.get(userId + '_validation_contract');
+      const txHash = this.userStates.get(userId + '_validation_tx');
+
+      if (!contractAddress || !txHash) {
+        this.clearUserState(ctx.from.id);
+        return ctx.reply('❌ Session expired. Please start again.');
+      }
+
+      await ctx.reply('⏳ Validating your footer advertisement transaction...');
+
+      const user = await this.db.getUser(userId);
+      const result = await this.secureTrending.validateFooterTransaction(contractAddress, txHash, customLink, user.id);
+
+      this.clearUserState(ctx.from.id);
+      this.userStates.delete(userId + '_validation_type');
+      this.userStates.delete(userId + '_validation_contract');
+      this.userStates.delete(userId + '_validation_tx');
+
+      if (result.success) {
+        await ctx.replyWithHTML(`✅ ${result.message}`, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]]));
+      } else {
+        await ctx.replyWithHTML(`❌ ${result.error}`, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]]));
+      }
+    } catch (error) {
+      logger.error('Error handling validation link:', error);
+      this.clearUserState(ctx.from.id);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  // Helper method to check user's pending operations for rate limiting
+  async checkUserPendingOperations(userId) {
+    try {
+      // Count active user states that indicate pending operations
+      let pendingCount = 0;
+
+      for (let key of this.userStates.keys()) {
+        if (key.startsWith(userId + '_')) {
+          pendingCount++;
+        }
+      }
+
+      // Also check database for pending payments
+      const pendingPayments = await this.db.get(
+        'SELECT COUNT(*) as count FROM pending_payments WHERE user_id = ? AND is_matched = 0 AND expires_at > datetime("now")',
+        [userId]
+      );
+
+      return pendingCount + (pendingPayments?.count || 0);
+    } catch (error) {
+      logger.error('Error checking user pending operations:', error);
+      return 0; // On error, don't block user
+    }
+  }
+
 }
 
 module.exports = BotCommands;

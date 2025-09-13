@@ -91,9 +91,23 @@ class TokenTracker {
 
       const existingToken = await this.db.getTrackedToken(contractAddress);
       if (existingToken) {
+        // Reactivate token if it was previously deactivated
+        if (!existingToken.is_active) {
+          await this.db.run(
+            'UPDATE tracked_tokens SET is_active = 1 WHERE id = ?',
+            [existingToken.id]
+          );
+          logger.info(`Reactivated previously inactive token ${contractAddress}`);
+        }
 
-        await this.db.subscribeUserToToken(userId, existingToken.id);
-        logger.info(`User ${userId} subscribed to existing token ${contractAddress}`);
+        const subscriptionResult = await this.db.subscribeUserToToken(userId, existingToken.id);
+        logger.info(`User ${userId} subscribed to existing token ${contractAddress}. Subscription result:`, subscriptionResult);
+
+        // Verify subscription was created
+        const userTokens = await this.db.getUserTrackedTokens(userId);
+        const isSubscribed = userTokens.some(token => token.id === existingToken.id);
+        logger.info(`Subscription verification - User ${userId} has ${userTokens.length} tokens, subscribed to ${contractAddress}: ${isSubscribed}`);
+
         return {
           success: true,
           message: `✅ You're now tracking ${existingToken.token_name || 'this NFT collection'}!`,
@@ -122,8 +136,13 @@ class TokenTracker {
       );
 
 
-      await this.db.subscribeUserToToken(userId, tokenResult.id);
+      const subscriptionResult = await this.db.subscribeUserToToken(userId, tokenResult.id);
+      logger.info(`User ${userId} subscribed to new token ${contractAddress} (token ID: ${tokenResult.id}). Subscription result:`, subscriptionResult);
 
+      // Verify subscription was created
+      const userTokens = await this.db.getUserTrackedTokens(userId);
+      const isSubscribed = userTokens.some(token => token.id === tokenResult.id);
+      logger.info(`New token verification - User ${userId} has ${userTokens.length} tokens, subscribed to ${contractAddress}: ${isSubscribed}`);
 
       await this.startTokenDataTracking(contractAddress);
 

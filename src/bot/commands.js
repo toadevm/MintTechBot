@@ -49,12 +49,9 @@ I help you track NFT collections and get real-time alerts for:
 
 <b>Get started by choosing from the organized menu below:</b>`;
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('📊 Manage Tokens', 'menu_tokens')],
-        [Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
-        [Markup.button.callback('🖼️ Buy NFT Images', 'menu_images')],
-        [Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
-        [Markup.button.callback('📺 Channel Settings', 'menu_channels')],
-        [Markup.button.callback('✅ Verify Payments', 'menu_verify')]
+        [Markup.button.callback('📊 Manage Tokens', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
+        [Markup.button.callback('🖼️ Buy NFT Images', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
+        [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')]
       ]);
 
       await ctx.replyWithHTML(welcomeMessage, keyboard);
@@ -76,12 +73,9 @@ I help you track NFT collections and get real-time alerts for:
 
 <b>Get started by choosing from the organized menu below:</b>`;
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('📊 Manage Tokens', 'menu_tokens')],
-        [Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
-        [Markup.button.callback('🖼️ Buy NFT Images', 'menu_images')],
-        [Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
-        [Markup.button.callback('📺 Channel Settings', 'menu_channels')],
-        [Markup.button.callback('✅ Verify Payments', 'menu_verify')]
+        [Markup.button.callback('📊 Manage Tokens', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
+        [Markup.button.callback('🖼️ Buy NFT Images', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
+        [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')]
       ]);
 
       await ctx.replyWithHTML(welcomeMessage, keyboard);
@@ -531,8 +525,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
 Select an option to boost your NFT collections:`;
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('🔥 View Trending', 'view_trending')],
-        [Markup.button.callback('🚀 Boost My Token', 'promote_token')]
+        [Markup.button.callback('🔥 View Trending', 'view_trending'), Markup.button.callback('🚀 Boost My Token', 'promote_token')]
       ]);
 
       await ctx.replyWithMarkdown(message, keyboard);
@@ -658,8 +651,7 @@ Select an option to boost your NFT collections:`;
           const tokens = await this.db.getUserTrackedTokens(user.id);
           if (!tokens || tokens.length === 0) {
             const keyboard = Markup.inlineKeyboard([
-              [Markup.button.callback('➕ Add Token', 'add_token_start')],
-              [Markup.button.callback('◀️ Back to Tokens Menu', 'menu_tokens')]
+              [Markup.button.callback('➕ Add Token', 'add_token_start'), Markup.button.callback('◀️ Back to Tokens Menu', 'menu_tokens')]
             ]);
             return ctx.reply('📝 You have no tracked tokens to remove.\n\nAdd some tokens first!', keyboard);
           }
@@ -1423,12 +1415,9 @@ Choose an option:`;
 
 <b>Choose a category to get started:</b>`;
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('📊 Manage Tokens', 'menu_tokens')],
-      [Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
-      [Markup.button.callback('🖼️ Buy NFT Images', 'menu_images')],
-      [Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
-      [Markup.button.callback('📺 Channel Settings', 'menu_channels')],
-      [Markup.button.callback('✅ Verify Payments', 'menu_verify')]
+      [Markup.button.callback('📊 Manage Tokens', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
+      [Markup.button.callback('🖼️ Buy NFT Images', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
+      [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')]
     ]);
 
     return ctx.replyWithHTML(welcomeMessage, keyboard);
@@ -1439,8 +1428,7 @@ Choose an option:`;
 
 <b>Manage your tracked NFT collections:</b>`;
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('➕ Add NFT Contract', 'add_token_start')],
-      [Markup.button.callback('👁️ View My Tokens', 'my_tokens')],
+      [Markup.button.callback('➕ Add NFT Contract', 'add_token_start'), Markup.button.callback('👁️ View My Tokens', 'my_tokens')],
       [Markup.button.callback('🗑️ Remove NFT Contract', 'remove_token')],
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
@@ -1454,8 +1442,7 @@ Choose an option:`;
 <b>Promote your NFT collections:</b>`;
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('📈 View Trending NFTs', 'view_trending')],
-      [Markup.button.callback('💰 Buy Normal Trending', 'promote_token')],
-      [Markup.button.callback('⭐ Buy Premium Trending', 'promote_token_premium')],
+      [Markup.button.callback('💰 Buy Normal', 'promote_token'), Markup.button.callback('⭐ Buy Premium', 'promote_token_premium')],
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
@@ -1491,8 +1478,7 @@ Choose an option:`;
 
 <b>Configure bot for your channels:</b>`;
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('➕ Add Bot to Channel', 'channel_add')],
-      [Markup.button.callback('⚙️ Configure Channel Alerts', 'channel_settings')],
+      [Markup.button.callback('➕ Add to Channel', 'channel_add'), Markup.button.callback('⚙️ Configure Alerts', 'channel_settings')],
       [Markup.button.callback('🆔 Get Chat ID', 'get_chat_id')],
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
@@ -1505,9 +1491,8 @@ Choose an option:`;
 
 <b>Validate your transaction payments:</b>`;
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('🔍 Validate Trending Payment', 'verify_trending')],
-      [Markup.button.callback('🖼️ Validate Image Payment', 'verify_image')],
-      [Markup.button.callback('🔗 Validate Footer Payment', 'verify_footer')],
+      [Markup.button.callback('🔍 Trending', 'verify_trending'), Markup.button.callback('🖼️ Image', 'verify_image')],
+      [Markup.button.callback('🔗 Footer', 'verify_footer')],
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
@@ -1548,8 +1533,7 @@ Choose an option:`;
         ]);
       });
 
-      keyboard.push([Markup.button.callback('➕ Add More Tokens', 'add_token_start')]);
-      keyboard.push([Markup.button.callback('◀️ Back to Tokens Menu', 'menu_tokens')]);
+      keyboard.push([Markup.button.callback('➕ Add More Tokens', 'add_token_start'), Markup.button.callback('◀️ Back to Tokens Menu', 'menu_tokens')]);
 
       await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
     } catch (error) {

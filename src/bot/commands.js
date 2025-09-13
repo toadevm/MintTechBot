@@ -43,22 +43,18 @@ class BotCommands {
 
 I help you track NFT collections and get real-time alerts for:
 • New mints and transfers
-• Sales and price updates  
+• Sales and price updates
 • Trending collections
 • Custom token monitoring
 
-<b>Quick Start Commands:</b>
-• /add_token - Add NFT contract to track
-• /my_tokens - View your tracked tokens
-• /trending - See trending NFT collections
-• /buy_trending - Boost NFT trending
-• /help - Full command list
-
-Ready to start tracking NFTs? Use the buttons below or /add_token!`;
+<b>Get started by choosing from the organized menu below:</b>`;
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('📈 View Trending', 'view_trending')],
-        [Markup.button.callback('➕ Add Token', 'add_token_start')],
-        [Markup.button.callback('🚀 Boost NFT', 'boost_trending')]
+        [Markup.button.callback('📊 Manage Tokens', 'menu_tokens')],
+        [Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
+        [Markup.button.callback('🖼️ Buy NFT Images', 'menu_images')],
+        [Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
+        [Markup.button.callback('📺 Channel Settings', 'menu_channels')],
+        [Markup.button.callback('✅ Verify Payments', 'menu_verify')]
       ]);
 
       await ctx.replyWithHTML(welcomeMessage, keyboard);
@@ -74,22 +70,18 @@ Ready to start tracking NFTs? Use the buttons below or /add_token!`;
 
 I help you track NFT collections and get real-time alerts for:
 • New mints and transfers
-• Sales and price updates  
+• Sales and price updates
 • Trending collections
 • Custom token monitoring
 
-<b>Quick Start Commands:</b>
-• /add_token - Add NFT contract to track
-• /my_tokens - View your tracked tokens
-• /trending - See trending NFT collections
-• /buy_trending - Boost NFT trending
-• /help - Full command list
-
-Ready to start tracking NFTs? Use the buttons below or /add_token!`;
+<b>Get started by choosing from the organized menu below:</b>`;
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('📈 View Trending', 'view_trending')],
-        [Markup.button.callback('➕ Add Token', 'add_token_start')],
-        [Markup.button.callback('🚀 Boost NFT', 'boost_trending')]
+        [Markup.button.callback('📊 Manage Tokens', 'menu_tokens')],
+        [Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
+        [Markup.button.callback('🖼️ Buy NFT Images', 'menu_images')],
+        [Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
+        [Markup.button.callback('📺 Channel Settings', 'menu_channels')],
+        [Markup.button.callback('✅ Verify Payments', 'menu_verify')]
       ]);
 
       await ctx.replyWithHTML(welcomeMessage, keyboard);
@@ -620,6 +612,123 @@ Select an option to boost your NFT collections:`;
         if (data === 'boost_trending') {
           await ctx.answerCbQuery();
           return this.showPromoteTokenMenu(ctx);
+        }
+
+        // Main menu navigation handlers
+        if (data === 'menu_tokens') {
+          await ctx.answerCbQuery();
+          return this.showTokensMenu(ctx);
+        }
+        if (data === 'menu_trending') {
+          await ctx.answerCbQuery();
+          return this.showTrendingMenu(ctx);
+        }
+        if (data === 'menu_images') {
+          await ctx.answerCbQuery();
+          return this.showImagesMenu(ctx);
+        }
+        if (data === 'menu_footer') {
+          await ctx.answerCbQuery();
+          return this.showFooterMenu(ctx);
+        }
+        if (data === 'menu_channels') {
+          await ctx.answerCbQuery();
+          return this.showChannelsMenu(ctx);
+        }
+        if (data === 'menu_verify') {
+          await ctx.answerCbQuery();
+          return this.showVerifyMenu(ctx);
+        }
+        if (data === 'main_menu') {
+          await ctx.answerCbQuery();
+          return this.showMainMenu(ctx);
+        }
+
+        // Submenu handlers
+        if (data === 'my_tokens') {
+          await ctx.answerCbQuery();
+          return this.showMyTokens(ctx);
+        }
+        if (data === 'remove_token') {
+          await ctx.answerCbQuery();
+          const user = await this.db.getUser(ctx.from.id.toString());
+          if (!user) {
+            return ctx.reply('Please start the bot first with /startcandy');
+          }
+          const tokens = await this.db.getUserTrackedTokens(user.id);
+          if (!tokens || tokens.length === 0) {
+            const keyboard = Markup.inlineKeyboard([
+              [Markup.button.callback('➕ Add Token', 'add_token_start')],
+              [Markup.button.callback('◀️ Back to Tokens Menu', 'menu_tokens')]
+            ]);
+            return ctx.reply('📝 You have no tracked tokens to remove.\n\nAdd some tokens first!', keyboard);
+          }
+          // Call existing remove token functionality
+          let message = `🗑️ <b>Remove Tracked Token</b>\n\nSelect a token to remove from tracking:\n\n`;
+          const keyboard = [];
+          tokens.forEach((token, index) => {
+            message += `${index + 1}. <b>${token.token_name || 'Unknown Collection'}</b>\n`;
+            message += `   📮 <code>${token.contract_address}</code>\n\n`;
+            keyboard.push([{
+              text: `🗑️ Remove ${token.token_name || `Token ${index + 1}`}`,
+              callback_data: `remove_token_${token.id}`
+            }]);
+          });
+          keyboard.push([{
+            text: '◀️ Back to Tokens Menu',
+            callback_data: 'menu_tokens'
+          }]);
+          return ctx.replyWithHTML(message, { reply_markup: { inline_keyboard: keyboard } });
+        }
+        if (data === 'buy_image_menu') {
+          await ctx.answerCbQuery();
+          return ctx.reply('💡 <b>Pay for Actual NFT Images</b>\n\nUse the command: <code>/buy_image &lt;contract_address&gt;</code>\n\nExample: <code>/buy_image 0x1234...abcd</code>', {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]])
+          });
+        }
+        if (data === 'buy_footer_menu') {
+          await ctx.answerCbQuery();
+          return ctx.reply('💡 <b>Pay for Footer Advertisement</b>\n\nUse the command: <code>/buy_footer &lt;contract_address&gt;</code>\n\nExample: <code>/buy_footer 0x1234...abcd</code>', {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Footer Menu', 'menu_footer')]])
+          });
+        }
+        if (data === 'channel_add') {
+          await ctx.answerCbQuery();
+          return ctx.reply('💡 <b>Add Bot to Channel</b>\n\n1. Add this bot to your channel as an admin\n2. Use the command: <code>/add_channel</code> in the channel\n3. Configure notifications with <code>/channel_settings</code>', {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Channels Menu', 'menu_channels')]])
+          });
+        }
+        if (data === 'get_chat_id') {
+          await ctx.answerCbQuery();
+          const chatId = ctx.chat.id;
+          const chatType = ctx.chat.type;
+          const chatTitle = ctx.chat.title || ctx.chat.first_name || 'Unknown';
+          const message = `🆔 <b>Chat Information</b>\n\n<b>Chat ID:</b> <code>${chatId}</code>\n<b>Type:</b> ${chatType}\n<b>Title:</b> ${chatTitle}\n\n<i>Use this chat ID to configure notifications in your bot settings.</i>`;
+          return ctx.replyWithHTML(message, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Channels Menu', 'menu_channels')]]));
+        }
+        if (data === 'verify_trending') {
+          await ctx.answerCbQuery();
+          return ctx.reply('💡 <b>Validate Trending Payment</b>\n\nUse the command: <code>/validate &lt;txhash&gt;</code>\n\nExample: <code>/validate 0xabc123...</code>', {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]])
+          });
+        }
+        if (data === 'verify_image') {
+          await ctx.answerCbQuery();
+          return ctx.reply('💡 <b>Validate Image Payment</b>\n\nUse the command: <code>/validate_image &lt;contract&gt; &lt;txhash&gt;</code>\n\nExample: <code>/validate_image 0x1234...abcd 0xabc123...</code>', {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]])
+          });
+        }
+        if (data === 'verify_footer') {
+          await ctx.answerCbQuery();
+          return ctx.reply('💡 <b>Validate Footer Payment</b>\n\nUse the command: <code>/validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt;</code>\n\nExample: <code>/validate_footer 0x1234...abcd 0xabc123... https://mytoken.com</code>', {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]])
+          });
         }
 
         if (data === 'enter_contract') {
@@ -1305,6 +1414,147 @@ Choose an option:`;
     } catch (error) {
       logger.error('Error showing payment instructions:', error);
       return ctx.reply('❌ Error loading payment instructions. Please try again.');
+    }
+  }
+
+  // Menu Navigation Functions
+  async showMainMenu(ctx) {
+    const welcomeMessage = `🚀 <b>MintTechBot Main Menu</b> 🚀
+
+<b>Choose a category to get started:</b>`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('📊 Manage Tokens', 'menu_tokens')],
+      [Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
+      [Markup.button.callback('🖼️ Buy NFT Images', 'menu_images')],
+      [Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
+      [Markup.button.callback('📺 Channel Settings', 'menu_channels')],
+      [Markup.button.callback('✅ Verify Payments', 'menu_verify')]
+    ]);
+
+    return ctx.replyWithHTML(welcomeMessage, keyboard);
+  }
+
+  async showTokensMenu(ctx) {
+    const message = `📊 <b>Token Management</b>
+
+<b>Manage your tracked NFT collections:</b>`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('➕ Add NFT Contract', 'add_token_start')],
+      [Markup.button.callback('👁️ View My Tokens', 'my_tokens')],
+      [Markup.button.callback('🗑️ Remove NFT Contract', 'remove_token')],
+      [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
+    ]);
+
+    return ctx.replyWithHTML(message, keyboard);
+  }
+
+  async showTrendingMenu(ctx) {
+    const message = `🔥 <b>Trending & Boost</b>
+
+<b>Promote your NFT collections:</b>`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('📈 View Trending NFTs', 'view_trending')],
+      [Markup.button.callback('💰 Buy Normal Trending', 'promote_token')],
+      [Markup.button.callback('⭐ Buy Premium Trending', 'promote_token_premium')],
+      [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
+    ]);
+
+    return ctx.replyWithHTML(message, keyboard);
+  }
+
+  async showImagesMenu(ctx) {
+    const message = `🖼️ <b>NFT Image Display</b>
+
+<b>Enable actual NFT images instead of placeholders:</b>`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('💳 Pay for Actual Images', 'buy_image_menu')],
+      [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
+    ]);
+
+    return ctx.replyWithHTML(message, keyboard);
+  }
+
+  async showFooterMenu(ctx) {
+    const message = `🔗 <b>Footer Advertisement</b>
+
+<b>Advertise your token in notification footers:</b>`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('💳 Pay for Footer Ads', 'buy_footer_menu')],
+      [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
+    ]);
+
+    return ctx.replyWithHTML(message, keyboard);
+  }
+
+  async showChannelsMenu(ctx) {
+    const message = `📺 <b>Channel Management</b>
+
+<b>Configure bot for your channels:</b>`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('➕ Add Bot to Channel', 'channel_add')],
+      [Markup.button.callback('⚙️ Configure Channel Alerts', 'channel_settings')],
+      [Markup.button.callback('🆔 Get Chat ID', 'get_chat_id')],
+      [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
+    ]);
+
+    return ctx.replyWithHTML(message, keyboard);
+  }
+
+  async showVerifyMenu(ctx) {
+    const message = `✅ <b>Verify Payments</b>
+
+<b>Validate your transaction payments:</b>`;
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.callback('🔍 Validate Trending Payment', 'verify_trending')],
+      [Markup.button.callback('🖼️ Validate Image Payment', 'verify_image')],
+      [Markup.button.callback('🔗 Validate Footer Payment', 'verify_footer')],
+      [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
+    ]);
+
+    return ctx.replyWithHTML(message, keyboard);
+  }
+
+  async showMyTokens(ctx) {
+    try {
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startcandy');
+      }
+
+      const tokens = await this.db.getUserTrackedTokens(user.id);
+      if (tokens.length === 0) {
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('➕ Add Your First Token', 'add_token_start')],
+          [Markup.button.callback('◀️ Back to Tokens Menu', 'menu_tokens')]
+        ]);
+        return ctx.replyWithHTML(
+          '🔍 You haven\'t added any tokens yet!\n\nUse the button below to start tracking NFT collections.',
+          keyboard
+        );
+      }
+
+      let message = `🎯 <b>Your Tracked Tokens</b> (${tokens.length})\n\n`;
+      const keyboard = [];
+
+      tokens.forEach((token, index) => {
+        message += `${index + 1}. <b>${token.token_name || 'Unknown'}</b> (${token.token_symbol || 'N/A'})\n`;
+        message += `   📮 <code>${token.contract_address}</code>\n`;
+        message += `   🔔 Notifications: ${token.notification_enabled ? '✅' : '❌'}\n\n`;
+        keyboard.push([
+          Markup.button.callback(
+            `${token.notification_enabled ? '🔕' : '🔔'} ${token.token_name || token.contract_address.slice(0, 8)}...`,
+            `toggle_${token.id}`
+          )
+        ]);
+      });
+
+      keyboard.push([Markup.button.callback('➕ Add More Tokens', 'add_token_start')]);
+      keyboard.push([Markup.button.callback('◀️ Back to Tokens Menu', 'menu_tokens')]);
+
+      await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+    } catch (error) {
+      logger.error('Error in showMyTokens:', error);
+      ctx.reply('❌ Error retrieving your tokens. Please try again.');
     }
   }
 }

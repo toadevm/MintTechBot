@@ -68,6 +68,12 @@ class SecureTrendingService {
         24: ethers.parseEther('0.40')     // 24hrs: 0.40 ETH
       }
     };
+
+    // Image fee configuration (30 days duration)
+    this.imageFee = ethers.parseEther('0.0040'); // 0.0040 ETH for 30 days
+
+    // Footer ad fee configuration (30 days duration)
+    this.footerFee = ethers.parseEther('1.0'); // 1.0 ETH for 30 days
   }
 
   async initialize() {
@@ -485,6 +491,259 @@ class SecureTrendingService {
     });
 
     return message;
+  }
+
+  // Image Fee Methods
+  async generateImagePaymentInstructions(contractAddress, userId) {
+    try {
+      const token = await this.db.get(
+        'SELECT * FROM tracked_tokens WHERE LOWER(contract_address) = LOWER(?)',
+        [contractAddress]
+      );
+
+      if (!token) {
+        throw new Error('Token not found in tracked tokens');
+      }
+
+      const fee = this.imageFee;
+      const feeEth = ethers.formatEther(fee);
+
+      const instructions = {
+        contractAddress: this.simplePaymentContract,
+        tokenAddress: token.contract_address,
+        tokenName: token.token_name || 'Unknown Collection',
+        fee: fee.toString(),
+        feeEth: feeEth,
+        duration: 30, // 30 days
+        instructions: [
+          '1. Open MetaMask and ensure you\'re on Sepolia testnet',
+          `2. Send exactly ${feeEth} ETH to contract address: ${this.simplePaymentContract}`,
+          '3. No additional data or function calls required - just a simple ETH transfer',
+          '4. Wait for transaction confirmation',
+          '5. Copy transaction hash and submit with /validate_image command'
+        ],
+        etherscanUrl: `https://sepolia.etherscan.io/address/${this.simplePaymentContract}`
+      };
+
+      return instructions;
+    } catch (error) {
+      logger.error('Error generating image payment instructions:', error);
+      throw error;
+    }
+  }
+
+  async validateImageFeeTransaction(userId, contractAddress, txHash) {
+    try {
+      logger.info(`Image fee validation requested: user=${userId}, contract=${contractAddress}, tx=${txHash}`);
+
+      // Check if transaction already processed
+      if (await this.db.isTransactionProcessed(txHash)) {
+        return {
+          success: false,
+          error: 'This transaction has already been processed.'
+        };
+      }
+
+      // Get transaction details
+      const txData = await this.getTransaction(txHash);
+      if (!txData.receipt || txData.receipt.status !== 1) {
+        return {
+          success: false,
+          error: 'Transaction failed or not confirmed on blockchain.'
+        };
+      }
+
+      // Verify transaction sent to correct contract
+      if (txData.transaction.to?.toLowerCase() !== this.simplePaymentContract.toLowerCase()) {
+        return {
+          success: false,
+          error: `Transaction not sent to payment contract.\nExpected: ${this.simplePaymentContract}\nReceived: ${txData.transaction.to}`
+        };
+      }
+
+      const paymentAmount = txData.transaction.value;
+      const payerAddress = txData.transaction.from;
+
+      // Verify correct amount (0.0040 ETH)
+      if (paymentAmount.toString() !== this.imageFee.toString()) {
+        return {
+          success: false,
+          error: `Incorrect payment amount.\nExpected: ${ethers.formatEther(this.imageFee)} ETH\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+        };
+      }
+
+      // Check if token exists
+      const token = await this.db.get(
+        'SELECT * FROM tracked_tokens WHERE LOWER(contract_address) = LOWER(?)',
+        [contractAddress]
+      );
+
+      if (!token) {
+        return {
+          success: false,
+          error: 'Contract address not found in tracked tokens'
+        };
+      }
+
+      // Mark transaction as processed
+      await this.db.markTransactionProcessed(
+        txHash,
+        this.simplePaymentContract,
+        payerAddress,
+        paymentAmount.toString(),
+        txData.receipt.blockNumber,
+        'image_fee_payment'
+      );
+
+      // Add image fee payment to database
+      const dbResult = await this.db.addImageFeePayment(
+        userId,
+        contractAddress,
+        paymentAmount.toString(),
+        txHash,
+        payerAddress
+      );
+
+      logger.info(`Image fee payment processed successfully: db_id=${dbResult.id}, tx=${txHash}`);
+      
+      return {
+        success: true,
+        dbId: dbResult.id,
+        tokenName: token.token_name,
+        amount: paymentAmount.toString(),
+        amountEth: ethers.formatEther(paymentAmount),
+        payer: payerAddress,
+        txHash: txHash,
+        contractAddress: contractAddress
+      };
+    } catch (error) {
+      logger.error('Error validating image fee transaction:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  async isImageFeeActive(contractAddress) {
+    try {
+      // Expire old image fee payments
+      await this.db.expireImageFeePayments();
+      return await this.db.isImageFeeActive(contractAddress);
+    } catch (error) {
+      logger.error(`Error checking image fee status for ${contractAddress}:`, error);
+      return false;
+    }
+  }
+
+  async generateFooterPaymentInstructions(contractAddress, userId) {
+    try {
+      // Get token info from database
+      const token = await this.db.getTrackedToken(contractAddress);
+      if (!token) {
+        throw new Error('Token not found in tracked tokens');
+      }
+
+      const fee = this.footerFee;
+      const feeEth = ethers.formatEther(fee);
+
+      const instructions = {
+        tokenName: token.token_name,
+        tokenSymbol: token.token_symbol || 'UNKNOWN',
+        contractAddress: contractAddress,
+        fee: fee.toString(),
+        feeEth: feeEth,
+        duration: '30 days',
+        paymentContract: this.simplePaymentContractAddress,
+        etherscanUrl: `https://sepolia.etherscan.io/address/${this.simplePaymentContractAddress}`,
+        instructions: [
+          `Send exactly ${feeEth} ETH to: ${this.simplePaymentContractAddress}`,
+          `Network: Ethereum Sepolia Testnet`,
+          `Wait for transaction confirmation`,
+          `Use /validate_footer <contract> <txhash> <link> to activate`
+        ]
+      };
+
+      return instructions;
+
+    } catch (error) {
+      logger.error(`Error generating footer payment instructions: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async validateFooterTransaction(contractAddress, txHash, customLink, userId) {
+    try {
+      // Get transaction data
+      const txData = await this.validateTransactionHelper(txHash);
+      if (!txData.success) {
+        return txData;
+      }
+
+      const paymentAmount = BigInt(txData.transaction.value);
+      const payerAddress = txData.transaction.from;
+
+      // Verify correct amount (1.0 ETH)
+      if (paymentAmount.toString() !== this.footerFee.toString()) {
+        return {
+          success: false,
+          error: `Incorrect payment amount.\nExpected: ${ethers.formatEther(this.footerFee)} ETH\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+        };
+      }
+
+      // Get token info for symbol
+      const token = await this.db.getTrackedToken(contractAddress);
+      if (!token) {
+        return { success: false, error: 'Token not found in tracked tokens' };
+      }
+
+      // Validate URL format
+      try {
+        new URL(customLink);
+      } catch (e) {
+        return { success: false, error: 'Invalid URL format for custom link' };
+      }
+
+      // Check if already processed
+      const existingFooterAd = await this.db.getFooterAd(contractAddress);
+      if (existingFooterAd && existingFooterAd.transaction_hash === txHash) {
+        return { success: false, error: 'Footer advertisement already active for this contract' };
+      }
+
+      // Add to database
+      const result = await this.db.addFooterAd(
+        userId,
+        contractAddress,
+        token.token_symbol || 'UNKNOWN',
+        customLink,
+        paymentAmount.toString(),
+        txHash,
+        payerAddress
+      );
+
+      logger.info(`Footer ad payment validated: ${contractAddress} - ${ethers.formatEther(paymentAmount)} ETH`);
+      
+      return {
+        success: true,
+        message: `Footer advertisement activated!\n🎨 Token: ${token.token_symbol || 'UNKNOWN'}\n💰 Fee: ${ethers.formatEther(paymentAmount)} ETH\n⏰ Duration: 30 days\n🔗 Link: ${customLink}`,
+        paymentId: result.id
+      };
+
+    } catch (error) {
+      logger.error(`Error validating footer transaction: ${error.message}`);
+      return { success: false, error: 'Failed to validate transaction. Please try again.' };
+    }
+  }
+
+  async getActiveFooterAds() {
+    try {
+      // Expire old footer ads
+      await this.db.expireFooterAds();
+      return await this.db.getActiveFooterAds();
+    } catch (error) {
+      logger.error('Error getting active footer ads:', error);
+      return [];
+    }
   }
 
   // Get contract balance (read-only)

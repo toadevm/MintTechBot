@@ -298,7 +298,7 @@ class WebhookHandlers {
         WHERE us.token_id = ? AND us.notification_enabled = 1 AND u.is_active = 1
       `, [token.id]);
 
-      const message = this.formatActivityMessage(token, activityData);
+      const message = await this.formatActivityMessage(token, activityData);
 
       const adminChatId = process.env.ADMIN_CHAT_ID;
       if (adminChatId) {
@@ -439,19 +439,12 @@ class WebhookHandlers {
       }
 
       const message = isTrending 
-        ? this.formatTrendingActivityMessage(token, activityData)
-        : this.formatActivityMessage(token, activityData);
+        ? await this.formatTrendingActivityMessage(token, activityData)
+        : await this.formatActivityMessage(token, activityData);
       let notifiedCount = 0;
       for (const channel of channels) {
         try {
-          await this.bot.telegram.sendMessage(
-            channel.telegram_chat_id,
-            message,
-            { 
-              parse_mode: 'Markdown',
-              disable_web_page_preview: true 
-            }
-          );
+          await this.sendNotificationWithImage(channel.telegram_chat_id, message, token, activityData);
           notifiedCount++;
           logger.info(`Sent notification to channel ${channel.telegram_chat_id} (${channel.channel_title})`);
         } catch (error) {
@@ -471,7 +464,7 @@ class WebhookHandlers {
     }
   }
 
-  formatActivityMessage(token, activityData) {
+  async formatActivityMessage(token, activityData) {
     const tokenName = token.token_name || 'NFT Collection';
 
     const isCandyCollection = tokenName.toLowerCase().includes('candy') || 
@@ -504,6 +497,24 @@ class WebhookHandlers {
 
     message += `\n\nPowered by [Candy Codex](https://t.me/testcandybot)`;
 
+    // Add footer advertisements if available
+    if (this.secureTrending) {
+      try {
+        const footerAds = await this.secureTrending.getActiveFooterAds();
+        if (footerAds && footerAds.length > 0) {
+          const adLinks = footerAds.map(ad => `[${ad.token_symbol}](${ad.custom_link})`).join(' 🎨');
+          message += `\n🎨 ${adLinks}`;
+        } else {
+          message += `\n[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)`;
+        }
+      } catch (error) {
+        // If footer ads fail, just show buy ad spot
+        message += `\n[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)`;
+      }
+    } else {
+      message += `\n[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)`;
+    }
+
     return message;
   }
 
@@ -521,9 +532,9 @@ class WebhookHandlers {
     }
   }
 
-  formatTrendingActivityMessage(token, activityData) {
+  async formatTrendingActivityMessage(token, activityData) {
     let message = `🔥 **TRENDING:** ${token.token_name || 'NFT Collection'}\n\n`;
-    message += this.formatActivityMessage(token, activityData);
+    message += await this.formatActivityMessage(token, activityData);
     return message;
   }
 
@@ -665,13 +676,19 @@ class WebhookHandlers {
         nftData = await metadataService.getRandomMongsToken();
       }
       
-      // Download and resize image if available
+      // Check if image fee is paid for this contract
+      const hasImageFee = this.secureTrending ? await this.secureTrending.isImageFeeActive(token.contract_address) : false;
+      
+      // Download and resize image if available and image fee is paid
       let originalImagePath = null;
-      if (nftData.metadata.image) {
+      if (hasImageFee && nftData.metadata.image) {
         originalImagePath = await metadataService.downloadImage(nftData.metadata.image, nftData.tokenId);
         if (originalImagePath) {
           imagePath = await metadataService.resizeImage(originalImagePath, 300, 300);
         }
+      } else if (!hasImageFee) {
+        // Use default image when image fee not paid, resize to 300x300
+        imagePath = await metadataService.resizeImage('./src/bot/defaultNFTImage.jpg', 300, 300);
       }
       
       // Format the enhanced message with traits
@@ -722,8 +739,10 @@ class WebhookHandlers {
         );
       }
       
-      // Cleanup downloaded images after a delay
-      const imagesToCleanup = [originalImagePath, imagePath].filter(Boolean);
+      // Cleanup downloaded images after a delay (but not the default image)
+      const imagesToCleanup = [originalImagePath, imagePath]
+        .filter(Boolean)
+        .filter(path => !path.includes('defaultNFTImage.jpg')); // Don't cleanup default image
       if (imagesToCleanup.length > 0) {
         setTimeout(async () => {
           for (const imageToCleanup of imagesToCleanup) {

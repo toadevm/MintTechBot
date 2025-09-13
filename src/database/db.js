@@ -148,6 +148,43 @@ class Database {
         processed BOOLEAN DEFAULT 0,
         error_message TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+
+      // Image fee payments table for 0.0040 ETH image display fee
+      `CREATE TABLE IF NOT EXISTS image_fee_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        contract_address TEXT NOT NULL,
+        payment_amount TEXT NOT NULL, -- Amount in Wei (0.0040 ETH)
+        transaction_hash TEXT UNIQUE NOT NULL,
+        payer_address TEXT NOT NULL, -- Ethereum address that sent the payment
+        start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        end_time DATETIME NOT NULL, -- Auto-calculated end time (24 hours)
+        is_active BOOLEAN DEFAULT 1,
+        is_validated BOOLEAN DEFAULT 0, -- Whether transaction was verified on blockchain
+        validation_timestamp DATETIME, -- When the transaction was validated
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (id),
+        UNIQUE(contract_address, is_active) -- Only one active image fee per contract
+      )`,
+
+      // Footer ads table for 1 ETH footer advertisement fee
+      `CREATE TABLE IF NOT EXISTS footer_ads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        contract_address TEXT NOT NULL,
+        token_symbol TEXT NOT NULL, -- Token symbol to display in footer
+        custom_link TEXT NOT NULL, -- URL to redirect to when clicked
+        payment_amount TEXT NOT NULL, -- Amount in Wei (1.0 ETH)
+        transaction_hash TEXT UNIQUE NOT NULL,
+        payer_address TEXT NOT NULL, -- Ethereum address that sent the payment
+        start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+        end_time DATETIME NOT NULL, -- Auto-calculated end time (30 days)
+        is_active BOOLEAN DEFAULT 1,
+        is_validated BOOLEAN DEFAULT 0, -- Whether transaction was verified on blockchain
+        validation_timestamp DATETIME, -- When the transaction was validated
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (id)
       )`
     ];
 
@@ -177,7 +214,11 @@ class Database {
       'CREATE INDEX IF NOT EXISTS idx_processed_transactions_contract ON processed_transactions(contract_address)',
       'CREATE INDEX IF NOT EXISTS idx_nft_activities_contract ON nft_activities(contract_address)',
       'CREATE INDEX IF NOT EXISTS idx_nft_activities_created_at ON nft_activities(created_at)',
-      'CREATE INDEX IF NOT EXISTS idx_channels_chat_id ON channels(telegram_chat_id)'
+      'CREATE INDEX IF NOT EXISTS idx_channels_chat_id ON channels(telegram_chat_id)',
+      'CREATE INDEX IF NOT EXISTS idx_image_fee_payments_active ON image_fee_payments(contract_address, is_active, end_time)',
+      'CREATE INDEX IF NOT EXISTS idx_image_fee_payments_tx_hash ON image_fee_payments(transaction_hash)',
+      'CREATE INDEX IF NOT EXISTS idx_footer_ads_active ON footer_ads(is_active, end_time)',
+      'CREATE INDEX IF NOT EXISTS idx_footer_ads_tx_hash ON footer_ads(transaction_hash)'
     ];
 
     for (const index of indexes) {
@@ -403,6 +444,69 @@ class Database {
     const sql = `INSERT INTO webhook_logs (webhook_type, payload, processed, error_message) 
                  VALUES (?, ?, ?, ?)`;
     return await this.run(sql, [webhookType, JSON.stringify(payload), processed, errorMessage]);
+  }
+
+  // Image Fee Payment Methods
+  async addImageFeePayment(userId, contractAddress, paymentAmount, transactionHash, payerAddress) {
+    const endTime = new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)).toISOString(); // 30 days
+    const sql = `INSERT INTO image_fee_payments 
+                 (user_id, contract_address, payment_amount, transaction_hash, payer_address, end_time, is_validated, validation_timestamp) 
+                 VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`;
+    return await this.run(sql, [userId, contractAddress, paymentAmount, transactionHash, payerAddress, endTime]);
+  }
+
+  async isImageFeeActive(contractAddress) {
+    const sql = `SELECT * FROM image_fee_payments 
+                 WHERE LOWER(contract_address) = LOWER(?) 
+                 AND is_active = 1 AND end_time > datetime('now')
+                 ORDER BY created_at DESC LIMIT 1`;
+    const result = await this.get(sql, [contractAddress]);
+    return !!result;
+  }
+
+  async getImageFeePayment(contractAddress) {
+    const sql = `SELECT * FROM image_fee_payments 
+                 WHERE LOWER(contract_address) = LOWER(?) 
+                 AND is_active = 1 AND end_time > datetime('now')
+                 ORDER BY created_at DESC LIMIT 1`;
+    return await this.get(sql, [contractAddress]);
+  }
+
+  async expireImageFeePayments() {
+    const sql = `UPDATE image_fee_payments 
+                 SET is_active = 0 
+                 WHERE is_active = 1 AND end_time <= datetime('now')`;
+    return await this.run(sql);
+  }
+
+  async addFooterAd(userId, contractAddress, tokenSymbol, customLink, paymentAmount, transactionHash, payerAddress) {
+    const endTime = new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)).toISOString(); // 30 days
+    const sql = `INSERT INTO footer_ads 
+                 (user_id, contract_address, token_symbol, custom_link, payment_amount, transaction_hash, payer_address, end_time, is_validated, validation_timestamp) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`;
+    return await this.run(sql, [userId, contractAddress, tokenSymbol, customLink, paymentAmount, transactionHash, payerAddress, endTime]);
+  }
+
+  async getActiveFooterAds() {
+    const sql = `SELECT token_symbol, custom_link FROM footer_ads 
+                 WHERE is_active = 1 AND end_time > datetime('now')
+                 ORDER BY created_at ASC`;
+    return await this.all(sql);
+  }
+
+  async getFooterAd(contractAddress) {
+    const sql = `SELECT * FROM footer_ads 
+                 WHERE LOWER(contract_address) = LOWER(?) 
+                 AND is_active = 1 AND end_time > datetime('now')
+                 ORDER BY created_at DESC LIMIT 1`;
+    return await this.get(sql, [contractAddress]);
+  }
+
+  async expireFooterAds() {
+    const sql = `UPDATE footer_ads 
+                 SET is_active = 0 
+                 WHERE is_active = 1 AND end_time <= datetime('now')`;
+    return await this.run(sql);
   }
 
   async close() {

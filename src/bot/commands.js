@@ -108,6 +108,10 @@ Ready to start tracking NFTs? Use the buttons below or /add_token!`;
 • /trending - View trending collections
 • /buy_trending - Boost NFT trending
 • /validate &lt;txhash&gt; - Validate trending payment
+• /buy_image &lt;contract&gt; - Pay fee for actual NFT images
+• /validate_image &lt;contract&gt; &lt;txhash&gt; - Validate image fee
+• /buy_footer &lt;contract&gt; - Pay fee for footer advertisement
+• /validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt; - Validate footer ad
 
 📺 <b>Channel Commands:</b>
 • /add_channel - Add bot to channel
@@ -170,6 +174,216 @@ Simple and focused - boost your NFTs easily! 🚀`;
         }
       } catch (error) {
         logger.error('Error in validate command:', error);
+        await ctx.reply('❌ An error occurred while validating your transaction. Please try again.');
+      }
+    });
+
+    bot.command('buy_image', async (ctx) => {
+      try {
+        if (!this.secureTrending) {
+          return ctx.reply('❌ Image fee system not available.');
+        }
+
+        const args = ctx.message.text.split(' ');
+        if (args.length < 2) {
+          return ctx.reply(
+            '📖 *Buy Image Fee Usage*\n\n' +
+            '`/buy_image <contract_address>`\n\n' +
+            'Pay 0.0040 ETH to display actual NFT images from token URI for 30 days instead of default placeholder.\n\n' +
+            'Example: `/buy_image 0x1234...abcd`',
+            { parse_mode: 'Markdown' }
+          );
+        }
+
+        const contractAddress = args[1].trim();
+        if (!ethers.isAddress(contractAddress)) {
+          return ctx.reply('❌ Invalid contract address format.');
+        }
+
+        const user = await this.db.getUser(ctx.from.id.toString());
+        if (!user) {
+          return ctx.reply('Please start the bot first with /startcandy');
+        }
+
+        // Check if image fee is already active
+        const isActive = await this.secureTrending.isImageFeeActive(contractAddress);
+        if (isActive) {
+          return ctx.reply('✅ Image fee is already active for this contract. Actual NFT images are being displayed.');
+        }
+
+        const instructions = await this.secureTrending.generateImagePaymentInstructions(contractAddress, user.id);
+        
+        const message = `💰 <b>Image Fee Payment Instructions</b>\n\n` +
+          `🎨 Collection: <b>${instructions.tokenName}</b>\n` +
+          `📮 Contract: <code>${instructions.tokenAddress}</code>\n` +
+          `💸 Fee: <b>${instructions.feeEth} ETH</b> (30 days)\n\n` +
+          `📋 <b>Payment Steps:</b>\n` +
+          instructions.instructions.join('\n') + '\n\n' +
+          `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n` +
+          `⚠️ After payment, use: <code>/validate_image ${instructions.tokenAddress} &lt;txhash&gt;</code>`;
+
+        await ctx.replyWithHTML(message, { disable_web_page_preview: true });
+        logger.info(`Image payment instructions sent: user=${user.id}, contract=${contractAddress}`);
+
+      } catch (error) {
+        logger.error('Error in buy_image command:', error);
+        if (error.message.includes('Token not found')) {
+          ctx.reply('❌ Contract address not found in tracked tokens. Please add it first with /add_token');
+        } else {
+          ctx.reply('❌ An error occurred. Please try again.');
+        }
+      }
+    });
+
+    bot.command('validate_image', async (ctx) => {
+      try {
+        if (!this.secureTrending) {
+          return ctx.reply('❌ Image fee system not available.');
+        }
+
+        const args = ctx.message.text.split(' ');
+        if (args.length < 3) {
+          return ctx.reply(
+            '📖 *Validate Image Fee Usage*\n\n' +
+            '`/validate_image <contract_address> <txhash>`\n\n' +
+            'Validate your 0.0040 ETH image fee payment.\n\n' +
+            'Example: `/validate_image 0x1234...abcd 0xabc123...`',
+            { parse_mode: 'Markdown' }
+          );
+        }
+
+        const contractAddress = args[1].trim();
+        const txHash = args[2].trim();
+
+        if (!ethers.isAddress(contractAddress)) {
+          return ctx.reply('❌ Invalid contract address format.');
+        }
+
+        if (!txHash.startsWith('0x') || txHash.length !== 66) {
+          return ctx.reply('❌ Invalid transaction hash format. Should be 0x followed by 64 characters.');
+        }
+
+        const user = await this.db.getUser(ctx.from.id.toString());
+        if (!user) {
+          return ctx.reply('Please start the bot first with /startcandy');
+        }
+
+        await ctx.reply('⏳ Validating your image fee transaction...');
+
+        const result = await this.secureTrending.validateImageFeeTransaction(user.id, contractAddress, txHash);
+
+        if (result.success) {
+          const successMessage = `✅ *Image Fee Payment Validated!*\n\n` +
+            `🎨 Collection: *${result.tokenName}*\n` +
+            `📮 Contract: \`${result.contractAddress}\`\n` +
+            `💰 Amount: ${result.amountEth} ETH\n` +
+            `📝 Transaction: \`${result.txHash}\`\n` +
+            `👤 Payer: \`${result.payer}\`\n\n` +
+            `🖼️ *Actual NFT images will now be displayed for this contract for 30 days!*`;
+
+          await ctx.replyWithMarkdown(successMessage);
+          logger.info(`Image fee validated: user=${user.id}, contract=${contractAddress}, tx=${txHash}`);
+        } else {
+          await ctx.reply(`❌ Validation failed: ${result.error}`);
+        }
+
+      } catch (error) {
+        logger.error('Error in validate_image command:', error);
+        await ctx.reply('❌ An error occurred while validating your transaction. Please try again.');
+      }
+    });
+
+    bot.command('buy_footer', async (ctx) => {
+      try {
+        if (!this.secureTrending) {
+          return ctx.reply('❌ Footer ad system not available.');
+        }
+
+        const args = ctx.message.text.split(' ');
+        if (args.length < 2) {
+          return ctx.reply(
+            '📖 *Buy Footer Advertisement Usage*\n\n' +
+            '`/buy_footer <contract_address>`\n\n' +
+            'Pay 1.0 ETH to display your token ticker in notification footers for 30 days with custom clickable link.\n\n' +
+            'Example: `/buy_footer 0x1234...abcd`',
+            { parse_mode: 'Markdown' }
+          );
+        }
+
+        const contractAddress = args[1];
+        const user = await this.db.getUser(ctx.from.id.toString());
+        if (!user) {
+          return ctx.reply('❌ Please register first using /start');
+        }
+
+        // Generate payment instructions
+        const instructions = await this.secureTrending.generateFooterPaymentInstructions(contractAddress, user.id);
+        
+        const message = 
+          `💰 *Footer Advertisement Payment*\n\n` +
+          `🎨 *Collection:* ${instructions.tokenName}\n` +
+          `🎯 *Token:* ${instructions.tokenSymbol}\n` +
+          `💸 *Fee:* ${instructions.feeEth} ETH\n` +
+          `⏰ *Duration:* ${instructions.duration}\n` +
+          `📮 *Contract:* \`${instructions.contractAddress}\`\n\n` +
+          `📋 *Payment Steps:*\n` +
+          instructions.instructions.map((step, i) => `${i + 1}. ${step}`).join('\n') + '\n\n' +
+          `🔗 [View Contract on Etherscan](${instructions.etherscanUrl})\n\n` +
+          `⚠️ After payment, use: \`/validate_footer <contract> <txhash> <link>\``;
+
+        await ctx.replyWithMarkdown(message, { disable_web_page_preview: true });
+        logger.info(`Footer payment instructions sent: user=${user.id}, contract=${contractAddress}`);
+
+      } catch (error) {
+        logger.error('Error in buy_footer command:', error);
+        if (error.message.includes('Token not found')) {
+          ctx.reply('❌ Contract address not found in tracked tokens. Please add it first with /add_token');
+        } else {
+          ctx.reply('❌ An error occurred while generating payment instructions. Please try again.');
+        }
+      }
+    });
+
+    bot.command('validate_footer', async (ctx) => {
+      try {
+        if (!this.secureTrending) {
+          return ctx.reply('❌ Footer ad system not available.');
+        }
+
+        const args = ctx.message.text.split(' ');
+        if (args.length < 4) {
+          return ctx.reply(
+            '📖 *Validate Footer Advertisement Usage*\n\n' +
+            '`/validate_footer <contract_address> <txhash> <link>`\n\n' +
+            'Validate your 1.0 ETH footer advertisement payment and set your custom link.\n\n' +
+            'Example: `/validate_footer 0x1234...abcd 0xabc123... https://mytoken.com`',
+            { parse_mode: 'Markdown' }
+          );
+        }
+
+        const contractAddress = args[1];
+        const txHash = args[2];
+        const customLink = args.slice(3).join(' '); // Support URLs with spaces
+
+        const user = await this.db.getUser(ctx.from.id.toString());
+        if (!user) {
+          return ctx.reply('❌ Please register first using /start');
+        }
+
+        await ctx.reply('⏳ Validating your footer advertisement transaction...');
+
+        const result = await this.secureTrending.validateFooterTransaction(contractAddress, txHash, customLink, user.id);
+        
+        if (result.success) {
+          await ctx.reply(`✅ ${result.message}`, { parse_mode: 'Markdown' });
+          logger.info(`Footer ad validated: user=${user.id}, contract=${contractAddress}, txHash=${txHash}`);
+        } else {
+          await ctx.reply(`❌ ${result.error}`, { parse_mode: 'Markdown' });
+          logger.warn(`Footer ad validation failed: user=${user.id}, error=${result.error}`);
+        }
+
+      } catch (error) {
+        logger.error('Error in validate_footer command:', error);
         await ctx.reply('❌ An error occurred while validating your transaction. Please try again.');
       }
     });
@@ -690,6 +904,10 @@ Type "cancel" to abort this process.`;
 • /trending - View trending collections
 • /buy_trending - Boost NFT trending
 • /validate &lt;txhash&gt; - Validate trending payment
+• /buy_image &lt;contract&gt; - Pay fee for actual NFT images
+• /validate_image &lt;contract&gt; &lt;txhash&gt; - Validate image fee
+• /buy_footer &lt;contract&gt; - Pay fee for footer advertisement
+• /validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt; - Validate footer ad
 
 📺 <b>Channel Commands:</b>
 • /add_channel - Add bot to channel

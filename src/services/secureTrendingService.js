@@ -650,17 +650,17 @@ class SecureTrendingService {
       const instructions = {
         tokenName: token.token_name,
         tokenSymbol: token.token_symbol || 'UNKNOWN',
-        contractAddress: contractAddress,
+        contractAddress: this.simplePaymentContract,
         fee: fee.toString(),
         feeEth: feeEth,
         duration: '30 days',
-        paymentContract: this.simplePaymentContractAddress,
-        etherscanUrl: `https://etherscan.io/address/${this.simplePaymentContractAddress}`,
+        paymentContract: this.simplePaymentContract,
+        etherscanUrl: `https://etherscan.io/address/${this.simplePaymentContract}`,
         instructions: [
-          `Send exactly ${feeEth} ETH to: ${this.simplePaymentContractAddress}`,
+          `Send exactly ${feeEth} ETH to: ${this.simplePaymentContract}`,
           `Network: Ethereum Mainnet`,
           `Wait for transaction confirmation`,
-          `Use /validate_footer <contract> <txhash> <link> to activate`
+          `Use /validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt; to activate`
         ]
       };
 

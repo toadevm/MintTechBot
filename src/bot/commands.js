@@ -319,19 +319,19 @@ Simple and focused - boost your NFTs easily! 🚀`;
         // Generate payment instructions
         const instructions = await this.secureTrending.generateFooterPaymentInstructions(contractAddress, user.id);
         
-        const message = 
-          `💰 *Footer Advertisement Payment*\n\n` +
-          `🎨 *Collection:* ${instructions.tokenName}\n` +
-          `🎯 *Token:* ${instructions.tokenSymbol}\n` +
-          `💸 *Fee:* ${instructions.feeEth} ETH\n` +
-          `⏰ *Duration:* ${instructions.duration}\n` +
-          `📮 *Contract:* \`${instructions.contractAddress}\`\n\n` +
-          `📋 *Payment Steps:*\n` +
-          instructions.instructions.map((step, i) => `${i + 1}. ${step}`).join('\n') + '\n\n' +
-          `🔗 [View Contract on Etherscan](${instructions.etherscanUrl})\n\n` +
-          `⚠️ After payment, use: \`/validate_footer <contract> <txhash> <link>\``;
+        const message =
+          `💰 <b>Footer Advertisement Payment</b>\n\n` +
+          `🎨 <b>Collection:</b> ${instructions.tokenName || 'Unknown'}\n` +
+          `🎯 <b>Token:</b> ${instructions.tokenSymbol || 'N/A'}\n` +
+          `💸 <b>Fee:</b> ${instructions.feeEth || '1.0'} ETH\n` +
+          `⏰ <b>Duration:</b> ${instructions.duration || '30 days'}\n` +
+          `📮 <b>Contract:</b> <code>${instructions.contractAddress || contractAddress}</code>\n\n` +
+          `📋 <b>Payment Steps:</b>\n` +
+          (instructions.instructions || ['Send payment to contract address']).map((step, i) => `${i + 1}. ${step}`).join('\n') + '\n\n' +
+          (instructions.etherscanUrl ? `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n` : '') +
+          `⚠️ After payment, use: <code>/validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt;</code>`;
 
-        await ctx.replyWithMarkdown(message, { disable_web_page_preview: true });
+        await ctx.replyWithHTML(message, { disable_web_page_preview: true });
         logger.info(`Footer payment instructions sent: user=${user.id}, contract=${contractAddress}`);
 
       } catch (error) {
@@ -540,8 +540,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
 Select an option to boost your NFT collections:`;
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('🔥 View Trending', 'view_trending')],
-        [Markup.button.callback('🚀 Boost My Token', 'promote_token')],
-        [Markup.button.callback('📊 My Tokens', 'my_tokens')]
+        [Markup.button.callback('🚀 Boost My Token', 'promote_token')]
       ]);
 
       await ctx.replyWithMarkdown(message, keyboard);
@@ -1157,8 +1156,7 @@ You will no longer receive notifications for this token.`;
       const userTokens = await this.tokenTracker.getUserTokens(user.id);
       if (!userTokens || userTokens.length === 0) {
         return ctx.reply(
-          '📝 You need to add some NFT collections first!\n\nUse /add_token to track your first NFT collection.',
-          { parse_mode: 'Markdown' }
+          '📝 You need to add some NFT collections first!\n\nUse /add_token to track your first NFT collection.'
         );
       }
 

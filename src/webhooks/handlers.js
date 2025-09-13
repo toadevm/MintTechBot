@@ -490,7 +490,7 @@ class WebhookHandlers {
     message += `📮 **CA:** \`${this.shortenAddress(token.contract_address)}\`\n`;
     if (activityData.transactionHash) {
       message += `🔗 **TX:** \`${this.shortenAddress(activityData.transactionHash)}\`\n`;
-      message += `[View on Etherscan](https://sepolia.etherscan.io/tx/${activityData.transactionHash})`;
+      message += `[View on Etherscan](https://etherscan.io/tx/${activityData.transactionHash})`;
     } else {
       message += '\n';
     }

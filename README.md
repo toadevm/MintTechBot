@@ -8,7 +8,7 @@ MintTechBot - NFT tracking and trending bot for Telegram with real-time notifica
 - Real-time notifications for transfers, sales, mints
 - Trending system with ETH payments
 - Channel integration
-- Ethereum (Sepolia testnet) support
+- Ethereum mainnet support
 
 ## Tech Stack
 
@@ -38,7 +38,7 @@ Edit `.env`:
 TELEGRAM_BOT_TOKEN=your_token
 ALCHEMY_API_KEY=your_key
 ALCHEMY_AUTH_TOKEN=your_auth_token
-ALCHEMY_NETWORK=eth-sepolia
+ALCHEMY_NETWORK=eth-mainnet
 WEBHOOK_URL=https://your-domain.com
 PORT=3000
 DATABASE_PATH=./database.sqlite

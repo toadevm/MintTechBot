@@ -21,8 +21,8 @@ const logger = winston.createLogger({
 
 class NFTMetadataService {
     constructor() {
-        this.provider = new ethers.JsonRpcProvider(`https://eth-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`);
-        this.mainnetProvider = new ethers.JsonRpcProvider(`https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`);
+        this.provider = new ethers.JsonRpcProvider(`https://eth-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs`);
+        this.mainnetProvider = new ethers.JsonRpcProvider(`https://eth-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs`);
         this.tempDir = path.join(__dirname, '../../temp_images');
         this.ensureTempDir();
         

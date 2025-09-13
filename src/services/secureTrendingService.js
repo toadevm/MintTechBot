@@ -49,7 +49,7 @@ const SIMPLE_PAYMENT_RECEIVER_ABI = [
 class SecureTrendingService {
   constructor(database) {
     this.db = database;
-    this.simplePaymentContract = process.env.SIMPLE_PAYMENT_CONTRACT_ADDRESS || '0xd00D814Da87490eD9D29B645d1EF3946C19E4FD5';
+    this.simplePaymentContract = process.env.SIMPLE_PAYMENT_CONTRACT_ADDRESS || '0x4704eaF9d285a1388c0370Bc7d05334d313f92Be';
     this.contract = null;
     this.provider = null;
     
@@ -83,7 +83,7 @@ class SecureTrendingService {
         return true;
       }
 
-      const alchemyUrl = `https://eth-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
+      const alchemyUrl = `https://eth-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs`;
       this.provider = new ethers.JsonRpcProvider(alchemyUrl);
 
       // Read-only contract instance (no private key needed)
@@ -284,13 +284,13 @@ class SecureTrendingService {
         feeEth: feeEth,
         isPremium: isPremium,
         instructions: [
-          '1. Open MetaMask and ensure you\'re on Sepolia testnet',
+          '1. Open MetaMask and ensure you\'re on Ethereum mainnet',
           `2. Send exactly ${feeEth} ETH to contract address: ${this.simplePaymentContract}`,
           '3. No additional data or function calls required - just a simple ETH transfer',
           '4. Wait for transaction confirmation',
           '5. Copy transaction hash and submit below'
         ],
-        etherscanUrl: `https://sepolia.etherscan.io/address/${this.simplePaymentContract}`
+        etherscanUrl: `https://etherscan.io/address/${this.simplePaymentContract}`
       };
 
       return instructions;
@@ -516,13 +516,13 @@ class SecureTrendingService {
         feeEth: feeEth,
         duration: 30, // 30 days
         instructions: [
-          '1. Open MetaMask and ensure you\'re on Sepolia testnet',
+          '1. Open MetaMask and ensure you\'re on Ethereum mainnet',
           `2. Send exactly ${feeEth} ETH to contract address: ${this.simplePaymentContract}`,
           '3. No additional data or function calls required - just a simple ETH transfer',
           '4. Wait for transaction confirmation',
           '5. Copy transaction hash and submit with /validate_image command'
         ],
-        etherscanUrl: `https://sepolia.etherscan.io/address/${this.simplePaymentContract}`
+        etherscanUrl: `https://etherscan.io/address/${this.simplePaymentContract}`
       };
 
       return instructions;
@@ -655,10 +655,10 @@ class SecureTrendingService {
         feeEth: feeEth,
         duration: '30 days',
         paymentContract: this.simplePaymentContractAddress,
-        etherscanUrl: `https://sepolia.etherscan.io/address/${this.simplePaymentContractAddress}`,
+        etherscanUrl: `https://etherscan.io/address/${this.simplePaymentContractAddress}`,
         instructions: [
           `Send exactly ${feeEth} ETH to: ${this.simplePaymentContractAddress}`,
-          `Network: Ethereum Sepolia Testnet`,
+          `Network: Ethereum Mainnet`,
           `Wait for transaction confirmation`,
           `Use /validate_footer <contract> <txhash> <link> to activate`
         ]

@@ -5,7 +5,7 @@ class AlchemyService {
   constructor() {
     this.settings = {
       apiKey: process.env.ALCHEMY_API_KEY,
-      network: Network.ETH_SEPOLIA,
+      network: Network.ETH_MAINNET,
       authToken: process.env.ALCHEMY_AUTH_TOKEN,
     };
     this.alchemy = null;
@@ -28,7 +28,7 @@ class AlchemyService {
         logger.warn('Alchemy initialized without auth token - webhooks disabled');
       }
       this.alchemy = new Alchemy(config);
-      logger.info('Alchemy SDK initialized for Sepolia testnet');
+      logger.info('Alchemy SDK initialized for Ethereum mainnet');
       return true;
     } catch (error) {
       logger.error('Failed to initialize Alchemy SDK:', error);
@@ -51,7 +51,7 @@ class AlchemyService {
         WebhookType.NFT_ACTIVITY,
         {
           addresses: contractAddresses,
-          network: Network.ETH_SEPOLIA
+          network: Network.ETH_MAINNET
         }
       );
 

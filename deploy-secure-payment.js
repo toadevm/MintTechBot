@@ -6,7 +6,7 @@ async function deploySimplePaymentReceiver() {
     try {
         console.log('🚀 Deploying SimplePaymentReceiver contract...');
 
-        const provider = new ethers.JsonRpcProvider(`https://eth-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`);
+        const provider = new ethers.JsonRpcProvider(`https://eth-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs`);
         const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
 
         const contractSource = fs.readFileSync('./contracts/SimplePaymentReceiver.sol', 'utf8');
@@ -50,7 +50,7 @@ async function deploySimplePaymentReceiver() {
 
         const contractFactory = new ethers.ContractFactory(abi, bytecode, wallet);
         
-        console.log('📡 Deploying to Sepolia testnet...');
+        console.log('📡 Deploying to Ethereum mainnet...');
         const deployedContract = await contractFactory.deploy();
         
         console.log('⏳ Waiting for deployment confirmation...');
@@ -72,7 +72,7 @@ async function deploySimplePaymentReceiver() {
         console.log(`SIMPLE_PAYMENT_CONTRACT_ADDRESS=${contractAddress}`);
 
         console.log('\n🔍 Etherscan link:');
-        console.log(`https://sepolia.etherscan.io/address/${contractAddress}`);
+        console.log(`https://etherscan.io/address/${contractAddress}`);
 
         return contractAddress;
     } catch (error) {

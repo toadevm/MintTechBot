@@ -41,7 +41,7 @@ app.get('/metadata/:tokenId', (req, res) => {
                 value: Math.floor(Math.random() * 100) < 10 ? "Rare" : "Common"
             }
         ],
-        external_url: `https://sepolia.etherscan.io/token/${process.env.MONGS_INSPIRED_CONTRACT_ADDRESS}?a=${tokenId}`,
+        external_url: `https://etherscan.io/token/${process.env.MONGS_INSPIRED_CONTRACT_ADDRESS}?a=${tokenId}`,
         background_color: "000000"
     };
     

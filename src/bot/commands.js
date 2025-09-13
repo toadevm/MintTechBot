@@ -698,7 +698,7 @@ Select an option to boost your NFT collections:`;
           this.pendingPayments.set(userId, pendingPayment);
 
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_TX_HASH);
-          const contractAddress = process.env.SIMPLE_PAYMENT_CONTRACT_ADDRESS || '0xd00D814Da87490eD9D29B645d1EF3946C19E4FD5';
+          const contractAddress = process.env.SIMPLE_PAYMENT_CONTRACT_ADDRESS || '0x4704eaF9d285a1388c0370Bc7d05334d313f92Be';
           const message = `📝 **Submit Transaction Hash**
 
 Please send your Ethereum transaction hash now.

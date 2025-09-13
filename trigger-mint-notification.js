@@ -5,7 +5,7 @@ async function triggerMintNotification() {
     console.log('🎯 Triggering mint to generate bot notification...\n');
     
     try {
-        const provider = new ethers.JsonRpcProvider(`https://eth-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`);
+        const provider = new ethers.JsonRpcProvider(`https://eth-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs`);
         const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
         
         const contractAddress = process.env.MONGS_INSPIRED_CONTRACT_ADDRESS;

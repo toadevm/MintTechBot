@@ -99,7 +99,7 @@ Ready to start tracking NFTs? Use the buttons below or /add_token!`;
     bot.help(async (ctx) => {
       const helpMessage = `📋 <b>MintTechBot Commands</b>
 
-🎯 <b>Token Management:</b>
+🎯 <b>NFT Management:</b>
 • /add_token - Add NFT contract to track
 • /remove_token - Remove tracked NFT  
 • /my_tokens - View your tracked tokens

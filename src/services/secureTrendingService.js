@@ -69,11 +69,23 @@ class SecureTrendingService {
       }
     };
 
-    // Image fee configuration (30 days duration)
-    this.imageFee = ethers.parseEther('0.0040'); // 0.0040 ETH for 30 days
+    // Image fee configuration (multiple durations)
+    this.imageFees = {
+      30: ethers.parseEther('0.004'),   // 30 days: 0.004 ETH
+      60: ethers.parseEther('0.008'),   // 60 days: 0.008 ETH
+      90: ethers.parseEther('0.012'),   // 90 days: 0.012 ETH
+      180: ethers.parseEther('0.024'),  // 180 days: 0.024 ETH
+      365: ethers.parseEther('0.048')   // 365 days: 0.048 ETH
+    };
 
-    // Footer ad fee configuration (30 days duration)
-    this.footerFee = ethers.parseEther('1.0'); // 1.0 ETH for 30 days
+    // Footer ad fee configuration (multiple durations)
+    this.footerFees = {
+      30: ethers.parseEther('1.0'),     // 30 days: 1.0 ETH
+      60: ethers.parseEther('2.0'),     // 60 days: 2.0 ETH
+      90: ethers.parseEther('3.0'),     // 90 days: 3.0 ETH
+      180: ethers.parseEther('6.0'),    // 180 days: 6.0 ETH
+      365: ethers.parseEther('12.0')    // 365 days: 12.0 ETH
+    };
   }
 
   async initialize() {
@@ -144,6 +156,66 @@ class SecureTrendingService {
     }
 
     return trendingOptions;
+  }
+
+  // Calculate image fee for specified duration
+  calculateImageFee(durationDays) {
+    const validDurations = [30, 60, 90, 180, 365];
+
+    if (!validDurations.includes(durationDays)) {
+      throw new Error('Invalid duration. Must be 30, 60, 90, 180, or 365 days');
+    }
+
+    const fee = this.imageFees[durationDays];
+    logger.info(`Calculated image fee for ${durationDays} days: ${ethers.formatEther(fee)} ETH`);
+    return fee;
+  }
+
+  // Calculate footer fee for specified duration
+  calculateFooterFee(durationDays) {
+    const validDurations = [30, 60, 90, 180, 365];
+
+    if (!validDurations.includes(durationDays)) {
+      throw new Error('Invalid duration. Must be 30, 60, 90, 180, or 365 days');
+    }
+
+    const fee = this.footerFees[durationDays];
+    logger.info(`Calculated footer fee for ${durationDays} days: ${ethers.formatEther(fee)} ETH`);
+    return fee;
+  }
+
+  // Get all image fee options
+  getImageFeeOptions() {
+    const imageOptions = [];
+    const durations = [30, 60, 90, 180, 365];
+
+    for (const duration of durations) {
+      imageOptions.push({
+        duration: duration,
+        label: `${duration} Days`,
+        fee: this.imageFees[duration].toString(),
+        feeEth: ethers.formatEther(this.imageFees[duration])
+      });
+    }
+
+    return imageOptions;
+  }
+
+  // Get all footer fee options
+  getFooterFeeOptions() {
+    const footerOptions = [];
+    const durations = [30, 60, 90, 180, 365];
+
+    for (const duration of durations) {
+      footerOptions.push({
+        duration: duration,
+        label: `${duration} Days`,
+        fee: this.footerFees[duration].toString(),
+        feeEth: ethers.formatEther(this.footerFees[duration])
+      });
+    }
+
+    return footerOptions;
   }
 
   // Validate ETH transaction for trending payment
@@ -217,13 +289,14 @@ class SecureTrendingService {
       }
 
       // Mark transaction as processed to prevent duplicates
+      const purpose = isPremium ? 'premium_trending_payment' : 'normal_trending_payment';
       await this.db.markTransactionProcessed(
         txHash,
         this.simplePaymentContract,
         validation.payer,
         validation.amount,
         validation.blockNumber,
-        'trending_payment'
+        purpose
       );
 
       // Add trending payment to database
@@ -284,8 +357,8 @@ class SecureTrendingService {
         feeEth: feeEth,
         isPremium: isPremium,
         instructions: [
-          '1. Open MetaMask and ensure you\'re on Ethereum mainnet',
-          `2. Send exactly ${feeEth} ETH to contract address: ${this.simplePaymentContract}`,
+          `1. <b>SEND EXACTLY ${feeEth.toUpperCase()} ETH</b> TO CONTRACT ADDRESS: ${this.simplePaymentContract}`,
+          '2. Use any Ethereum wallet on mainnet',
           '3. No additional data or function calls required - just a simple ETH transfer',
           '4. Wait for transaction confirmation',
           '5. Copy transaction hash and submit below'
@@ -364,7 +437,7 @@ class SecureTrendingService {
         payerAddress,
         paymentAmount.toString(),
         txData.receipt.blockNumber,
-        'manual_validation'
+        'manual_trending_validation'
       );
 
       // Process the trending payment
@@ -470,7 +543,7 @@ class SecureTrendingService {
   // Format trending message for display
   formatTrendingMessage(trendingTokens) {
     if (!trendingTokens || trendingTokens.length === 0) {
-      return '📊 *No trending tokens right now*\n\nBe the first to promote your NFT collection!';
+      return '📊 *No trending NFTs right now*\n\nBe the first to promote your NFT collection!';
     }
 
     let message = '🔥 *Trending NFT Collections*\n\n';
@@ -494,7 +567,7 @@ class SecureTrendingService {
   }
 
   // Image Fee Methods
-  async generateImagePaymentInstructions(contractAddress, userId) {
+  async generateImagePaymentInstructions(contractAddress, userId, durationDays = 30) {
     try {
       const token = await this.db.get(
         'SELECT * FROM tracked_tokens WHERE LOWER(contract_address) = LOWER(?)',
@@ -505,7 +578,7 @@ class SecureTrendingService {
         throw new Error('Token not found in tracked tokens');
       }
 
-      const fee = this.imageFee;
+      const fee = this.calculateImageFee(durationDays);
       const feeEth = ethers.formatEther(fee);
 
       const instructions = {
@@ -514,10 +587,10 @@ class SecureTrendingService {
         tokenName: token.token_name || 'Unknown Collection',
         fee: fee.toString(),
         feeEth: feeEth,
-        duration: 30, // 30 days
+        duration: durationDays,
         instructions: [
-          '1. Open MetaMask and ensure you\'re on Ethereum mainnet',
-          `2. Send exactly ${feeEth} ETH to contract address: ${this.simplePaymentContract}`,
+          `1. <b>SEND EXACTLY ${feeEth.toUpperCase()} ETH</b> TO CONTRACT ADDRESS: ${this.simplePaymentContract}`,
+          '2. Use any Ethereum wallet on mainnet',
           '3. No additional data or function calls required - just a simple ETH transfer',
           '4. Wait for transaction confirmation',
           '5. Copy transaction hash and submit with /validate_image command'
@@ -532,9 +605,9 @@ class SecureTrendingService {
     }
   }
 
-  async validateImageFeeTransaction(userId, contractAddress, txHash) {
+  async validateImageFeeTransaction(userId, contractAddress, txHash, durationDays = null) {
     try {
-      logger.info(`Image fee validation requested: user=${userId}, contract=${contractAddress}, tx=${txHash}`);
+      logger.info(`Image fee validation requested: user=${userId}, contract=${contractAddress}, tx=${txHash}, duration=${durationDays}`);
 
       // Check if transaction already processed
       if (await this.db.isTransactionProcessed(txHash)) {
@@ -564,11 +637,34 @@ class SecureTrendingService {
       const paymentAmount = txData.transaction.value;
       const payerAddress = txData.transaction.from;
 
-      // Verify correct amount (0.0040 ETH)
-      if (paymentAmount.toString() !== this.imageFee.toString()) {
+      // Auto-detect duration if not provided by checking payment amount
+      let detectedDuration = durationDays;
+      if (!detectedDuration) {
+        const durations = [30, 60, 90, 180, 365];
+        for (const duration of durations) {
+          if (paymentAmount.toString() === this.imageFees[duration].toString()) {
+            detectedDuration = duration;
+            break;
+          }
+        }
+      }
+
+      if (!detectedDuration) {
+        const validAmounts = Object.entries(this.imageFees).map(([days, amount]) =>
+          `${days} days: ${ethers.formatEther(amount)} ETH`
+        ).join(', ');
         return {
           success: false,
-          error: `Incorrect payment amount.\nExpected: ${ethers.formatEther(this.imageFee)} ETH\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+          error: `Invalid payment amount. Valid amounts: ${validAmounts}\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+        };
+      }
+
+      // Verify correct amount for detected duration
+      const expectedAmount = this.calculateImageFee(detectedDuration);
+      if (paymentAmount.toString() !== expectedAmount.toString()) {
+        return {
+          success: false,
+          error: `Incorrect payment amount for ${detectedDuration} days.\nExpected: ${ethers.formatEther(expectedAmount)} ETH\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
         };
       }
 
@@ -601,17 +697,19 @@ class SecureTrendingService {
         contractAddress,
         paymentAmount.toString(),
         txHash,
-        payerAddress
+        payerAddress,
+        detectedDuration
       );
 
-      logger.info(`Image fee payment processed successfully: db_id=${dbResult.id}, tx=${txHash}`);
-      
+      logger.info(`Image fee payment processed successfully: db_id=${dbResult.id}, tx=${txHash}, duration=${detectedDuration} days`);
+
       return {
         success: true,
         dbId: dbResult.id,
         tokenName: token.token_name,
         amount: paymentAmount.toString(),
         amountEth: ethers.formatEther(paymentAmount),
+        duration: detectedDuration,
         payer: payerAddress,
         txHash: txHash,
         contractAddress: contractAddress
@@ -636,7 +734,56 @@ class SecureTrendingService {
     }
   }
 
-  async generateFooterPaymentInstructions(contractAddress, userId) {
+  async getImageFeeStatus(contractAddress) {
+    try {
+      // Expire old image fee payments first
+      await this.db.expireImageFeePayments();
+
+      const imageFeePayment = await this.db.get(
+        `SELECT * FROM image_fee_payments
+         WHERE LOWER(contract_address) = LOWER(?)
+         AND is_active = 1
+         AND end_time > datetime('now')
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [contractAddress]
+      );
+
+      if (!imageFeePayment) {
+        return {
+          hasActiveFee: false,
+          message: 'No active image fee payment found for this contract'
+        };
+      }
+
+      const endTime = new Date(imageFeePayment.end_time);
+      const now = new Date();
+      const daysLeft = Math.max(0, Math.ceil((endTime - now) / (1000 * 60 * 60 * 24)));
+
+      return {
+        hasActiveFee: true,
+        paymentId: imageFeePayment.id,
+        contractAddress: imageFeePayment.contract_address,
+        amount: imageFeePayment.amount,
+        amountEth: ethers.formatEther(imageFeePayment.amount),
+        duration: imageFeePayment.duration_days,
+        daysLeft: daysLeft,
+        txHash: imageFeePayment.transaction_hash,
+        payer: imageFeePayment.payer_address,
+        startTime: imageFeePayment.created_at,
+        endTime: imageFeePayment.end_time,
+        message: `✅ Image fee active - ${daysLeft} days remaining`
+      };
+    } catch (error) {
+      logger.error(`Error getting image fee status for ${contractAddress}:`, error);
+      return {
+        hasActiveFee: false,
+        error: error.message
+      };
+    }
+  }
+
+  async generateFooterPaymentInstructions(contractAddress, userId, durationDays = 30) {
     try {
       // Get token info from database
       const token = await this.db.getTrackedToken(contractAddress);
@@ -644,7 +791,7 @@ class SecureTrendingService {
         throw new Error('Token not found in tracked tokens');
       }
 
-      const fee = this.footerFee;
+      const fee = this.calculateFooterFee(durationDays);
       const feeEth = ethers.formatEther(fee);
 
       const instructions = {
@@ -653,7 +800,7 @@ class SecureTrendingService {
         contractAddress: this.simplePaymentContract,
         fee: fee.toString(),
         feeEth: feeEth,
-        duration: '30 days',
+        duration: `${durationDays} days`,
         paymentContract: this.simplePaymentContract,
         etherscanUrl: `https://etherscan.io/address/${this.simplePaymentContract}`,
         instructions: [
@@ -672,7 +819,7 @@ class SecureTrendingService {
     }
   }
 
-  async validateFooterTransaction(contractAddress, txHash, customLink, userId) {
+  async validateFooterTransaction(contractAddress, txHash, customLink, userId, durationDays = null) {
     try {
       // Get transaction data
       const txData = await this.validateTransactionHelper(txHash);
@@ -683,11 +830,34 @@ class SecureTrendingService {
       const paymentAmount = BigInt(txData.transaction.value);
       const payerAddress = txData.transaction.from;
 
-      // Verify correct amount (1.0 ETH)
-      if (paymentAmount.toString() !== this.footerFee.toString()) {
+      // Auto-detect duration if not provided by checking payment amount
+      let detectedDuration = durationDays;
+      if (!detectedDuration) {
+        const durations = [30, 60, 90, 180, 365];
+        for (const duration of durations) {
+          if (paymentAmount.toString() === this.footerFees[duration].toString()) {
+            detectedDuration = duration;
+            break;
+          }
+        }
+      }
+
+      if (!detectedDuration) {
+        const validAmounts = Object.entries(this.footerFees).map(([days, amount]) =>
+          `${days} days: ${ethers.formatEther(amount)} ETH`
+        ).join(', ');
         return {
           success: false,
-          error: `Incorrect payment amount.\nExpected: ${ethers.formatEther(this.footerFee)} ETH\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+          error: `Invalid payment amount. Valid amounts: ${validAmounts}\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+        };
+      }
+
+      // Verify correct amount for detected duration
+      const expectedAmount = this.calculateFooterFee(detectedDuration);
+      if (paymentAmount.toString() !== expectedAmount.toString()) {
+        return {
+          success: false,
+          error: `Incorrect payment amount for ${detectedDuration} days.\nExpected: ${ethers.formatEther(expectedAmount)} ETH\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
         };
       }
 
@@ -718,14 +888,15 @@ class SecureTrendingService {
         customLink,
         paymentAmount.toString(),
         txHash,
-        payerAddress
+        payerAddress,
+        detectedDuration
       );
 
-      logger.info(`Footer ad payment validated: ${contractAddress} - ${ethers.formatEther(paymentAmount)} ETH`);
-      
+      logger.info(`Footer ad payment validated: ${contractAddress} - ${ethers.formatEther(paymentAmount)} ETH, duration=${detectedDuration} days`);
+
       return {
         success: true,
-        message: `Footer advertisement activated!\n🎨 Token: ${token.token_symbol || 'UNKNOWN'}\n💰 Fee: ${ethers.formatEther(paymentAmount)} ETH\n⏰ Duration: 30 days\n🔗 Link: ${customLink}`,
+        message: `Footer advertisement activated!\n🎨 Token: ${token.token_symbol || 'UNKNOWN'}\n💰 Fee: ${ethers.formatEther(paymentAmount)} ETH\n⏰ Duration: ${detectedDuration} days\n🔗 Link: ${customLink}`,
         paymentId: result.id
       };
 
@@ -753,11 +924,23 @@ class SecureTrendingService {
 
       const paymentAmount = BigInt(txData.transaction.value);
 
-      // Verify correct amount (1.0 ETH)
-      if (paymentAmount.toString() !== this.footerFee.toString()) {
+      // Auto-detect duration by checking payment amount
+      let detectedDuration = null;
+      const durations = [30, 60, 90, 180, 365];
+      for (const duration of durations) {
+        if (paymentAmount.toString() === this.footerFees[duration].toString()) {
+          detectedDuration = duration;
+          break;
+        }
+      }
+
+      if (!detectedDuration) {
+        const validAmounts = Object.entries(this.footerFees).map(([days, amount]) =>
+          `${days} days: ${ethers.formatEther(amount)} ETH`
+        ).join(', ');
         return {
           success: false,
-          error: `Incorrect payment amount.\nExpected: ${ethers.formatEther(this.footerFee)} ETH\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+          error: `Invalid payment amount. Valid amounts: ${validAmounts}\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
         };
       }
 
@@ -804,6 +987,23 @@ class SecureTrendingService {
       const payerAddress = txData.transaction.from;
       const paymentAmount = BigInt(txData.transaction.value);
 
+      // Auto-detect duration by checking payment amount
+      let detectedDuration = null;
+      const durations = [30, 60, 90, 180, 365];
+      for (const duration of durations) {
+        if (paymentAmount.toString() === this.footerFees[duration].toString()) {
+          detectedDuration = duration;
+          break;
+        }
+      }
+
+      if (!detectedDuration) {
+        return {
+          success: false,
+          error: 'Invalid payment amount for footer advertisement'
+        };
+      }
+
       // Add to database
       const result = await this.db.addFooterAd(
         userId,
@@ -812,7 +1012,8 @@ class SecureTrendingService {
         customLink,
         paymentAmount.toString(),
         txHash,
-        payerAddress
+        payerAddress,
+        detectedDuration
       );
 
       if (result.success) {
@@ -821,14 +1022,16 @@ class SecureTrendingService {
           txHash,
           this.simplePaymentContract,
           payerAddress,
-          paymentAmount.toString()
+          paymentAmount.toString(),
+          txData.receipt.blockNumber,
+          'footer_ad_payment'
         );
 
-        logger.info(`Footer ad finalized: ${contractAddress} - ${ethers.formatEther(paymentAmount)} ETH`);
+        logger.info(`Footer ad finalized: ${contractAddress} - ${ethers.formatEther(paymentAmount)} ETH, duration=${detectedDuration} days`);
 
         return {
           success: true,
-          message: `Footer advertisement activated!\n\n🎨 Token: ${token.token_symbol || 'Unknown'}\n💰 Payment: ${ethers.formatEther(paymentAmount)} ETH\n🔗 Link: ${customLink}\n⏰ Duration: 30 days\n\nYour ad will now appear in all NFT notifications for this collection!`
+          message: `Footer advertisement activated!\n\n🎨 Token: ${token.token_symbol || 'Unknown'}\n💰 Payment: ${ethers.formatEther(paymentAmount)} ETH\n🔗 Link: ${customLink}\n⏰ Duration: ${detectedDuration} days\n\nYour ad will now appear in all NFT notifications for this collection!`
         };
       } else {
         return { success: false, error: result.error };
@@ -848,6 +1051,48 @@ class SecureTrendingService {
     } catch (error) {
       logger.error('Error getting active footer ads:', error);
       return [];
+    }
+  }
+
+  // Helper method for transaction validation (consolidates common logic)
+  async validateTransactionHelper(txHash) {
+    try {
+      // Check if transaction already processed
+      if (await this.db.isTransactionProcessed(txHash)) {
+        return {
+          success: false,
+          error: 'This transaction has already been processed.'
+        };
+      }
+
+      // Get transaction details
+      const txData = await this.getTransaction(txHash);
+      if (!txData.receipt || txData.receipt.status !== 1) {
+        return {
+          success: false,
+          error: 'Transaction failed or not confirmed on blockchain.'
+        };
+      }
+
+      // Verify transaction sent to correct contract
+      if (txData.transaction.to?.toLowerCase() !== this.simplePaymentContract.toLowerCase()) {
+        return {
+          success: false,
+          error: `Transaction not sent to payment contract.\nExpected: ${this.simplePaymentContract}\nReceived: ${txData.transaction.to}`
+        };
+      }
+
+      return {
+        success: true,
+        transaction: txData.transaction,
+        receipt: txData.receipt
+      };
+    } catch (error) {
+      logger.error(`Error validating transaction ${txHash}:`, error);
+      return {
+        success: false,
+        error: `Validation error: ${error.message}`
+      };
     }
   }
 

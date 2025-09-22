@@ -371,27 +371,28 @@ class WebhookHandlers {
         try {
           const isTrendingSecure = await this.secureTrending.isTokenTrending(contractAddress);
           if (isTrendingSecure) {
-            logger.debug(`Token ${contractAddress} is trending via secure service`);
+            logger.info(`🔐 VERIFIED: Token ${contractAddress} has valid trending payment`);
             return true;
           }
         } catch (error) {
           logger.error('Error checking secure trending service:', error);
         }
       }
-      
+
       // Fall back to old trending service
       if (this.trending) {
         try {
           const isTrendingOld = await this.trending.isTokenTrending(contractAddress);
           if (isTrendingOld) {
-            logger.debug(`Token ${contractAddress} is trending via old service`);
+            logger.info(`🔐 VERIFIED: Token ${contractAddress} is trending via legacy service`);
             return true;
           }
         } catch (error) {
           logger.error('Error checking old trending service:', error);
         }
       }
-      
+
+      logger.info(`🚫 NO PAYMENT: Token ${contractAddress} has no active trending payment`);
       return false;
     } catch (error) {
       logger.error('Error in unified trending check:', error);
@@ -399,11 +400,32 @@ class WebhookHandlers {
     }
   }
 
+  // Secure verification for channel notifications with detailed logging
+  async verifyChannelNotificationPermission(contractAddress, tokenName) {
+    try {
+      logger.info(`🔍 SECURITY CHECK: Verifying channel notification permission for ${tokenName} (${contractAddress})`);
+
+      // Double-check trending payment status
+      const hasTrendingPayment = await this.isTokenTrending(contractAddress);
+
+      if (hasTrendingPayment) {
+        logger.info(`✅ AUTHORIZED: ${tokenName} has valid trending payment - channel notifications allowed`);
+        return { authorized: true, reason: 'valid trending payment verified' };
+      } else {
+        logger.warn(`⚠️ BLOCKED: ${tokenName} has no trending payment - channel notifications denied`);
+        return { authorized: false, reason: 'no trending payment found' };
+      }
+    } catch (error) {
+      logger.error(`🚨 SECURITY ERROR: Failed to verify channel permission for ${contractAddress}:`, error);
+      return { authorized: false, reason: 'verification error' };
+    }
+  }
+
   async shouldNotifyChannelsForToken(contractAddress) {
     try {
-
+      // Get all active channels
       const allChannels = await this.db.all(`
-        SELECT * FROM channels 
+        SELECT * FROM channels
         WHERE is_active = 1 AND (show_trending = 1 OR show_all_activities = 1)
       `);
 
@@ -411,38 +433,44 @@ class WebhookHandlers {
         return { notify: false, channels: [], isTrending: false, reason: 'no active channels' };
       }
 
-
+      // Check if token has trending payment (secure verification)
       const isTrending = await this.isTokenTrending(contractAddress);
 
+      // SECURITY ENHANCEMENT: Only tokens with trending payments get channel notifications
+      if (!isTrending) {
+        logger.info(`🔒 Channel notification blocked: ${contractAddress} has no active trending payment`);
+        return {
+          notify: false,
+          channels: [],
+          isTrending: false,
+          reason: 'token not trending - channel notifications restricted to paid trending only'
+        };
+      }
 
+      // If token is trending, find eligible channels
       const eligibleChannels = allChannels.filter(channel => {
-
-        if (channel.show_all_activities === 1) {
-          return true;
-        }
-
-        if (channel.show_trending === 1 && isTrending) {
+        // For trending tokens, both show_all_activities and show_trending channels are eligible
+        if (channel.show_all_activities === 1 || channel.show_trending === 1) {
           return true;
         }
         return false;
       });
 
       if (eligibleChannels.length === 0) {
-        const reason = isTrending 
-          ? 'token is trending but no channels have trending notifications enabled'
-          : 'token is not trending and no channels have all activities enabled';
-        return { notify: false, channels: [], isTrending, reason };
+        return {
+          notify: false,
+          channels: [],
+          isTrending: true,
+          reason: 'token is trending but no channels have notifications enabled'
+        };
       }
 
-      const reason = isTrending 
-        ? `token is trending (${eligibleChannels.filter(c => c.show_trending === 1).length} trending channels)`
-        : `${eligibleChannels.length} channels have all activities enabled`;
-
-      return { 
-        notify: true, 
+      logger.info(`✅ Channel notification authorized: ${contractAddress} has active trending payment`);
+      return {
+        notify: true,
         channels: eligibleChannels,
-        isTrending,
-        reason 
+        isTrending: true,
+        reason: `token has trending payment (${eligibleChannels.length} eligible channels)`
       };
     } catch (error) {
       logger.error('Error checking channel notification requirements:', error);
@@ -452,10 +480,16 @@ class WebhookHandlers {
 
   async notifyChannels(token, activityData, channels = null, isTrending = false) {
     try {
+      // SECURITY: Additional verification before sending channel notifications
+      const verification = await this.verifyChannelNotificationPermission(token.contract_address, token.token_name);
+      if (!verification.authorized) {
+        logger.warn(`🔒 BLOCKED CHANNEL NOTIFICATION: ${token.token_name} - ${verification.reason}`);
+        return;
+      }
 
       if (!channels) {
         channels = await this.db.all(`
-          SELECT * FROM channels 
+          SELECT * FROM channels
           WHERE is_active = 1 AND show_trending = 1
         `);
       }
@@ -465,15 +499,16 @@ class WebhookHandlers {
         return;
       }
 
-      const message = isTrending 
+      const message = isTrending
         ? await this.formatTrendingActivityMessage(token, activityData)
         : await this.formatActivityMessage(token, activityData);
       let notifiedCount = 0;
       for (const channel of channels) {
         try {
+          logger.info(`📤 SENDING to channel ${channel.channel_title}: ${token.token_name} (verified trending payment)`);
           await this.sendNotificationWithImage(channel.telegram_chat_id, message, token, activityData);
           notifiedCount++;
-          logger.info(`Sent notification to channel ${channel.telegram_chat_id} (${channel.channel_title})`);
+          logger.info(`✅ Notification sent to channel ${channel.telegram_chat_id} (${channel.channel_title})`);
         } catch (error) {
           logger.error(`Failed to notify channel ${channel.telegram_chat_id}:`, error);
 
@@ -533,7 +568,7 @@ class WebhookHandlers {
       message += '\n';
     }
 
-    message += `\n\nPowered by [Candy Codex](https://t.me/testcandybot)`;
+    message += ` \nPowered by [Candy Codex](https://t.me/testcandybot)`;
 
     // Add footer advertisements if available
     if (this.secureTrending) {
@@ -716,17 +751,24 @@ class WebhookHandlers {
       
       // Check if image fee is paid for this contract
       const hasImageFee = this.secureTrending ? await this.secureTrending.isImageFeeActive(token.contract_address) : false;
-      
+      logger.info(`🖼️ IMAGE FEE CHECK: ${token.contract_address} (${token.token_name}) - hasImageFee: ${hasImageFee}`);
+
       // Download and resize image if available and image fee is paid
       let originalImagePath = null;
       if (hasImageFee && nftData.metadata.image) {
+        logger.info(`✅ IMAGE FEE PAID: Downloading actual NFT image for ${token.token_name}`);
         originalImagePath = await metadataService.downloadImage(nftData.metadata.image, nftData.tokenId);
         if (originalImagePath) {
           imagePath = await metadataService.resizeImage(originalImagePath, 300, 300);
+          logger.info(`📸 Using actual NFT image: ${originalImagePath}`);
+        } else {
+          logger.warn(`⚠️ Failed to download NFT image, using default tracking image`);
+          imagePath = await metadataService.resizeImage('./src/bot/defaultTracking.jpg', 300, 300);
         }
-      } else if (!hasImageFee) {
-        // Use default image when image fee not paid, resize to 300x300
-        imagePath = await metadataService.resizeImage('./src/bot/defaultNFTImage.jpg', 300, 300);
+      } else {
+        // Use default tracking image when image fee not paid OR no NFT image available
+        logger.info(`🚫 IMAGE FEE NOT PAID: Using default tracking image for ${token.token_name}`);
+        imagePath = await metadataService.resizeImage('./src/bot/defaultTracking.jpg', 300, 300);
       }
       
       // Format the enhanced message with traits
@@ -746,14 +788,12 @@ class WebhookHandlers {
         : `${message}\n\n${nftMessage}`;
       
       const boostButton = {
-        reply_markup: {
-          inline_keyboard: [[
-            { 
-              text: 'BOOST YOUR NFT🟢', 
-              url: `https://t.me/testcandybot?start=buy_trending`
-            }
-          ]]
-        }
+        inline_keyboard: [[
+          {
+            text: 'BOOST YOUR NFT🟢',
+            url: `https://t.me/testcandybot?start=buy_trending`
+          }
+        ]]
       };
 
       if (imagePath) {
@@ -763,16 +803,16 @@ class WebhookHandlers {
           {
             caption: enhancedMessage,
             parse_mode: 'Markdown',
-            ...boostButton
+            reply_markup: boostButton
           }
         );
       } else {
         await this.bot.telegram.sendMessage(
           chatId,
           enhancedMessage,
-          { 
+          {
             parse_mode: 'Markdown',
-            ...boostButton
+            reply_markup: boostButton
           }
         );
       }
@@ -780,7 +820,7 @@ class WebhookHandlers {
       // Cleanup downloaded images after a delay (but not the default image)
       const imagesToCleanup = [originalImagePath, imagePath]
         .filter(Boolean)
-        .filter(path => !path.includes('defaultNFTImage.jpg')); // Don't cleanup default image
+        .filter(path => !path.includes('defaultTracking.jpg')); // Don't cleanup default image
       if (imagesToCleanup.length > 0) {
         setTimeout(async () => {
           for (const imageToCleanup of imagesToCleanup) {
@@ -798,13 +838,23 @@ class WebhookHandlers {
       
     } catch (imageError) {
       logger.warn(`Failed to fetch external NFT image, falling back to text: ${imageError.message}`);
-      
+
+      const boostButton = {
+        inline_keyboard: [[
+          {
+            text: 'BOOST YOUR NFT🟢',
+            url: `https://t.me/testcandybot?start=buy_trending`
+          }
+        ]]
+      };
+
       await this.bot.telegram.sendMessage(
         chatId,
         message,
-        { 
+        {
           parse_mode: 'Markdown',
-          disable_web_page_preview: true 
+          disable_web_page_preview: true,
+          reply_markup: boostButton
         }
       );
     }
@@ -1031,6 +1081,13 @@ class WebhookHandlers {
 
   async notifyChannelsOpenSea(token, eventType, eventData, activityData, channels, isTrending = false) {
     try {
+      // SECURITY: Additional verification before sending OpenSea channel notifications
+      const verification = await this.verifyChannelNotificationPermission(token.contract_address, token.token_name);
+      if (!verification.authorized) {
+        logger.warn(`🔒 BLOCKED OPENSEA CHANNEL NOTIFICATION: ${token.token_name} - ${verification.reason}`);
+        return false;
+      }
+
       if (!channels || channels.length === 0) {
         return false;
       }
@@ -1042,10 +1099,11 @@ class WebhookHandlers {
       let notifiedCount = 0;
       for (const channel of channels) {
         try {
+          logger.info(`📤 SENDING OpenSea to channel ${channel.channel_title}: ${token.token_name} (verified trending payment)`);
           // Use same field name as original: telegram_chat_id
           await this.sendOpenSeaNotificationWithImage(channel.telegram_chat_id, message, eventData);
           notifiedCount++;
-          logger.info(`📢 OpenSea notification sent to channel: ${channel.channel_title || channel.channel_name}`);
+          logger.info(`✅ OpenSea notification sent to channel: ${channel.channel_title || channel.channel_name}`);
         } catch (error) {
           logger.error(`❌ Failed to send OpenSea notification to channel ${channel.channel_title || channel.channel_name}:`, error);
 
@@ -1106,28 +1164,14 @@ class WebhookHandlers {
       message += '\n';
     }
 
-    // User addresses
-    if (eventType === 'sold') {
-      if (eventData.makerAddress) {
-        message += `👤 **Seller:** \`${this.shortenAddress(eventData.makerAddress)}\`\n`;
-      }
-      if (eventData.takerAddress) {
-        message += `👤 **Buyer:** \`${this.shortenAddress(eventData.takerAddress)}\`\n`;
-      }
-    } else if (eventType === 'listed') {
-      if (eventData.makerAddress) {
-        message += `👤 **Listed by:** \`${this.shortenAddress(eventData.makerAddress)}\`\n`;
-      }
-    } else if (eventType === 'transferred') {
+    // User addresses - removed to keep notifications short
+    // Keeping only transfer addresses as they are essential
+    if (eventType === 'transferred') {
       if (eventData.fromAddress) {
         message += `📤 **From:** \`${this.shortenAddress(eventData.fromAddress)}\`\n`;
       }
       if (eventData.toAddress) {
         message += `📥 **To:** \`${this.shortenAddress(eventData.toAddress)}\`\n`;
-      }
-    } else if (eventType === 'received_bid' || eventType === 'received_offer') {
-      if (eventData.makerAddress) {
-        message += `👤 **${eventType === 'received_bid' ? 'Bidder' : 'Offerer'}:** \`${this.shortenAddress(eventData.makerAddress)}\`\n`;
       }
     }
 
@@ -1145,8 +1189,8 @@ class WebhookHandlers {
       }
     }
 
-    // Transaction link
-    if (eventData.transactionHash) {
+    // Transaction link - removed from sale and transfer events to keep notifications short
+    if (eventData.transactionHash && eventType !== 'sold' && eventType !== 'transferred') {
       message += `🔗 **TX:** \`${this.shortenAddress(eventData.transactionHash)}\`\n`;
       message += `[View on Etherscan](https://etherscan.io/tx/${eventData.transactionHash})\n`;
     }
@@ -1169,7 +1213,7 @@ class WebhookHandlers {
       message += `[View Collection](https://opensea.io/collection/${eventData.collectionSlug})\n`;
     }
 
-    message += `\n\nPowered by [Candy Codex](https://t.me/testcandybot)`;
+    message += ` \nPowered by [Candy Codex](https://t.me/testcandybot)`;
 
     // Add footer advertisements if available
     if (this.secureTrending) {
@@ -1276,19 +1320,33 @@ class WebhookHandlers {
 
   async sendOpenSeaNotificationWithImage(chatId, message, eventData) {
     try {
-      // Check if we have an NFT image from OpenSea metadata
-      if (eventData.nftImageUrl && eventData.nftImageUrl.startsWith('http')) {
-        logger.info(`📸 Processing OpenSea image for 300x300 resize: ${eventData.nftImageUrl}`);
+      // SECURITY: Check if image fee is paid for this contract before showing actual NFT image
+      const hasImageFee = this.secureTrending ? await this.secureTrending.isImageFeeActive(eventData.contractAddress) : false;
+      logger.info(`🖼️ OPENSEA IMAGE FEE CHECK: ${eventData.contractAddress} - hasImageFee: ${hasImageFee}`);
+
+      // Check if we have an NFT image from OpenSea metadata AND image fee is paid
+      if (hasImageFee && eventData.nftImageUrl && eventData.nftImageUrl.startsWith('http')) {
+        logger.info(`✅ IMAGE FEE PAID: Processing OpenSea image for 300x300 resize: ${eventData.nftImageUrl}`);
 
         try {
           // Download and resize the image to 300x300
           const processedImagePath = await this.downloadAndResizeOpenSeaImage(eventData.nftImageUrl, eventData.tokenId || 'unknown');
 
           if (processedImagePath) {
+            const boostButton = {
+              inline_keyboard: [[
+                {
+                  text: 'BOOST YOUR NFT🟢',
+                  url: `https://t.me/testcandybot?start=buy_trending`
+                }
+              ]]
+            };
+
             // Send the resized local image file
             await this.bot.telegram.sendPhoto(chatId, { source: processedImagePath }, {
               caption: message,
-              parse_mode: 'Markdown'
+              parse_mode: 'Markdown',
+              reply_markup: boostButton
             });
             logger.info(`✅ OpenSea notification with resized image (300x300) sent successfully to ${chatId}`);
 
@@ -1296,27 +1354,78 @@ class WebhookHandlers {
             this.cleanupTempImage(processedImagePath);
             return;
           } else {
-            // If processing failed, try original URL as fallback
-            logger.warn(`⚠️ Image processing failed, trying original URL`);
-            await this.bot.telegram.sendPhoto(chatId, eventData.nftImageUrl, {
-              caption: message,
-              parse_mode: 'Markdown'
-            });
-            logger.info(`✅ OpenSea notification with original image sent successfully to ${chatId}`);
-            return;
+            // If processing failed, fall back to default tracking image
+            logger.warn(`⚠️ OpenSea image processing failed, using default tracking image`);
+            const defaultImagePath = await this.resizeDefaultTrackingImage();
+            if (defaultImagePath) {
+              const boostButton = {
+                inline_keyboard: [
+                  [{
+                    text: 'BOOST YOUR NFT🟢',
+                    url: `https://t.me/testcandybot?start=buy_trending`
+                  }],
+                  [{
+                    text: '📋 Copy Full Address',
+                    callback_data: `copy_address_${eventData.contractAddress}`
+                  }]
+                ]
+              };
+
+              await this.bot.telegram.sendPhoto(chatId, { source: defaultImagePath }, {
+                caption: message,
+                parse_mode: 'Markdown',
+                reply_markup: boostButton
+              });
+              this.cleanupTempImage(defaultImagePath);
+              return;
+            }
           }
-        } catch (imageError) {
-          logger.warn(`⚠️ Failed to send image, falling back to text message: ${imageError.message}`);
-          // Fall through to text-only message
+        } catch (error) {
+          logger.error(`❌ Error processing OpenSea image: ${error.message}`);
         }
       } else {
-        logger.debug(`📝 No image URL available for OpenSea notification, using text only`);
+        // Use default tracking image when image fee not paid
+        logger.info(`🚫 IMAGE FEE NOT PAID: Using default tracking image for OpenSea notification`);
+        try {
+          const defaultImagePath = await this.resizeDefaultTrackingImage();
+          if (defaultImagePath) {
+            const boostButton = {
+              inline_keyboard: [[
+                {
+                  text: 'BOOST YOUR NFT🟢',
+                  url: `https://t.me/testcandybot?start=buy_trending`
+                }
+              ]]
+            };
+
+            await this.bot.telegram.sendPhoto(chatId, { source: defaultImagePath }, {
+              caption: message,
+              parse_mode: 'Markdown',
+              reply_markup: boostButton
+            });
+            logger.info(`✅ OpenSea notification with default tracking image sent successfully to ${chatId}`);
+            this.cleanupTempImage(defaultImagePath);
+            return;
+          }
+        } catch (error) {
+          logger.error(`❌ Error using default tracking image: ${error.message}`);
+        }
       }
 
       // Fallback to text-only message
+      const boostButton = {
+        inline_keyboard: [[
+          {
+            text: 'BOOST YOUR NFT🟢',
+            url: `https://t.me/testcandybot?start=buy_trending`
+          }
+        ]]
+      };
+
       await this.bot.telegram.sendMessage(chatId, message, {
         parse_mode: 'Markdown',
-        disable_web_page_preview: false
+        disable_web_page_preview: false,
+        reply_markup: boostButton
       });
       logger.info(`✅ OpenSea text notification sent successfully to ${chatId}`);
 
@@ -1382,6 +1491,49 @@ class WebhookHandlers {
 
     } catch (error) {
       logger.error(`❌ Failed to download/resize OpenSea image: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Resize default tracking image to 300x300 for notifications
+   * @returns {string|null} Path to resized default image or null if failed
+   */
+  async resizeDefaultTrackingImage() {
+    try {
+      const sharp = require('sharp');
+      const path = require('path');
+
+      // Create unique filename for the resized default image
+      const timestamp = Date.now();
+      const tempDir = './temp_opensea_images';
+      const fs = require('fs').promises;
+
+      // Ensure temp directory exists
+      try {
+        await fs.mkdir(tempDir, { recursive: true });
+      } catch (err) {
+        // Directory might already exist, ignore
+      }
+
+      const resizedPath = path.join(tempDir, `default_tracking_${timestamp}.jpg`);
+
+      // Resize default tracking image to 300x300
+      await sharp('./src/bot/defaultTracking.jpg')
+        .resize(300, 300, {
+          fit: 'cover',
+          position: 'center'
+        })
+        .jpeg({
+          quality: 85,
+          progressive: true
+        })
+        .toFile(resizedPath);
+
+      logger.debug(`📸 Default tracking image resized to 300x300: ${resizedPath}`);
+      return resizedPath;
+    } catch (error) {
+      logger.error(`❌ Failed to resize default tracking image: ${error.message}`);
       return null;
     }
   }

@@ -3,15 +3,21 @@ const logger = require('../services/logger');
 const { ethers } = require('ethers');
 
 class BotCommands {
-  constructor(database, tokenTracker, trendingService, channelService, secureTrendingService = null) {
+  constructor(database, tokenTracker, trendingService, channelService, secureTrendingService = null, chainManager = null) {
     this.db = database;
     this.tokenTracker = tokenTracker;
     this.trending = trendingService;
     this.secureTrending = secureTrendingService;
     this.channels = channelService;
+    this.chainManager = chainManager;
 
     this.userStates = new Map();
+    this.userSessions = new Map(); // Store user session data for multi-step flows
+
+    // Original states
     this.STATE_EXPECTING_CONTRACT = 'expecting_contract';
+    this.STATE_EXPECTING_CHAIN_FOR_CONTRACT = 'expecting_chain_for_contract';
+    this.STATE_EXPECTING_CHAIN_FOR_VIEW = 'expecting_chain_for_view';
     this.STATE_EXPECTING_TX_HASH = 'expecting_tx_hash';
     this.STATE_EXPECTING_FOOTER_CONTRACT = 'expecting_footer_contract';
     this.STATE_EXPECTING_FOOTER_TX_HASH = 'expecting_footer_tx_hash';
@@ -21,6 +27,14 @@ class BotCommands {
     this.STATE_EXPECTING_VALIDATION_CONTRACT = 'expecting_validation_contract';
     this.STATE_EXPECTING_VALIDATION_TX_HASH = 'expecting_validation_tx_hash';
     this.STATE_EXPECTING_VALIDATION_LINK = 'expecting_validation_link';
+
+    // New enhanced flow states
+    this.STATE_FOOTER_DURATION_SELECT = 'footer_duration_select';
+    this.STATE_FOOTER_CHAIN_SELECT = 'footer_chain_select';
+    this.STATE_FOOTER_CONTRACT_INPUT = 'footer_contract_input';
+    this.STATE_IMAGE_DURATION_SELECT = 'image_duration_select';
+    this.STATE_IMAGE_CHAIN_SELECT = 'image_chain_select';
+    this.STATE_IMAGE_CONTRACT_INPUT = 'image_contract_input';
 
     this.pendingPayments = new Map();
   }
@@ -38,6 +52,23 @@ class BotCommands {
   clearUserState(userId) {
     this.userStates.delete(userId.toString());
     logger.debug(`Cleared state for user ${userId}`);
+  }
+
+  // Session data management for multi-step flows
+  setUserSession(userId, data) {
+    const userIdStr = userId.toString();
+    const existingData = this.userSessions.get(userIdStr) || {};
+    this.userSessions.set(userIdStr, { ...existingData, ...data });
+    logger.debug(`Set user ${userId} session data:`, data);
+  }
+
+  getUserSession(userId) {
+    return this.userSessions.get(userId.toString()) || {};
+  }
+
+  clearUserSession(userId) {
+    this.userSessions.delete(userId.toString());
+    logger.debug(`Cleared session for user ${userId}`);
   }
 
   clearUserSessionData(userId, type) {
@@ -78,18 +109,18 @@ class BotCommands {
       const user = ctx.from;
 
       await this.db.createUser(user.id.toString(), user.username, user.first_name);
-      const welcomeMessage = `🚀 <b>Welcome to MintTechBot!</b> 🚀
+      const welcomeMessage = `🚀 <b>Welcome to MintyRushBot!</b> 🚀
 
 I help you track NFT collections and get real-time alerts for:
 • New mints and transfers
 • Sales and price updates
 • Trending collections
-• Custom token monitoring
+• Custom NFT monitoring
 
 <b>Get started by choosing from the organized menu below:</b>`;
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('📊 Manage Tokens', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
-        [Markup.button.callback('🖼️ Buy NFT Images', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
+        [Markup.button.callback('📊 Manage NFTs', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
+        [Markup.button.callback('🖼️ Display NFT Image', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
         [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')]
       ]);
 
@@ -112,18 +143,18 @@ I help you track NFT collections and get real-time alerts for:
       }
 
       // Default start behavior - show main menu
-      const welcomeMessage = `🚀 <b>Welcome to MintTechBot!</b> 🚀
+      const welcomeMessage = `🚀 <b>Welcome to MintyRushBot!</b> 🚀
 
 I help you track NFT collections and get real-time alerts for:
 • New mints and transfers
 • Sales and price updates
 • Trending collections
-• Custom token monitoring
+• Custom NFT monitoring
 
 <b>Get started by choosing from the organized menu below:</b>`;
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('📊 Manage Tokens', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
-        [Markup.button.callback('🖼️ Buy NFT Images', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
+        [Markup.button.callback('📊 Manage NFTs', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
+        [Markup.button.callback('🖼️ Display NFT Image', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
         [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')]
       ]);
 
@@ -132,18 +163,18 @@ I help you track NFT collections and get real-time alerts for:
     });
 
     bot.help(async (ctx) => {
-      const helpMessage = `📋 <b>MintTechBot Commands</b>
+      const helpMessage = `📋 <b>MintyRushBot Commands</b>
 
-🎯 <b>Token Management:</b>
-• /add_token - Add NFT contract to track
+🎯 <b>NFT Management:</b>
+• /add_token - Add NFT collection to track
 • /remove_token - Remove tracked NFT  
-• /my_tokens - View your tracked tokens
+• /my_tokens - View your tracked NFTs
 
 💰 <b>Trending &amp; Boost:</b>
 • /trending - View trending collections
 • /buy_trending - Boost NFT trending
 • /validate &lt;txhash&gt; - Validate trending payment
-• /buy_image &lt;contract&gt; - Pay fee for actual NFT images
+• /buy_image &lt;contract&gt; - Pay fee for real NFT images
 • /validate_image &lt;contract&gt; &lt;txhash&gt; - Validate image fee
 • /buy_footer &lt;contract&gt; - Pay fee for footer advertisement
 • /validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt; - Validate footer ad
@@ -223,8 +254,8 @@ Simple and focused - boost your NFTs easily! 🚀`;
         if (args.length < 2) {
           return ctx.reply(
             '📖 *Buy Image Fee Usage*\n\n' +
-            '`/buy_image <contract_address>`\n\n' +
-            'Pay 0.0040 ETH to display actual NFT images from token URI for 30 days instead of default placeholder.\n\n' +
+            '`/buy_image <nft_address>`\n\n' +
+            'Pay 0.0040 ETH to display real NFT images from your NFT for 30 days instead of CandyCodex image.\n\n' +
             'Example: `/buy_image 0x1234...abcd`',
             { parse_mode: 'Markdown' }
           );
@@ -232,7 +263,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
         const contractAddress = args[1].trim();
         if (!ethers.isAddress(contractAddress)) {
-          return ctx.reply('❌ Invalid contract address format.');
+          return ctx.reply('❌ Invalid NFT address format.');
         }
 
         const user = await this.db.getUser(ctx.from.id.toString());
@@ -262,8 +293,8 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
       } catch (error) {
         logger.error('Error in buy_image command:', error);
-        if (error.message.includes('Token not found')) {
-          ctx.reply('❌ Contract address not found in tracked tokens. Please add it first with /add_token');
+        if (error.message.includes('NFT not found')) {
+          ctx.reply('❌ NFT address not found in tracked NFTs. Please add it first with /add_token');
         } else {
           ctx.reply('❌ An error occurred. Please try again.');
         }
@@ -280,7 +311,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
         if (args.length < 3) {
           return ctx.reply(
             '📖 *Validate Image Fee Usage*\n\n' +
-            '`/validate_image <contract_address> <txhash>`\n\n' +
+            '`/validate_image <nft_address> <txhash>`\n\n' +
             'Validate your 0.0040 ETH image fee payment.\n\n' +
             'Example: `/validate_image 0x1234...abcd 0xabc123...`',
             { parse_mode: 'Markdown' }
@@ -291,7 +322,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
         const txHash = args[2].trim();
 
         if (!ethers.isAddress(contractAddress)) {
-          return ctx.reply('❌ Invalid contract address format.');
+          return ctx.reply('❌ Invalid NFT address format.');
         }
 
         if (!txHash.startsWith('0x') || txHash.length !== 66) {
@@ -338,8 +369,8 @@ Simple and focused - boost your NFTs easily! 🚀`;
         if (args.length < 2) {
           return ctx.reply(
             '📖 *Buy Footer Advertisement Usage*\n\n' +
-            '`/buy_footer <contract_address>`\n\n' +
-            'Pay 1.0 ETH to display your token ticker in notification footers for 30 days with custom clickable link.\n\n' +
+            '`/buy_footer <nft_address>`\n\n' +
+            'Pay 1.0 ETH to display your NFT name in notification footers for 30 days with custom clickable link.\n\n' +
             'Example: `/buy_footer 0x1234...abcd`',
             { parse_mode: 'Markdown' }
           );
@@ -362,7 +393,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
           `⏰ <b>Duration:</b> ${instructions.duration || '30 days'}\n` +
           `📮 <b>Contract:</b> <code>${instructions.contractAddress || contractAddress}</code>\n\n` +
           `📋 <b>Payment Steps:</b>\n` +
-          (instructions.instructions || ['Send payment to contract address']).map((step, i) => `${i + 1}. ${step}`).join('\n') + '\n\n' +
+          (instructions.instructions || ['Send payment to NFT address']).map((step, i) => `${i + 1}. ${step}`).join('\n') + '\n\n' +
           (instructions.etherscanUrl ? `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n` : '') +
           `⚠️ After payment, use: <code>/validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt;</code>`;
 
@@ -371,8 +402,8 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
       } catch (error) {
         logger.error('Error in buy_footer command:', error);
-        if (error.message.includes('Token not found')) {
-          ctx.reply('❌ Contract address not found in tracked tokens. Please add it first with /add_token');
+        if (error.message.includes('NFT not found')) {
+          ctx.reply('❌ NFT address not found in tracked NFTs. Please add it first with /add_token');
         } else {
           ctx.reply('❌ An error occurred while generating payment instructions. Please try again.');
         }
@@ -389,7 +420,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
         if (args.length < 4) {
           return ctx.reply(
             '📖 *Validate Footer Advertisement Usage*\n\n' +
-            '`/validate_footer <contract_address> <txhash> <link>`\n\n' +
+            '`/validate_footer <nft_address> <txhash> <link>`\n\n' +
             'Validate your 1.0 ETH footer advertisement payment and set your custom link.\n\n' +
             'Example: `/validate_footer 0x1234...abcd 0xabc123... https://mytoken.com`',
             { parse_mode: 'Markdown' }
@@ -425,14 +456,25 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
 
     bot.command('add_token', async (ctx) => {
-      const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('🔍 Search by Name', 'search_token')],
-        [Markup.button.callback('📝 Enter Contract Address', 'enter_contract')]
-      ]);
+      if (!this.chainManager) {
+        // Fallback to old behavior if chainManager not available
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('🔍 Search by Name', 'search_token')],
+          [Markup.button.callback('📝 Enter Contract Address', 'enter_contract')]
+        ]);
+        return await ctx.reply('How would you like to add a token?', keyboard);
+      }
+
+      // Show chain selection first
+      const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
+      this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
 
       await ctx.reply(
-        'How would you like to add a token?',
-        keyboard
+        '🔗 <b>Select Blockchain Network</b>\n\nChoose the blockchain where your NFT collection exists:',
+        {
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: chainKeyboard }
+        }
       );
     });
 
@@ -444,53 +486,46 @@ Simple and focused - boost your NFTs easily! 🚀`;
           return ctx.reply('Please start the bot first with /startcandy');
         }
 
-        const chatId = this.normalizeChatContext(ctx);
-        logger.info(`/my_tokens - Telegram ID: ${ctx.from.id}, Database User ID: ${user.id}, Chat Context: ${chatId}`);
+        // Debug logging for /my_tokens command
+        console.log(`[my_tokens_command] User: ${user.id}, TelegramId: ${ctx.from.id}, chainManager available: ${!!this.chainManager}`);
 
-        // Get context-specific tokens only
-        const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
-        logger.info(`Context-specific tokens for user ${user.id} in ${chatId}:`, tokens.map(t => ({ id: t.id, address: t.contract_address, name: t.token_name, notification_enabled: t.notification_enabled })));
+        if (!this.chainManager) {
+          // Fallback to old behavior if chainManager not available
+          const chatId = this.normalizeChatContext(ctx);
+          const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
 
-        if (tokens.length === 0) {
-          const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('➕ Add Your First Token', 'add_token_start')]
-          ]);
-          return ctx.reply(
-            '🔍 You haven\'t added any tokens yet!\n\nUse /add_token to start tracking NFT collections.',
-            keyboard
-          );
+          // Debug logging for fallback path
+          console.log(`[my_tokens_fallback] User: ${user.id}, ChatId: ${chatId}, Tokens found: ${tokens.length}`);
+
+          if (tokens.length === 0) {
+            const keyboard = Markup.inlineKeyboard([
+              [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')]
+            ]);
+            return ctx.reply('🔍 You haven\'t added any tokens yet!\n\nUse /add_token to start tracking NFT collections.', keyboard);
+          }
+          return this.showTokensForAllChains(ctx, user);
         }
 
-        let message = `🎯 *Your Tracked Tokens* (${tokens.length})\n\n`;
-        const keyboard = [];
+        // Show chain selection for viewing tokens
+        const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
+        // Add "All Chains" option
+        chainKeyboard.push([{
+          text: '🌐 All Chains',
+          callback_data: 'chain_select_all'
+        }]);
 
-        tokens.forEach((token, index) => {
-          message += `${index + 1}. *${token.token_name || 'Unknown'}* (${token.token_symbol || 'N/A'})\n`;
-          message += `   📮 \`${token.contract_address}\`\n`;
-          message += `   🔔 Notifications: ${token.notification_enabled ? '✅' : '❌'}\n`;
+        this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_VIEW);
 
-          // Show OpenSea tracking status
-          if (token.collection_slug) {
-            message += `   🌊 OpenSea: ✅ Real-time tracking (${token.collection_slug})\n`;
-          } else {
-            message += `   🌊 OpenSea: ⚠️ No real-time tracking\n`;
+        await ctx.reply(
+          '🔗 <b>Select Blockchain Network</b>\n\nChoose which blockchain to view your NFTs from:',
+          {
+            parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: chainKeyboard }
           }
-          message += '\n';
-
-          keyboard.push([
-            Markup.button.callback(
-              `${token.notification_enabled ? '🔕' : '🔔'} ${token.token_name || token.contract_address.slice(0, 8)}...`,
-              `toggle_${token.id}`
-            )
-          ]);
-        });
-
-        keyboard.push([Markup.button.callback('➕ Add More Tokens', 'add_token_start')]);
-
-        await ctx.replyWithMarkdown(message, Markup.inlineKeyboard(keyboard));
+        );
       } catch (error) {
         logger.error('Error in my_tokens command:', error);
-        ctx.reply('❌ Error retrieving your tokens. Please try again.');
+        ctx.reply('❌ Error retrieving your NFTs. Please try again.');
       }
     });
 
@@ -506,10 +541,10 @@ Simple and focused - boost your NFTs easily! 🚀`;
         const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
         if (!tokens || tokens.length === 0) {
           const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('➕ Add Token', 'add_token_start')]
+            [Markup.button.callback('➕ Add NFT', 'add_token_start')]
           ]);
           return ctx.reply(
-            '📝 You have no tracked tokens to remove.\n\nAdd some tokens first!',
+            '📝 You have no tracked NFTs to remove.\n\nAdd some NFTs first!',
             keyboard
           );
         }
@@ -537,7 +572,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
         });
       } catch (error) {
         logger.error('Error in remove_token command:', error);
-        ctx.reply('❌ Error loading your tokens. Please try again.');
+        ctx.reply('❌ Error loading your NFTs. Please try again.');
       }
     });
 
@@ -552,7 +587,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
             [Markup.button.callback('🚀 Boost Your Token', 'promote_token')]
           ]);
           return ctx.reply(
-            '📊 *No trending tokens right now*\n\nBe the first to boost your NFT collection!',
+            '📊 *No trending NFTs right now*\n\nBe the first to boost your NFT collection!',
             { 
               parse_mode: 'Markdown',
               reply_markup: keyboard 
@@ -586,11 +621,13 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
 
     bot.command('buy_trending', async (ctx) => {
-      const message = `🚀 *NFT Boost Menu*
+      const message = `🚀 *Buy Trending Menu*
 
-Select an option to boost your NFT collections:`;
+Choose your trending boost option:`;
       const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('🔥 View Trending', 'view_trending'), Markup.button.callback('🚀 Boost My Token', 'promote_token')]
+        [Markup.button.callback('💫 Buy Trending', 'buy_trending_normal')],
+        [Markup.button.callback('⭐ Buy Trending Premium', 'buy_trending_premium')],
+        [Markup.button.callback('🔥 View Current Trending', 'view_trending')]
       ]);
 
       await ctx.replyWithMarkdown(message, keyboard);
@@ -664,12 +701,54 @@ Select an option to boost your NFT collections:`;
         }
         if (data === 'add_token_start') {
           await ctx.answerCbQuery();
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);
-          return ctx.reply('📝 Please enter the NFT contract address to track:');
+
+          // Simply use the existing /add_token command logic
+          if (!this.chainManager) {
+            // Fallback to old behavior if chainManager not available
+            const keyboard = Markup.inlineKeyboard([
+              [Markup.button.callback('🔍 Search by Name', 'search_token')],
+              [Markup.button.callback('📝 Enter Contract Address', 'enter_contract')]
+            ]);
+            return await ctx.reply('How would you like to add a token?', keyboard);
+          }
+
+          // Show chain selection first
+          const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
+
+          await ctx.reply(
+            '🔗 <b>Select Blockchain Network</b>\n\nChoose the blockchain where your NFT collection exists:',
+            {
+              parse_mode: 'HTML',
+              reply_markup: { inline_keyboard: chainKeyboard }
+            }
+          );
+          return;
         }
         if (data === 'boost_trending') {
           await ctx.answerCbQuery();
           return this.showPromoteTokenMenu(ctx);
+        }
+        if (data === 'buy_trending_normal') {
+          await ctx.answerCbQuery();
+          return this.showTrendingTypeMenu(ctx, false); // false = normal trending
+        }
+        if (data === 'buy_trending_premium') {
+          await ctx.answerCbQuery();
+          return this.showTrendingTypeMenu(ctx, true); // true = premium trending
+        }
+        if (data === 'back_to_buy_trending') {
+          await ctx.answerCbQuery();
+          // Simulate the /buy_trending command
+          const message = `🚀 *Buy Trending Menu*
+
+Choose your trending boost option:`;
+          const keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('💫 Buy Trending', 'buy_trending_normal')],
+            [Markup.button.callback('⭐ Buy Trending Premium', 'buy_trending_premium')],
+            [Markup.button.callback('🔥 View Current Trending', 'view_trending')]
+          ]);
+          return ctx.replyWithMarkdown(message, keyboard);
         }
 
         // Main menu navigation handlers
@@ -702,6 +781,57 @@ Select an option to boost your NFT collections:`;
           return this.showMainMenu(ctx);
         }
 
+        // Chain selection handlers for multi-chain support
+        if (data.startsWith('chain_select_')) {
+          await ctx.answerCbQuery();
+          const chainName = data.replace('chain_select_', '');
+          const userState = this.getUserState(ctx.from.id);
+
+          if (userState === this.STATE_EXPECTING_CHAIN_FOR_CONTRACT) {
+            // User selected chain for adding a contract
+            if (chainName === 'all') {
+              return ctx.reply('❌ Please select a specific blockchain network for adding tokens.');
+            }
+
+            const chainConfig = this.chainManager.getChain(chainName);
+            if (!chainConfig) {
+              return ctx.reply('❌ Invalid blockchain network selected.');
+            }
+
+            // Store the selected chain in user session data
+            this.userStates.set(ctx.from.id.toString() + '_selected_chain', chainName);
+            this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);
+
+            return ctx.reply(
+              `🔗 <b>${chainConfig.displayName}</b> selected!\n\n📝 Please enter the NFT address to track on ${chainConfig.displayName}:`,
+              {
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.callback('❌ Cancel', 'cancel_token_add')]
+                ])
+              }
+            );
+
+          } else if (userState === this.STATE_EXPECTING_CHAIN_FOR_VIEW) {
+            // User selected chain for viewing tokens
+            if (chainName === 'all') {
+              this.clearUserState(ctx.from.id);
+              return this.showTokensForAllChains(ctx);
+            }
+
+            const chainConfig = this.chainManager.getChain(chainName);
+            if (!chainConfig) {
+              return ctx.reply('❌ Invalid blockchain network selected.');
+            }
+
+            this.clearUserState(ctx.from.id);
+            return this.showTokensForChain(ctx, chainName, chainConfig);
+
+          } else {
+            return ctx.reply('❌ No active chain selection process found.');
+          }
+        }
+
         // Handle cancel operations - clear states and redirect to appropriate menu
         if (data === 'cancel_footer' || (data === 'menu_footer' && this.getUserState(ctx.from.id))) {
           await ctx.answerCbQuery();
@@ -721,6 +851,12 @@ Select an option to boost your NFT collections:`;
           this.clearUserSessionData(ctx.from.id, 'validation');
           return this.showVerifyMenu(ctx);
         }
+        if (data === 'cancel_token_add') {
+          await ctx.answerCbQuery();
+          this.clearUserState(ctx.from.id);
+          this.userStates.delete(ctx.from.id.toString() + '_selected_chain');
+          return this.showTokenMenu(ctx);
+        }
 
         // Submenu handlers
         if (data === 'my_tokens') {
@@ -737,9 +873,9 @@ Select an option to boost your NFT collections:`;
           const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
           if (!tokens || tokens.length === 0) {
             const keyboard = Markup.inlineKeyboard([
-              [Markup.button.callback('➕ Add Token', 'add_token_start'), Markup.button.callback('◀️ Back to Tokens Menu', 'menu_tokens')]
+              [Markup.button.callback('➕ Add NFT', 'add_token_start'), Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]
             ]);
-            return ctx.reply('📝 You have no tracked tokens to remove.\n\nAdd some tokens first!', keyboard);
+            return ctx.reply('📝 You have no tracked NFTs to remove.\n\nAdd some NFTs first!', keyboard);
           }
           // Call existing remove token functionality
           let message = `🗑️ <b>Remove Tracked Token</b>\n\nSelect a token to remove from tracking:\n\n`;
@@ -753,26 +889,18 @@ Select an option to boost your NFT collections:`;
             }]);
           });
           keyboard.push([{
-            text: '◀️ Back to Tokens Menu',
+            text: '◀️ Back to NFTs Menu',
             callback_data: 'menu_tokens'
           }]);
           return ctx.replyWithHTML(message, { reply_markup: { inline_keyboard: keyboard } });
         }
         if (data === 'buy_image_menu') {
           await ctx.answerCbQuery();
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_IMAGE_CONTRACT);
-          return ctx.reply('📝 <b>NFT Image Fee Setup</b>\n\nPlease send me the NFT contract address to enable actual images.\n\n💰 <b>Fee:</b> 0.0040 ETH for 30 days\n\n<i>Example: 0x1234567890abcdef...</i>\n\nType "cancel" to abort.', {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_images')]])
-          });
+          return this.showImageDurationSelection(ctx);
         }
         if (data === 'buy_footer_menu') {
           await ctx.answerCbQuery();
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_CONTRACT);
-          return ctx.reply('📝 <b>Footer Advertisement Setup</b>\n\nPlease send me the NFT contract address you want to advertise.\n\n<i>Example: 0x1234567890abcdef...</i>\n\nType "cancel" to abort.', {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
-          });
+          return this.showFooterDurationSelection(ctx);
         }
         if (data === 'channel_add') {
           await ctx.answerCbQuery();
@@ -802,7 +930,7 @@ Select an option to boost your NFT collections:`;
           await ctx.answerCbQuery();
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_CONTRACT);
           this.userStates.set(ctx.from.id.toString() + '_validation_type', 'image');
-          return ctx.reply('🖼️ <b>Validate Image Payment</b>\n\nFirst, please send me the NFT contract address.\n\n<i>Example: 0x1234567890abcdef...</i>\n\nType "cancel" to abort.', {
+          return ctx.reply('🖼️ <b>Validate Image Payment</b>\n\nFirst, please send me the NFT NFT address.\n\n<i>Example: 0x1234567890abcdef...</i>\n\nType "cancel" to abort.', {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
           });
@@ -811,9 +939,134 @@ Select an option to boost your NFT collections:`;
           await ctx.answerCbQuery();
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_CONTRACT);
           this.userStates.set(ctx.from.id.toString() + '_validation_type', 'footer');
-          return ctx.reply('🔗 <b>Validate Footer Payment</b>\n\nFirst, please send me the NFT contract address.\n\n<i>Example: 0x1234567890abcdef...</i>\n\nType "cancel" to abort.', {
+          return ctx.reply('🔗 <b>Validate Footer Payment</b>\n\nFirst, please send me the NFT NFT address.\n\n<i>Example: 0x1234567890abcdef...</i>\n\nType "cancel" to abort.', {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
+          });
+        }
+
+        // Duration selection handlers for enhanced payment flow
+        if (data.startsWith('image_duration_')) {
+          await ctx.answerCbQuery();
+          const duration = parseInt(data.replace('image_duration_', ''));
+          const session = this.getUserSession(ctx.from.id);
+          if (!session || session.flow !== 'image_payment') {
+            return ctx.reply('❌ Session expired. Please try again.');
+          }
+
+          // Store duration in session and proceed to chain selection
+          session.duration = duration;
+          session.amount = this.secureTrending.calculateImageFee(duration);
+          this.setUserSession(ctx.from.id, session);
+
+          return this.showChainSelection(ctx, 'image');
+        }
+
+        if (data.startsWith('footer_duration_')) {
+          await ctx.answerCbQuery();
+          const duration = parseInt(data.replace('footer_duration_', ''));
+          const session = this.getUserSession(ctx.from.id);
+          if (!session || session.flow !== 'footer_payment') {
+            return ctx.reply('❌ Session expired. Please try again.');
+          }
+
+          // Store duration in session and proceed to chain selection
+          session.duration = duration;
+          session.amount = this.secureTrending.calculateFooterFee(duration);
+          this.setUserSession(ctx.from.id, session);
+
+          return this.showChainSelection(ctx, 'footer');
+        }
+
+        // Trending selection handlers
+        if (data.startsWith('trending_normal_') || data.startsWith('trending_premium_')) {
+          await ctx.answerCbQuery();
+          const parts = data.split('_');
+          const isPremium = parts[1] === 'premium';
+          const tokenId = parts[2];
+          return this.showTrendingDurationSelection(ctx, tokenId, isPremium);
+        }
+
+        // Trending duration selection handler
+        if (data.startsWith('trending_duration_')) {
+          await ctx.answerCbQuery();
+          const parts = data.split('_');
+          const tokenId = parts[2];
+          const duration = parseInt(parts[3]);
+          const isPremium = parts[4] === 'premium';
+          return this.showPaymentInstructions(ctx, tokenId, duration, isPremium);
+        }
+
+
+        // Chain selection handlers for enhanced payment flow
+        if (data.startsWith('chain_image_') || data.startsWith('chain_footer_')) {
+          await ctx.answerCbQuery();
+          const parts = data.split('_');
+          const paymentType = parts[1]; // 'image' or 'footer'
+          const chainName = parts[2]; // 'ethereum', 'arbitrum', etc.
+
+          const session = this.getUserSession(ctx.from.id);
+          if (!session || session.flow !== `${paymentType}_payment`) {
+            return ctx.reply('❌ Session expired. Please try again.');
+          }
+
+          // Store chain in session and proceed to contract input
+          session.chain = chainName;
+          this.setUserSession(ctx.from.id, session);
+
+          return this.showContractInput(ctx, paymentType);
+        }
+
+        // Back button handlers for enhanced payment flow
+        if (data === 'back_to_chain_image') {
+          await ctx.answerCbQuery();
+          return this.showChainSelection(ctx, 'image');
+        }
+
+        if (data === 'back_to_chain_footer') {
+          await ctx.answerCbQuery();
+          return this.showChainSelection(ctx, 'footer');
+        }
+
+        // Back to contract input handlers
+        if (data === 'back_to_contract_image') {
+          await ctx.answerCbQuery();
+          return this.showContractInput(ctx, 'image');
+        }
+
+        if (data === 'back_to_contract_footer') {
+          await ctx.answerCbQuery();
+          return this.showContractInput(ctx, 'footer');
+        }
+
+        // Enhanced transaction submission handlers
+        if (data === 'submit_enhanced_image_tx') {
+          await ctx.answerCbQuery();
+          const session = this.getUserSession(ctx.from.id);
+          if (!session || session.flow !== 'image_payment') {
+            return ctx.reply('❌ Session expired. Please start again.');
+          }
+
+          // Set state to expect transaction hash
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_IMAGE_TX_HASH);
+          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the image fee payment.\n\n<i>Example: 0xabc123456789def...</i>\n\nType "cancel" to abort.', {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_images')]])
+          });
+        }
+
+        if (data === 'submit_enhanced_footer_tx') {
+          await ctx.answerCbQuery();
+          const session = this.getUserSession(ctx.from.id);
+          if (!session || session.flow !== 'footer_payment') {
+            return ctx.reply('❌ Session expired. Please start again.');
+          }
+
+          // Set state to expect transaction hash
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_TX_HASH);
+          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the footer payment.\n\n<i>Example: 0xabc123456789def...</i>\n\nType "cancel" to abort.', {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
           });
         }
 
@@ -839,14 +1092,19 @@ Select an option to boost your NFT collections:`;
           await ctx.answerCbQuery();
 
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);
-          ctx.reply('📝 Please enter the NFT contract address:');
+          ctx.reply('📝 Please enter the NFT address:', {
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('❌ Cancel', 'cancel_token_add')]
+            ])
+          });
           return;
         }
 
 
-        if (data.startsWith('toggle_')) {
-          const tokenId = data.replace('toggle_', '');
-          await this.toggleTokenNotification(ctx, tokenId);
+        if (data.startsWith('remove_')) {
+          const tokenId = data.replace('remove_', '');
+          await ctx.answerCbQuery();
+          await this.handleRemoveToken(ctx, tokenId);
           return;
         }
 
@@ -865,7 +1123,11 @@ Select an option to boost your NFT collections:`;
 
         if (data === 'promote_token') {
           await ctx.answerCbQuery();
-          return this.showPromoteTokenMenu(ctx);
+          return this.showPromoteTokenMenu(ctx, false); // false = normal trending
+        }
+        if (data === 'promote_token_premium') {
+          await ctx.answerCbQuery();
+          return this.showPromoteTokenMenu(ctx, true); // true = premium trending
         }
 
 
@@ -876,10 +1138,15 @@ Select an option to boost your NFT collections:`;
           return;
         }
 
+        if (data.startsWith('promote_premium_')) {
+          const tokenId = data.replace('promote_premium_', '');
+          await ctx.answerCbQuery();
+          return this.showPromoteDurationMenu(ctx, tokenId, true); // true = premium
+        }
         if (data.startsWith('promote_')) {
           const tokenId = data.replace('promote_', '');
           await ctx.answerCbQuery();
-          return this.showPromoteDurationMenu(ctx, tokenId);
+          return this.showPromoteDurationMenu(ctx, tokenId, false); // false = normal
         }
 
         if (data === 'main_menu') {
@@ -934,7 +1201,7 @@ Type "cancel" to abort this process.`;
           return this.channels.handleChannelSettingsCommand(ctx, chatId);
         }
 
-        if (data === 'channel_toggle_trending') {
+        if (data === 'channel_remove_trending') {
           await ctx.answerCbQuery();
           const chatId = ctx.chat.id.toString();
 
@@ -955,7 +1222,7 @@ Type "cancel" to abort this process.`;
           }
         }
 
-        if (data === 'channel_toggle_activity') {
+        if (data === 'channel_remove_activity') {
           await ctx.answerCbQuery();
           const chatId = ctx.chat.id.toString();
 
@@ -1033,9 +1300,15 @@ Type "cancel" to abort this process.`;
       } else if (userState === this.STATE_EXPECTING_VALIDATION_LINK) {
         await this.handleValidationLink(ctx, text);
         return;
+      } else if (userState === this.STATE_IMAGE_CONTRACT_INPUT) {
+        await this.handleEnhancedImageContract(ctx, text);
+        return;
+      } else if (userState === this.STATE_FOOTER_CONTRACT_INPUT) {
+        await this.handleEnhancedFooterContract(ctx, text);
+        return;
       }
 
-      // Handle contract addresses without specific state (fallback for add_token)
+      // Handle NFT addresses without specific state (fallback for add_token)
       if (text.match(/^0x[a-fA-F0-9]{40}$/)) {
         await this.handleContractAddress(ctx, text);
         return;
@@ -1126,18 +1399,18 @@ Type "cancel" to abort this process.`;
             break;
 
           case 'help':
-            const helpMessage = `📋 <b>MintTechBot Commands</b>
+            const helpMessage = `📋 <b>MintyRushBot Commands</b>
 
-🎯 <b>Token Management:</b>
-• /add_token - Add NFT contract to track
+🎯 <b>NFT Management:</b>
+• /add_token - Add NFT collection to track
 • /remove_token - Remove tracked NFT  
-• /my_tokens - View your tracked tokens
+• /my_tokens - View your tracked NFTs
 
 💰 <b>Trending &amp; Boost:</b>
 • /trending - View trending collections
 • /buy_trending - Boost NFT trending
 • /validate &lt;txhash&gt; - Validate trending payment
-• /buy_image &lt;contract&gt; - Pay fee for actual NFT images
+• /buy_image &lt;contract&gt; - Pay fee for real NFT images
 • /validate_image &lt;contract&gt; &lt;txhash&gt; - Validate image fee
 • /buy_footer &lt;contract&gt; - Pay fee for footer advertisement
 • /validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt; - Validate footer ad
@@ -1179,17 +1452,24 @@ Simple and focused - boost your NFTs easily! 🚀`;
         return ctx.reply('Please start the bot first with /startcandy');
       }
 
-      logger.info(`Token addition - Telegram ID: ${ctx.from.id}, Database User ID: ${user.id}, Contract: ${contractAddress}`);
-      ctx.reply('🔍 Validating and adding contract...');
+      // Get selected chain from user session data
+      const selectedChain = this.userStates.get(ctx.from.id.toString() + '_selected_chain') || 'ethereum';
+      const chainConfig = this.chainManager ? this.chainManager.getChain(selectedChain) : null;
+
+      logger.info(`Token addition - Telegram ID: ${ctx.from.id}, Database User ID: ${user.id}, Contract: ${contractAddress}, Chain: ${selectedChain}`);
+      ctx.reply(`🔍 Validating and adding contract on ${chainConfig ? chainConfig.displayName : selectedChain}...`);
 
       this.clearUserState(ctx.from.id);
+      // Clear the selected chain from session data
+      this.userStates.delete(ctx.from.id.toString() + '_selected_chain');
 
       const chatId = this.normalizeChatContext(ctx);
       const result = await this.tokenTracker.addToken(
         contractAddress,
         user.id,
         ctx.from.id.toString(),
-        chatId
+        chatId,
+        selectedChain
       );
 
       logger.info(`Token addition result for user ${user.id}:`, result.success);
@@ -1204,9 +1484,9 @@ Simple and focused - boost your NFTs easily! 🚀`;
             const verifyTokens = await this.db.getUserTrackedTokens(user.id);
             const addedToken = verifyTokens.find(t => t.contract_address.toLowerCase() === contractAddress.toLowerCase());
             if (addedToken) {
-              await ctx.reply(`✅ Verification: Token is now in your tracking list! Use /my_tokens to view all your tokens.`);
+              await ctx.reply(`✅ Verification: Token is now in your tracking list! Use /my_tokens to view all your NFTs.`);
             } else {
-              await ctx.reply(`⚠️ Token was added but may not appear immediately. Use /my_tokens to check your list.`);
+              // Token added successfully - no warning message needed
             }
           } catch (error) {
             logger.error('Error in token verification:', error);
@@ -1217,9 +1497,9 @@ Simple and focused - boost your NFTs easily! 🚀`;
         logger.error(`Failed to add token ${contractAddress} for user ${user.id}: ${result.message}`);
       }
     } catch (error) {
-      logger.error('Error handling contract address:', error);
+      logger.error('Error handling NFT address:', error);
       this.clearUserState(ctx.from.id);
-      ctx.reply('❌ Error adding token. Please check the contract address and try again.');
+      ctx.reply('❌ Error adding token. Please check the NFT address and try again.');
     }
   }
 
@@ -1295,7 +1575,7 @@ You can try again with a different transaction hash or contact support.`;
       // Get token info for the success message
       const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = ?', [tokenId]);
       if (!token) {
-        return ctx.reply('❌ Token not found.');
+        return ctx.reply('❌ NFT not found.');
       }
 
       // Check if user has subscription in this chat context
@@ -1305,13 +1585,13 @@ You can try again with a different transaction hash or contact support.`;
       );
 
       if (!subscription) {
-        return ctx.reply('❌ You are not subscribed to this token in this chat context.');
+        return ctx.reply('❌ You are not subscribed to this NFT in this chat context.');
       }
 
       // Remove subscription from this specific chat context
       await this.db.unsubscribeUserFromToken(user.id, tokenId, chatId);
 
-      // Check if there are any remaining subscriptions for this token
+      // Check if there are any remaining subscriptions for this NFT
       const remainingSubscriptions = await this.db.all(
         'SELECT COUNT(*) as count FROM user_subscriptions WHERE token_id = ?',
         [tokenId]
@@ -1330,7 +1610,7 @@ You can try again with a different transaction hash or contact support.`;
 
 📮 Contract: <code>${token.contract_address}</code>
 
-You will no longer receive notifications for this token in this chat context.`;
+You will no longer receive notifications for this NFT in this chat context.`;
 
       await ctx.replyWithHTML(successMessage);
       logger.info(`Token subscription removed: ${token.contract_address} by user ${user.id} in chat ${chatId}`);
@@ -1376,7 +1656,7 @@ You will no longer receive notifications for this token in this chat context.`;
           [Markup.button.callback('💰 Boost Your Token', 'promote_token')]
         ]);
         return ctx.reply(
-          '📊 *No trending tokens right now*\n\nBe the first to boost your NFT collection!',
+          '📊 *No trending NFTs right now*\n\nBe the first to boost your NFT collection!',
           { 
             parse_mode: 'Markdown',
             reply_markup: keyboard 
@@ -1408,27 +1688,34 @@ You will no longer receive notifications for this token in this chat context.`;
     }
   }
 
-  async showPromoteTokenMenu(ctx) {
+  async showPromoteTokenMenu(ctx, isPremium = false) {
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
         return ctx.reply('Please start the bot first with /startcandy');
       }
-      const userTokens = await this.tokenTracker.getUserTokens(user.id);
+
+      // Use the same database approach as working methods
+      const chatId = this.normalizeChatContext(ctx);
+      const userTokens = await this.db.getUserTrackedTokens(user.id, chatId);
+
+      // Debug logging
+      console.log(`[showPromoteTokenMenu] User: ${user.id}, ChatId: ${chatId}, Tokens found: ${userTokens.length}, isPremium: ${isPremium}`);
       if (!userTokens || userTokens.length === 0) {
         return ctx.reply(
           '📝 You need to add some NFT collections first!\n\nUse /add_token to track your first NFT collection.'
         );
       }
 
-      const message = '🚀 Select an NFT collection to boost:';
+      const trendingType = isPremium ? 'Premium' : 'Normal';
+      const message = `🚀 Select an NFT collection for ${trendingType} trending boost:`;
 
       const keyboard = [];
 
       userTokens.forEach((token, index) => {
         keyboard.push([{
           text: `🚀 ${token.token_name || `Token ${index + 1}`}`,
-          callback_data: `promote_${token.id}`
+          callback_data: isPremium ? `promote_premium_${token.id}` : `promote_${token.id}`
         }]);
       });
 
@@ -1449,7 +1736,7 @@ You will no longer receive notifications for this token in this chat context.`;
     }
   }
 
-  async showPromoteDurationMenu(ctx, tokenId) {
+  async showPromoteDurationMenu(ctx, tokenId, isPremium = false) {
     try {
       const token = await this.db.get(
         'SELECT * FROM tracked_tokens WHERE id = ?',
@@ -1457,7 +1744,7 @@ You will no longer receive notifications for this token in this chat context.`;
       );
 
       if (!token) {
-        return ctx.reply('❌ Token not found.');
+        return ctx.reply('❌ NFT not found.');
       }
 
       // Use secure trending service with fallback to old service
@@ -1465,31 +1752,29 @@ You will no longer receive notifications for this token in this chat context.`;
       const trendingOptions = await trendingService.getTrendingOptions();
       logger.info(`Trending options loaded: ${trendingOptions.length} options`);
       
-      let message = `🚀 <b>Boost: ${token.token_name || 'Unknown Collection'}</b>\n\n`;
+      const trendingType = isPremium ? 'Premium' : 'Normal';
+      const trendingIcon = isPremium ? '⭐' : '💫';
+
+      let message = `🚀 <b>${trendingType} Trending Boost</b>\n\n`;
+      message += `${trendingIcon} <b>${token.token_name || 'Unknown Collection'}</b>\n`;
       message += `📮 <code>${token.contract_address}</code>\n\n`;
-      message += '<b>Select boost duration and type:</b>';
+      message += `<b>Select ${trendingType.toLowerCase()} boost duration:</b>`;
 
       const buttons = [];
-      
-      // Add Normal trending options
-      message += '\n\n💫 <b>Normal Trending:</b>';
+
+      // Add only the relevant trending options based on type
       trendingOptions.forEach(option => {
+        const feeEth = isPremium ? option.premiumFeeEth : option.normalFeeEth;
+        const buttonIcon = isPremium ? '🌟' : '💰';
+        const type = isPremium ? 'premium' : 'normal';
+
         buttons.push([Markup.button.callback(
-          `💰 ${option.duration}h Normal - ${option.normalFeeEth} ETH`, 
-          `duration_${tokenId}_${option.duration}_normal`
+          `${buttonIcon} ${option.duration}h - ${feeEth} ETH`,
+          `duration_${tokenId}_${option.duration}_${type}`
         )]);
       });
 
-      // Add Premium trending options  
-      message += '\n\n⭐ <b>Premium Trending:</b>';
-      trendingOptions.forEach(option => {
-        buttons.push([Markup.button.callback(
-          `🌟 ${option.duration}h Premium - ${option.premiumFeeEth} ETH`, 
-          `duration_${tokenId}_${option.duration}_premium`
-        )]);
-      });
-
-      buttons.push([Markup.button.callback('◀️ Back', 'promote_token')]);
+      buttons.push([Markup.button.callback('◀️ Back', isPremium ? 'promote_token_premium' : 'promote_token')]);
 
       const keyboard = Markup.inlineKeyboard(buttons);
 
@@ -1510,12 +1795,12 @@ You will no longer receive notifications for this token in this chat context.`;
   async showMainMenu(ctx) {
     const keyboard = [
       [Markup.button.callback('🔥 View Trending', 'view_trending')],
-      [Markup.button.callback('➕ Add Token', 'add_token_start')],
+      [Markup.button.callback('➕ Add NFT', 'add_token_start')],
       [Markup.button.callback('📊 My Tokens', 'my_tokens')],
       [Markup.button.callback('🚀 Boost Token', 'promote_token')]
     ];
 
-    const message = `🚀 *MintTechBot Main Menu*
+    const message = `🚀 *MintyRushBot Main Menu*
 
 Choose an option:`;
 
@@ -1571,12 +1856,12 @@ Choose an option:`;
 
   // Menu Navigation Functions
   async showMainMenu(ctx) {
-    const welcomeMessage = `🚀 <b>MintTechBot Main Menu</b> 🚀
+    const welcomeMessage = `🚀 <b>MintyRushBot Main Menu</b> 🚀
 
 <b>Choose a category to get started:</b>`;
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('📊 Manage Tokens', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
-      [Markup.button.callback('🖼️ Buy NFT Images', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
+      [Markup.button.callback('📊 Manage NFTs', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
+      [Markup.button.callback('🖼️ Display NFT Image', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
       [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')]
     ]);
 
@@ -1584,12 +1869,12 @@ Choose an option:`;
   }
 
   async showTokensMenu(ctx) {
-    const message = `📊 <b>Token Management</b>
+    const message = `📊 <b>NFT Management</b>
 
-<b>Manage your tracked NFT collections:</b>`;
+<b>Manage your NFT collections:</b>`;
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('➕ Add NFT Contract', 'add_token_start'), Markup.button.callback('👁️ View My Tokens', 'my_tokens')],
-      [Markup.button.callback('🗑️ Remove NFT Contract', 'remove_token')],
+      [Markup.button.callback('➕ Add NFT Collection', 'add_token_start'), Markup.button.callback('👁️ View My NFTs', 'my_tokens')],
+      [Markup.button.callback('🗑️ Remove NFT Collection', 'remove_token')],
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
@@ -1612,9 +1897,9 @@ Choose an option:`;
   async showImagesMenu(ctx) {
     const message = `🖼️ <b>NFT Image Display</b>
 
-<b>Enable actual NFT images instead of placeholders:</b>`;
+<b>Enable real NFT images instead of CandyCodex image:</b>`;
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('💳 Pay for Actual Images', 'buy_image_menu')],
+      [Markup.button.callback('💳 Display NFT Image', 'buy_image_menu')],
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
@@ -1624,7 +1909,7 @@ Choose an option:`;
   async showFooterMenu(ctx) {
     const message = `🔗 <b>Footer Advertisement</b>
 
-<b>Advertise your token in notification footers:</b>`;
+<b>Advertise your Project in notification footers:</b>`;
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('💳 Pay for Footer Ads', 'buy_footer_menu')],
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
@@ -1668,10 +1953,11 @@ Choose an option:`;
 
       const chatId = this.normalizeChatContext(ctx);
       const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
+
       if (tokens.length === 0) {
         const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('➕ Add Your First Token', 'add_token_start')],
-          [Markup.button.callback('◀️ Back to Tokens Menu', 'menu_tokens')]
+          [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')],
+          [Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]
         ]);
         return ctx.replyWithHTML(
           '🔍 You haven\'t added any tokens yet!\n\nUse the button below to start tracking NFT collections.',
@@ -1679,27 +1965,111 @@ Choose an option:`;
         );
       }
 
-      let message = `🎯 <b>Your Tracked Tokens</b> (${tokens.length})\n\n`;
+      let message = `🎯 <b>Your Tracked NFTs</b> (${tokens.length})\n\n`;
       const keyboard = [];
 
       tokens.forEach((token, index) => {
         message += `${index + 1}. <b>${token.token_name || 'Unknown'}</b> (${token.token_symbol || 'N/A'})\n`;
         message += `   📮 <code>${token.contract_address}</code>\n`;
-        message += `   🔔 Notifications: ${token.notification_enabled ? '✅' : '❌'}\n\n`;
+        message += `   🟢 Status: Active\n\n`;
         keyboard.push([
           Markup.button.callback(
-            `${token.notification_enabled ? '🔕' : '🔔'} ${token.token_name || token.contract_address.slice(0, 8)}...`,
-            `toggle_${token.id}`
+            `🗑️ Remove ${token.token_name || token.contract_address.slice(0, 8)}...`,
+            `remove_${token.id}`
           )
         ]);
       });
 
-      keyboard.push([Markup.button.callback('➕ Add More Tokens', 'add_token_start'), Markup.button.callback('◀️ Back to Tokens Menu', 'menu_tokens')]);
+      keyboard.push([Markup.button.callback('➕ Add More NFTs', 'add_token_start'), Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]);
 
       await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
     } catch (error) {
       logger.error('Error in showMyTokens:', error);
-      ctx.reply('❌ Error retrieving your tokens. Please try again.');
+      ctx.reply('❌ Error retrieving your NFTs. Please try again.');
+    }
+  }
+
+  async showTrendingTypeMenu(ctx, isPremium = false) {
+    try {
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startcandy');
+      }
+
+      const chatId = this.normalizeChatContext(ctx);
+      const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
+
+      // Debug logging
+      console.log(`[showTrendingTypeMenu] User: ${user.id}, ChatId: ${chatId}, Tokens found: ${tokens.length} (using database)`);
+      if (tokens.length > 0) {
+        console.log(`[showTrendingTypeMenu] Token details:`, tokens.map(t => ({ id: t.id, name: t.token_name, address: t.contract_address })));
+      }
+
+      if (tokens.length === 0) {
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')]
+        ]);
+        return ctx.reply('📝 You need to add some NFT collections first!\n\nUse /add_token to track your first NFT collection.', keyboard);
+      }
+
+      const trendingType = isPremium ? 'Premium' : 'Normal';
+      const message = `🚀 <b>${trendingType} Trending Boost</b>
+
+Select an NFT collection to boost:`;
+
+      const keyboard = [];
+      tokens.forEach((token, index) => {
+        keyboard.push([{
+          text: `${index + 1}. ${token.token_name || 'Unknown Collection'}`,
+          callback_data: `trending_${isPremium ? 'premium' : 'normal'}_${token.id}`
+        }]);
+      });
+
+      keyboard.push([{
+        text: '🔄 Back to Buy Trending Menu',
+        callback_data: 'back_to_buy_trending'
+      }]);
+
+      return ctx.replyWithHTML(message, { reply_markup: { inline_keyboard: keyboard } });
+    } catch (error) {
+      logger.error('Error showing trending type menu:', error);
+      return ctx.reply('❌ Error loading your NFTs. Please try again.');
+    }
+  }
+
+  async showTrendingDurationSelection(ctx, tokenId, isPremium = false) {
+    try {
+      const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = ?', [tokenId]);
+      if (!token) {
+        return ctx.reply('❌ NFT collection not found.');
+      }
+
+      const trendingType = isPremium ? 'Premium' : 'Normal';
+      const message = `🚀 <b>${trendingType} Trending - ${token.token_name || 'Unknown Collection'}</b>
+
+Select trending duration:`;
+
+      const durations = [6, 12, 18, 24];
+      const keyboard = [];
+
+      durations.forEach(duration => {
+        const fee = this.secureTrending.calculateTrendingFee(duration, isPremium);
+        const feeEth = require('ethers').formatEther(fee);
+        keyboard.push([{
+          text: `${duration}h - ${feeEth} ETH`,
+          callback_data: `trending_duration_${tokenId}_${duration}_${isPremium ? 'premium' : 'normal'}`
+        }]);
+      });
+
+      keyboard.push([{
+        text: '◀️ Back to NFT Selection',
+        callback_data: `buy_trending_${isPremium ? 'premium' : 'normal'}`
+      }]);
+
+      return ctx.replyWithHTML(message, { reply_markup: { inline_keyboard: keyboard } });
+    } catch (error) {
+      logger.error('Error showing trending duration selection:', error);
+      return ctx.reply('❌ Error loading trending options. Please try again.');
     }
   }
 
@@ -1711,9 +2081,9 @@ Choose an option:`;
         return this.showFooterMenu(ctx);
       }
 
-      // Validate contract address format
+      // Validate NFT address format
       if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-        return ctx.reply('❌ Invalid contract address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+        return ctx.reply('❌ Invalid NFT address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
       }
 
       const user = await this.db.getUser(ctx.from.id.toString());
@@ -1729,7 +2099,7 @@ Choose an option:`;
       }
 
       // Check if contract is already tracked, if not validate and add it
-      ctx.reply('🔍 Validating contract address...');
+      ctx.reply('🔍 Validating NFT address...');
 
       let token = await this.db.getTrackedToken(contractAddress);
       if (!token) {
@@ -1744,7 +2114,7 @@ Choose an option:`;
         token = await this.db.getTrackedToken(contractAddress);
       }
 
-      // Store contract address and generate payment instructions
+      // Store NFT address and generate payment instructions
       this.userStates.set(ctx.from.id.toString() + '_footer_contract', contractAddress);
 
       const instructions = await this.secureTrending.generateFooterPaymentInstructions(contractAddress, user.id);
@@ -1757,7 +2127,7 @@ Choose an option:`;
         `⏰ <b>Duration:</b> ${instructions.duration || '30 days'}\n` +
         `📮 <b>Contract:</b> <code>${instructions.contractAddress || contractAddress}</code>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
-        (instructions.instructions || ['Send payment to contract address']).map((step, i) => `${i + 1}. ${step}`).join('\n') + '\n\n' +
+        (instructions.instructions || ['Send payment to NFT address']).map((step, i) => `${i + 1}. ${step}`).join('\n') + '\n\n' +
         (instructions.etherscanUrl ? `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n` : '');
 
       const keyboard = Markup.inlineKeyboard([
@@ -1786,32 +2156,65 @@ Choose an option:`;
       }
 
       const userId = ctx.from.id.toString();
-      const contractAddress = this.userStates.get(userId + '_footer_contract');
+
+      // Check both old and new session formats
+      let contractAddress = this.userStates.get(userId + '_footer_contract'); // Old format
+      let durationDays = 30; // Default duration for old format
+      let isEnhancedFlow = false;
+
+      // Check new enhanced session format
+      const session = this.getUserSession(ctx.from.id);
+      if (session && session.flow === 'footer_payment' && session.contractAddress) {
+        contractAddress = session.contractAddress;
+        durationDays = session.duration || 30;
+        isEnhancedFlow = true;
+      }
 
       if (!contractAddress) {
         this.clearUserState(ctx.from.id);
+        this.clearUserSession(ctx.from.id);
         return ctx.reply('❌ Session expired. Please start again.');
       }
 
       await ctx.reply('⏳ Validating your footer advertisement payment...');
 
       // Validate the payment first before asking for URL
-      const paymentValidation = await this.secureTrending.validateFooterPayment(contractAddress, txHash);
+      const paymentValidation = await this.secureTrending.validateFooterPayment(contractAddress, txHash, durationDays);
 
       if (!paymentValidation.success) {
         this.clearUserState(ctx.from.id);
-        return ctx.reply(`❌ Payment validation failed: ${paymentValidation.error}\n\nPlease ensure you sent exactly 1.0 ETH to the payment contract.`);
+        this.clearUserSession(ctx.from.id);
+        return ctx.reply(`❌ Payment validation failed: ${paymentValidation.error}\n\nPlease ensure you sent the correct amount to the payment contract.`);
       }
 
-      // Payment is valid, store tx hash and ask for link
-      this.userStates.set(userId + '_footer_tx', txHash);
-      this.userStates.set(userId + '_payment_validated', true);
-      this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_LINK);
+      if (isEnhancedFlow) {
+        // For enhanced flow, store transaction hash in session and ask for link
+        session.txHash = txHash;
+        this.setUserSession(ctx.from.id, session);
+        this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_LINK);
 
-      return ctx.reply('✅ <b>Payment Verified!</b>\n\n🔗 <b>Custom Link</b>\n\nNow please send me the custom link you want to display in the footer ads.\n\n<i>Example: https://mytoken.com</i>\n\nType "cancel" to abort.', {
-        parse_mode: 'HTML',
-        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
-      });
+        const { ethers } = require('ethers');
+        const amountText = ethers.formatEther(session.amount);
+
+        return ctx.reply(`✅ <b>Payment Verified!</b>\n\n` +
+          `🎨 Collection: <b>${session.tokenName}</b>\n` +
+          `💰 Amount: ${amountText} ETH\n` +
+          `📅 Duration: <b>${durationDays} days</b>\n\n` +
+          `🔗 <b>Custom Link</b>\n\nNow please send me the custom link you want to display in the footer ads.\n\n<i>Example: https://mytoken.com</i>\n\nType "cancel" to abort.`, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
+        });
+      } else {
+        // For old flow, use old session storage method
+        this.userStates.set(userId + '_footer_tx', txHash);
+        this.userStates.set(userId + '_payment_validated', true);
+        this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_LINK);
+
+        return ctx.reply('✅ <b>Payment Verified!</b>\n\n🔗 <b>Custom Link</b>\n\nNow please send me the custom link you want to display in the footer ads.\n\n<i>Example: https://mytoken.com</i>\n\nType "cancel" to abort.', {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
+        });
+      }
     } catch (error) {
       logger.error('Error handling footer tx hash:', error);
       this.clearUserState(ctx.from.id);
@@ -1827,12 +2230,25 @@ Choose an option:`;
       }
 
       const userId = ctx.from.id.toString();
-      const contractAddress = this.userStates.get(userId + '_footer_contract');
-      const txHash = this.userStates.get(userId + '_footer_tx');
-      const paymentValidated = this.userStates.get(userId + '_payment_validated');
+
+      // Check both old and new session formats
+      let contractAddress = this.userStates.get(userId + '_footer_contract'); // Old format
+      let txHash = this.userStates.get(userId + '_footer_tx'); // Old format
+      let paymentValidated = this.userStates.get(userId + '_payment_validated'); // Old format
+      let durationDays = 30; // Default for old format
+
+      // Check new enhanced session format
+      const session = this.getUserSession(ctx.from.id);
+      if (session && session.flow === 'footer_payment' && session.contractAddress && session.txHash) {
+        contractAddress = session.contractAddress;
+        txHash = session.txHash;
+        paymentValidated = true; // Enhanced flow only reaches here if payment was validated
+        durationDays = session.duration || 30;
+      }
 
       if (!contractAddress || !txHash || !paymentValidated) {
         this.clearUserState(ctx.from.id);
+        this.clearUserSession(ctx.from.id);
         return ctx.reply('❌ Session expired or payment not validated. Please start again.');
       }
 
@@ -1846,9 +2262,10 @@ Choose an option:`;
       await ctx.reply('⏳ Creating your footer advertisement...');
 
       const user = await this.db.getUser(userId);
-      const result = await this.secureTrending.finalizeFooterAd(contractAddress, txHash, customLink, user.id);
+      const result = await this.secureTrending.finalizeFooterAd(contractAddress, txHash, customLink, user.id, durationDays);
 
       this.clearUserState(ctx.from.id);
+      this.clearUserSession(ctx.from.id);
       this.userStates.delete(userId + '_footer_contract');
       this.userStates.delete(userId + '_footer_tx');
       this.userStates.delete(userId + '_payment_validated');
@@ -1872,9 +2289,9 @@ Choose an option:`;
         return this.showImagesMenu(ctx);
       }
 
-      // Validate contract address format
+      // Validate NFT address format
       if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-        return ctx.reply('❌ Invalid contract address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+        return ctx.reply('❌ Invalid NFT address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
       }
 
       const user = await this.db.getUser(ctx.from.id.toString());
@@ -1890,7 +2307,7 @@ Choose an option:`;
       }
 
       // Check if contract is already tracked, if not validate and add it
-      ctx.reply('🔍 Validating contract address...');
+      ctx.reply('🔍 Validating NFT address...');
 
       let token = await this.db.getTrackedToken(contractAddress);
       if (!token) {
@@ -1909,7 +2326,7 @@ Choose an option:`;
       const isActive = await this.secureTrending.isImageFeeActive(contractAddress);
       if (isActive) {
         return ctx.reply('✅ Image fee is already active for this contract. Actual NFT images are being displayed.', {
-          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]])
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Image Spots Menu', 'menu_images')]])
         });
       }
 
@@ -1923,12 +2340,12 @@ Choose an option:`;
         instructions.instructions.join('\n') + '\n\n' +
         `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n`;
 
-      // Store contract address for later validation
+      // Store NFT address for later validation
       this.userStates.set(ctx.from.id.toString() + '_image_contract', contractAddress);
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📝 Submit Transaction Hash', 'submit_image_tx')],
-        [Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]
+        [Markup.button.callback('◀️ Back to Image Spots Menu', 'menu_images')]
       ]);
 
       await ctx.replyWithHTML(message, keyboard);
@@ -1952,19 +2369,31 @@ Choose an option:`;
       }
 
       const userId = ctx.from.id.toString();
-      const contractAddress = this.userStates.get(userId + '_image_contract');
+
+      // Check both old and new session formats
+      let contractAddress = this.userStates.get(userId + '_image_contract'); // Old format
+      let durationDays = 30; // Default duration for old format
+
+      // Check new enhanced session format
+      const session = this.getUserSession(ctx.from.id);
+      if (session && session.flow === 'image_payment' && session.contractAddress) {
+        contractAddress = session.contractAddress;
+        durationDays = session.duration || 30;
+      }
 
       if (!contractAddress) {
         this.clearUserState(ctx.from.id);
+        this.clearUserSession(ctx.from.id);
         return ctx.reply('❌ Session expired. Please start again.');
       }
 
       await ctx.reply('⏳ Validating your image fee transaction...');
 
       const user = await this.db.getUser(userId);
-      const result = await this.secureTrending.validateImageFeeTransaction(user.id, contractAddress, txHash);
+      const result = await this.secureTrending.validateImageFeeTransaction(user.id, contractAddress, txHash, durationDays);
 
       this.clearUserState(ctx.from.id);
+      this.clearUserSession(ctx.from.id);
       this.userStates.delete(userId + '_image_contract');
 
       if (result.success) {
@@ -1972,14 +2401,15 @@ Choose an option:`;
           `🎨 Collection: <b>${result.tokenName}</b>\n` +
           `📮 Contract: <code>${result.contractAddress}</code>\n` +
           `💰 Amount: ${result.amountEth} ETH\n` +
+          `📅 Duration: <b>${durationDays} days</b>\n` +
           `📝 Transaction: <code>${result.txHash}</code>\n` +
           `👤 Payer: <code>${result.payer}</code>\n\n` +
-          `🖼️ <b>Actual NFT images will now be displayed for this contract for 30 days!</b>`;
+          `🖼️ <b>Actual NFT images will now be displayed for this contract for ${durationDays} days!</b>`;
 
-        await ctx.replyWithHTML(successMessage, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]]));
+        await ctx.replyWithHTML(successMessage, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Image Spots Menu', 'menu_images')]]));
       } else {
         await ctx.reply(`❌ Validation failed: ${result.error}`, {
-          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]])
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Image Spots Menu', 'menu_images')]])
         });
       }
     } catch (error) {
@@ -1996,9 +2426,9 @@ Choose an option:`;
         return this.showVerifyMenu(ctx);
       }
 
-      // Validate contract address format
+      // Validate NFT address format
       if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-        return ctx.reply('❌ Invalid contract address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+        return ctx.reply('❌ Invalid NFT address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
       }
 
       const user = await this.db.getUser(ctx.from.id.toString());
@@ -2007,7 +2437,7 @@ Choose an option:`;
       }
 
       // Check if contract is already tracked, if not validate and add it
-      ctx.reply('🔍 Validating contract address...');
+      ctx.reply('🔍 Validating NFT address...');
 
       let token = await this.db.getTrackedToken(contractAddress);
       if (!token) {
@@ -2025,7 +2455,7 @@ Choose an option:`;
       const userId = ctx.from.id.toString();
       const validationType = this.userStates.get(userId + '_validation_type');
 
-      // Store contract address and move to next step
+      // Store NFT address and move to next step
       this.userStates.set(userId + '_validation_contract', contractAddress);
       this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
 
@@ -2188,6 +2618,461 @@ Choose an option:`;
     } catch (error) {
       logger.error('Error checking user pending operations:', error);
       return 0; // On error, don't block user
+    }
+  }
+
+  // Helper method to show tokens from all chains
+  async showTokensForAllChains(ctx) {
+    try {
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startcandy');
+      }
+
+      const chatId = this.normalizeChatContext(ctx);
+      const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
+
+      if (tokens.length === 0) {
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')]
+        ]);
+        return ctx.reply('🔍 You haven\'t added any tokens yet!\n\nUse /add_token to start tracking NFT collections.', keyboard);
+      }
+
+      // Group tokens by chain
+      const tokensByChain = {};
+      tokens.forEach(token => {
+        const chainName = token.chain_name || 'ethereum';
+        if (!tokensByChain[chainName]) {
+          tokensByChain[chainName] = [];
+        }
+        tokensByChain[chainName].push(token);
+      });
+
+      let message = `🎯 <b>Your Tracked NFTs</b> (${tokens.length} total)\n\n`;
+      const keyboard = [];
+
+      for (const [chainName, chainTokens] of Object.entries(tokensByChain)) {
+        const chainConfig = this.chainManager ? this.chainManager.getChain(chainName) : null;
+        const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : chainName;
+
+        message += `🔗 <b>${chainDisplay}</b> (${chainTokens.length})\n`;
+
+        chainTokens.forEach((token, index) => {
+          message += `   ${index + 1}. <b>${token.token_name || 'Unknown'}</b> (${token.token_symbol || 'N/A'})\n`;
+          message += `      📮 <code>${token.contract_address}</code>\n`;
+          message += `      🟢 Status: Active\n`;
+          if (token.collection_slug) {
+            message += `      🌊 OpenSea: ✅ Real-time tracking\n`;
+          }
+          message += '\n';
+
+          keyboard.push([
+            Markup.button.callback(
+              `🗑️ Remove ${token.token_name || token.contract_address.slice(0, 8)}...`,
+              `remove_${token.id}`
+            )
+          ]);
+        });
+        message += '\n';
+      }
+
+      keyboard.push([Markup.button.callback('➕ Add More NFTs', 'add_token_start')]);
+
+      await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+    } catch (error) {
+      logger.error('Error showing tokens for all chains:', error);
+      ctx.reply('❌ Error retrieving your NFTs. Please try again.');
+    }
+  }
+
+  // Helper method to show tokens from a specific chain
+  async showTokensForChain(ctx, chainName, chainConfig) {
+    try {
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startcandy');
+      }
+
+      const chatId = this.normalizeChatContext(ctx);
+      const allTokens = await this.db.getUserTrackedTokens(user.id, chatId);
+      const chainTokens = allTokens.filter(token => (token.chain_name || 'ethereum') === chainName);
+
+      if (chainTokens.length === 0) {
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('➕ Add NFT on This Chain', 'add_token_start')],
+          [Markup.button.callback('🌐 View All Chains', 'chain_select_all')]
+        ]);
+        return ctx.reply(
+          `🔍 <b>No NFTs found on ${chainConfig.displayName}</b>\n\nAdd some NFTs to start tracking on this blockchain!`,
+          { parse_mode: 'HTML', reply_markup: keyboard }
+        );
+      }
+
+      const chainDisplay = `${chainConfig.emoji} ${chainConfig.displayName}`;
+      let message = `🎯 <b>Your ${chainDisplay} Tokens</b> (${chainTokens.length})\n\n`;
+      const keyboard = [];
+
+      chainTokens.forEach((token, index) => {
+        message += `${index + 1}. <b>${token.token_name || 'Unknown'}</b> (${token.token_symbol || 'N/A'})\n`;
+        message += `   📮 <code>${token.contract_address}</code>\n`;
+        message += `   🟢 Status: Active\n`;
+
+        if (token.collection_slug) {
+          message += `   🌊 OpenSea: ✅ Real-time tracking (${token.collection_slug})\n`;
+        } else {
+          message += `   🌊 OpenSea: ⚠️ No real-time tracking\n`;
+        }
+        message += '\n';
+
+        keyboard.push([
+          Markup.button.callback(
+            `🗑️ Remove ${token.token_name || token.contract_address.slice(0, 8)}...`,
+            `remove_${token.id}`
+          )
+        ]);
+      });
+
+      keyboard.push([
+        Markup.button.callback('➕ Add More NFTs', 'add_token_start'),
+        Markup.button.callback('🌐 All Chains', 'chain_select_all')
+      ]);
+
+      await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+    } catch (error) {
+      logger.error('Error showing tokens for chain:', error);
+      ctx.reply('❌ Error retrieving your NFTs. Please try again.');
+    }
+  }
+
+  // Duration selection methods for enhanced payment flow
+  async showImageDurationSelection(ctx) {
+    try {
+      const message = `🎨 <b>Image Fee - Select Duration</b>\n\n` +
+        `Choose how long you want NFT images displayed instead of the CandyCodex image:\n\n` +
+        `🔹 <b>30 days</b> - 0.004 ETH\n` +
+        `🔹 <b>60 days</b> - 0.008 ETH\n` +
+        `🔹 <b>90 days</b> - 0.012 ETH\n` +
+        `🔹 <b>180 days</b> - 0.024 ETH\n` +
+        `🔹 <b>365 days</b> - 0.048 ETH\n\n` +
+        `✨ Longer durations offer better value per day!`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('30 days - 0.004 ETH', 'image_duration_30'),
+          Markup.button.callback('60 days - 0.008 ETH', 'image_duration_60')
+        ],
+        [
+          Markup.button.callback('90 days - 0.012 ETH', 'image_duration_90'),
+          Markup.button.callback('180 days - 0.024 ETH', 'image_duration_180')
+        ],
+        [
+          Markup.button.callback('365 days - 0.048 ETH', 'image_duration_365')
+        ],
+        [
+          Markup.button.callback('◀️ Back to Image Spots Menu', 'menu_images')
+        ]
+      ]);
+
+      // Set user state and initialize session
+      this.setUserState(ctx.from.id, this.STATE_IMAGE_DURATION_SELECT);
+      this.setUserSession(ctx.from.id, { flow: 'image_payment' });
+
+      await ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error showing image duration selection:', error);
+      ctx.reply('❌ Error showing duration options. Please try again.');
+    }
+  }
+
+  async showFooterDurationSelection(ctx) {
+    try {
+      const message = `📢 <b>Footer Advertisement - Select Duration</b>\n\n` +
+        `Choose how long your footer ad will be displayed:\n\n` +
+        `🔹 <b>30 days</b> - 1.0 ETH\n` +
+        `🔹 <b>60 days</b> - 2.0 ETH\n` +
+        `🔹 <b>90 days</b> - 3.0 ETH\n` +
+        `🔹 <b>180 days</b> - 6.0 ETH\n` +
+        `🔹 <b>365 days</b> - 12.0 ETH\n\n` +
+        `💡 Your ad will appear at the bottom of all token notifications!`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('30 days - 1.0 ETH', 'footer_duration_30'),
+          Markup.button.callback('60 days - 2.0 ETH', 'footer_duration_60')
+        ],
+        [
+          Markup.button.callback('90 days - 3.0 ETH', 'footer_duration_90'),
+          Markup.button.callback('180 days - 6.0 ETH', 'footer_duration_180')
+        ],
+        [
+          Markup.button.callback('365 days - 12.0 ETH', 'footer_duration_365')
+        ],
+        [
+          Markup.button.callback('◀️ Back to Footer Menu', 'menu_footer')
+        ]
+      ]);
+
+      // Set user state and initialize session
+      this.setUserState(ctx.from.id, this.STATE_FOOTER_DURATION_SELECT);
+      this.setUserSession(ctx.from.id, { flow: 'footer_payment' });
+
+      await ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error showing footer duration selection:', error);
+      ctx.reply('❌ Error showing duration options. Please try again.');
+    }
+  }
+
+  async showChainSelection(ctx, paymentType) {
+    try {
+      const session = this.getUserSession(ctx.from.id);
+      if (!session) {
+        return ctx.reply('❌ Session expired. Please try again.');
+      }
+
+      const durationText = `${session.duration} days`;
+      const { ethers } = require('ethers');
+      const amountText = session.amount ? `${ethers.formatEther(session.amount)} ETH` : 'N/A ETH';
+
+      const message = paymentType === 'image' ?
+        `🎨 <b>Image Fee Payment - Select Chain</b>\n\n` +
+        `📅 Duration: <b>${durationText}</b>\n` +
+        `💰 Amount: <b>${amountText}</b>\n\n` +
+        `🔗 Select the blockchain network:` :
+        `📢 <b>Footer Ad Payment - Select Chain</b>\n\n` +
+        `📅 Duration: <b>${durationText}</b>\n` +
+        `💰 Amount: <b>${amountText}</b>\n\n` +
+        `🔗 Select the blockchain network:`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('🔗 Ethereum', `chain_${paymentType}_ethereum`)
+        ],
+        [
+          Markup.button.callback('🔺 Arbitrum', `chain_${paymentType}_arbitrum`)
+        ],
+        [
+          Markup.button.callback('🟪 Polygon', `chain_${paymentType}_polygon`)
+        ],
+        [
+          Markup.button.callback('🔵 Base', `chain_${paymentType}_base`)
+        ],
+        [
+          Markup.button.callback('◀️ Back to Duration Selection', paymentType === 'image' ? 'buy_image_menu' : 'buy_footer_menu')
+        ]
+      ]);
+
+      // Update state
+      const stateKey = paymentType === 'image' ? this.STATE_IMAGE_CHAIN_SELECT : this.STATE_FOOTER_CHAIN_SELECT;
+      this.setUserState(ctx.from.id, stateKey);
+
+      await ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error showing chain selection:', error);
+      ctx.reply('❌ Error showing chain selection. Please try again.');
+    }
+  }
+
+  async showContractInput(ctx, paymentType) {
+    try {
+      const session = this.getUserSession(ctx.from.id);
+      if (!session) {
+        return ctx.reply('❌ Session expired. Please try again.');
+      }
+
+      const { ethers } = require('ethers');
+      const durationText = `${session.duration} days`;
+      const amountText = session.amount ? `${ethers.formatEther(session.amount)} ETH` : 'N/A ETH';
+      const chainText = session.chain || 'Unknown';
+
+      const message = paymentType === 'image' ?
+        `🎨 <b>Image Fee Payment - Enter Contract</b>\n\n` +
+        `📅 Duration: <b>${durationText}</b>\n` +
+        `💰 Amount: <b>${amountText}</b>\n` +
+        `🔗 Chain: <b>${chainText.charAt(0).toUpperCase() + chainText.slice(1)}</b>\n\n` +
+        `📝 Please enter the NFT address:\n\n` +
+        `<i>Example: 0x1234567890abcdef...</i>\n\n` +
+        `Type "cancel" to abort.` :
+        `📢 <b>Footer Ad Payment - Enter Contract</b>\n\n` +
+        `📅 Duration: <b>${durationText}</b>\n` +
+        `💰 Amount: <b>${amountText}</b>\n` +
+        `🔗 Chain: <b>${chainText.charAt(0).toUpperCase() + chainText.slice(1)}</b>\n\n` +
+        `📝 Please enter the NFT address:\n\n` +
+        `<i>Example: 0x1234567890abcdef...</i>\n\n` +
+        `Type "cancel" to abort.`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('◀️ Back to Chain Selection', paymentType === 'image' ? 'back_to_chain_image' : 'back_to_chain_footer')
+        ],
+        [
+          Markup.button.callback('❌ Cancel', paymentType === 'image' ? 'cancel_images' : 'cancel_footer')
+        ]
+      ]);
+
+      // Update state to expect contract input
+      const stateKey = paymentType === 'image' ? this.STATE_IMAGE_CONTRACT_INPUT : this.STATE_FOOTER_CONTRACT_INPUT;
+      this.setUserState(ctx.from.id, stateKey);
+
+      await ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error showing contract input:', error);
+      ctx.reply('❌ Error showing contract input. Please try again.');
+    }
+  }
+
+  async handleEnhancedImageContract(ctx, contractAddress) {
+    try {
+      if (contractAddress.toLowerCase() === 'cancel') {
+        this.clearUserState(ctx.from.id);
+        this.clearUserSession(ctx.from.id);
+        return this.showImagesMenu(ctx);
+      }
+
+      // Validate NFT address format
+      if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
+        return ctx.reply('❌ Invalid NFT address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+      }
+
+      const session = this.getUserSession(ctx.from.id);
+      if (!session || session.flow !== 'image_payment') {
+        this.clearUserState(ctx.from.id);
+        return ctx.reply('❌ Session expired. Please start again.');
+      }
+
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startcandy');
+      }
+
+      // Validate and track contract if needed
+      ctx.reply('🔍 Validating NFT address...');
+
+      let token = await this.db.getTrackedToken(contractAddress);
+      if (!token) {
+        const chatId = this.normalizeChatContext(ctx);
+        const result = await this.tokenTracker.addToken(contractAddress, user.id, ctx.from.id.toString(), chatId);
+        if (!result.success) {
+          this.clearUserState(ctx.from.id);
+          this.clearUserSession(ctx.from.id);
+          return ctx.reply(`❌ Contract validation failed: ${result.error}`);
+        }
+        token = await this.db.getTrackedToken(contractAddress);
+      }
+
+      // Store contract in session and generate payment instructions
+      session.contractAddress = contractAddress;
+      session.tokenName = token.token_name;
+      this.setUserSession(ctx.from.id, session);
+
+      const { ethers } = require('ethers');
+      const durationText = `${session.duration} days`;
+      const amountText = ethers.formatEther(session.amount);
+
+      const instructions = await this.secureTrending.generateImagePaymentInstructions(contractAddress, user.id, session.duration);
+
+      const message = `🎨 <b>Image Fee Payment Instructions</b>\n\n` +
+        `🎨 Collection: <b>${instructions.tokenName}</b>\n` +
+        `📮 Contract: <code>${instructions.tokenAddress}</code>\n` +
+        `📅 Duration: <b>${durationText}</b>\n` +
+        `💸 Fee: <b>${amountText} ETH</b>\n\n` +
+        `📋 <b>Payment Steps:</b>\n` +
+        instructions.instructions.join('\n') + '\n\n' +
+        `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n` +
+        `After making the payment, click the button below to submit your transaction hash.`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('📝 Submit Transaction Hash', 'submit_enhanced_image_tx')
+        ],
+        [
+          Markup.button.callback('◀️ Back to Contract Input', 'back_to_contract_image'),
+          Markup.button.callback('❌ Cancel', 'cancel_images')
+        ]
+      ]);
+
+      await ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error handling enhanced image contract:', error);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  async handleEnhancedFooterContract(ctx, contractAddress) {
+    try {
+      if (contractAddress.toLowerCase() === 'cancel') {
+        this.clearUserState(ctx.from.id);
+        this.clearUserSession(ctx.from.id);
+        return this.showFooterMenu(ctx);
+      }
+
+      // Validate NFT address format
+      if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
+        return ctx.reply('❌ Invalid NFT address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+      }
+
+      const session = this.getUserSession(ctx.from.id);
+      if (!session || session.flow !== 'footer_payment') {
+        this.clearUserState(ctx.from.id);
+        return ctx.reply('❌ Session expired. Please start again.');
+      }
+
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startcandy');
+      }
+
+      // Validate and track contract if needed
+      ctx.reply('🔍 Validating NFT address...');
+
+      let token = await this.db.getTrackedToken(contractAddress);
+      if (!token) {
+        const chatId = this.normalizeChatContext(ctx);
+        const result = await this.tokenTracker.addToken(contractAddress, user.id, ctx.from.id.toString(), chatId);
+        if (!result.success) {
+          this.clearUserState(ctx.from.id);
+          this.clearUserSession(ctx.from.id);
+          return ctx.reply(`❌ Contract validation failed: ${result.error}`);
+        }
+        token = await this.db.getTrackedToken(contractAddress);
+      }
+
+      // Store contract in session and generate payment instructions
+      session.contractAddress = contractAddress;
+      session.tokenName = token.token_name;
+      this.setUserSession(ctx.from.id, session);
+
+      const { ethers } = require('ethers');
+      const durationText = `${session.duration} days`;
+      const amountText = ethers.formatEther(session.amount);
+
+      const instructions = await this.secureTrending.generateFooterPaymentInstructions(contractAddress, user.id, session.duration);
+
+      const message = `📢 <b>Footer Advertisement Payment Instructions</b>\n\n` +
+        `🎨 Collection: <b>${instructions.tokenName}</b>\n` +
+        `📮 Contract: <code>${instructions.tokenAddress}</code>\n` +
+        `📅 Duration: <b>${durationText}</b>\n` +
+        `💸 Fee: <b>${amountText} ETH</b>\n\n` +
+        `📋 <b>Payment Steps:</b>\n` +
+        instructions.instructions.join('\n') + '\n\n' +
+        `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n` +
+        `After making the payment, click the button below to submit your transaction hash.`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('📝 Submit Transaction Hash', 'submit_enhanced_footer_tx')
+        ],
+        [
+          Markup.button.callback('◀️ Back to Contract Input', 'back_to_contract_footer'),
+          Markup.button.callback('❌ Cancel', 'cancel_footer')
+        ]
+      ]);
+
+      await ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error handling enhanced footer contract:', error);
+      ctx.reply('❌ An error occurred. Please try again.');
     }
   }
 

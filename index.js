@@ -5,15 +5,16 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const logger = require('./src/services/logger');
 const Database = require('./src/database/db');
-const AlchemyService = require('./src/blockchain/alchemy');
+const OpenSeaService = require('./src/blockchain/opensea');
 const BotCommands = require('./src/bot/commands');
 const WebhookHandlers = require('./src/webhooks/handlers');
 const TokenTracker = require('./src/services/tokenTracker');
 const TrendingService = require('./src/services/trendingService');
 const SecureTrendingService = require('./src/services/secureTrendingService');
 const ChannelService = require('./src/services/channelService');
+const ChainManager = require('./src/services/chainManager');
 
-class MintTechBot {
+class MintyRushBot {
   constructor() {
     this.bot = null;
     this.app = express();
@@ -25,7 +26,7 @@ class MintTechBot {
   }
 
   validateEnvironment() {
-    const required = ['TELEGRAM_BOT_TOKEN', 'ALCHEMY_API_KEY'];
+    const required = ['TELEGRAM_BOT_TOKEN', 'OPENSEA_API_KEY'];
     const missing = required.filter(key => !process.env[key]);
     if (missing.length > 0) {
       throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
@@ -34,7 +35,7 @@ class MintTechBot {
 
   async initialize() {
     try {
-      logger.info('Starting MintTechBot initialization...');
+      logger.info('Starting MintyRushBot initialization...');
 
       this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
@@ -46,16 +47,15 @@ class MintTechBot {
       await this.services.db.initialize();
       logger.info('Database initialized');
 
+      // Initialize ChainManager for multi-chain support
+      this.services.chainManager = new ChainManager(this.services.db);
+      await this.services.chainManager.initialize();
+      logger.info('ChainManager initialized with multi-chain support');
 
-
-      try {
-        this.services.alchemy = new AlchemyService();
-        await this.services.alchemy.initialize();
-        logger.info('Alchemy service initialized');
-      } catch (error) {
-        logger.error('Failed to initialize Alchemy service - continuing with limited functionality');
-        this.services.alchemy = { isConnected: false };
-      }
+      // Initialize OpenSea service (required for contract validation and streaming)
+      this.services.openSea = new OpenSeaService();
+      await this.services.openSea.initialize();
+      logger.info('🌊 OpenSea streaming service initialized');
 
 
       try {
@@ -89,17 +89,14 @@ class MintTechBot {
         this.services.secureTrending = null;
       }
 
-      try {
-        this.services.tokenTracker = new TokenTracker(
-          this.services.db,
-          this.services.alchemy
-        );
-        await this.services.tokenTracker.initialize();
-        logger.info('Token tracker initialized');
-      } catch (error) {
-        logger.warn('Token tracker initialized with limited functionality:', error.message);
-        this.services.tokenTracker = { isConnected: false };
-      }
+      this.services.tokenTracker = new TokenTracker(
+        this.services.db,
+        this.services.openSea,
+        null, // webhookHandlers will be set later
+        this.services.chainManager
+      );
+      await this.services.tokenTracker.initialize();
+      logger.info('Token tracker initialized with OpenSea support');
 
       this.services.channelService = new ChannelService(
         this.services.db,
@@ -119,11 +116,11 @@ class MintTechBot {
 
       const botCommands = new BotCommands(
         this.services.db,
-        this.services.alchemy,
         this.services.tokenTracker,
         this.services.trending,
         this.services.channelService,
-        this.services.secureTrending
+        this.services.secureTrending,
+        this.services.chainManager
       );
       await botCommands.setupCommands(this.bot);
       logger.info('Bot commands setup completed');
@@ -141,7 +138,7 @@ class MintTechBot {
 
       this.setupGracefulShutdown();
 
-      logger.info('🚀 MintTechBot fully initialized and running!');
+      logger.info('🚀 MintyRushBot fully initialized and running!');
 
       await this.logSystemStatus();
 
@@ -219,9 +216,15 @@ class MintTechBot {
       this.services.db,
       this.bot,
       this.services.trending,
-      this.services.secureTrending
+      this.services.secureTrending,
+      this.services.openSea,
+      this.services.chainManager
     );
 
+    // Connect webhook handlers to token tracker for OpenSea notifications
+    if (this.services.tokenTracker && this.services.tokenTracker.setWebhookHandlers) {
+      this.services.tokenTracker.setWebhookHandlers(webhookHandlers);
+    }
 
     this.app.post('/webhook/alchemy', webhookHandlers.handleAlchemyWebhook.bind(webhookHandlers));
 
@@ -354,12 +357,17 @@ class MintTechBot {
 
   async cleanup() {
     try {
-
+      // Clean up token tracker (includes OpenSea subscriptions)
       if (this.services.tokenTracker) {
         await this.services.tokenTracker.cleanup();
       }
 
+      // Clean up OpenSea service
+      if (this.services.openSea) {
+        await this.services.openSea.disconnect();
+      }
 
+      // Close database connection
       if (this.services.db) {
         await this.services.db.close();
       }
@@ -461,11 +469,11 @@ class MintTechBot {
 
 
 if (require.main === module) {
-  const mintTechBot = new MintTechBot();
-  mintTechBot.initialize().catch(error => {
+  const mintyRushBot = new MintyRushBot();
+  mintyRushBot.initialize().catch(error => {
     console.error('Failed to start bot:', error);
     process.exit(1);
   });
 }
 
-module.exports = MintTechBot;
+module.exports = MintyRushBot;

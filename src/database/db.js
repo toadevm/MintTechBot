@@ -39,6 +39,8 @@ class Database {
       `CREATE TABLE IF NOT EXISTS tracked_tokens (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         contract_address TEXT NOT NULL,
+        chain_name TEXT NOT NULL DEFAULT 'ethereum', -- Blockchain network (ethereum, arbitrum, optimism, bsc, hyperblast)
+        chain_id INTEGER NOT NULL DEFAULT 1, -- Chain ID (1, 42161, 10, 56, 1891)
         collection_slug TEXT, -- OpenSea collection slug for stream subscriptions
         token_name TEXT,
         token_symbol TEXT,
@@ -52,7 +54,7 @@ class Database {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (added_by_user_id) REFERENCES users (id),
-        UNIQUE(contract_address)
+        UNIQUE(contract_address, chain_name)
       )`,
 
 
@@ -234,8 +236,8 @@ class Database {
   async migrateDatabase() {
     try {
       // Check if chat_id column exists in user_subscriptions
-      const tableInfo = await this.all("PRAGMA table_info(user_subscriptions)");
-      const hasChatId = tableInfo.some(column => column.name === 'chat_id');
+      const subscriptionsTableInfo = await this.all("PRAGMA table_info(user_subscriptions)");
+      const hasChatId = subscriptionsTableInfo.some(column => column.name === 'chat_id');
 
       if (!hasChatId) {
         logger.info('Adding chat_id column to user_subscriptions table...');
@@ -248,6 +250,49 @@ class Database {
 
         // We can't modify UNIQUE constraints in SQLite, so we'll handle it in application logic
         logger.info('Successfully migrated user_subscriptions table for context-specific tracking');
+      }
+
+      // Check if chain columns exist in tracked_tokens
+      const tokensTableInfo = await this.all("PRAGMA table_info(tracked_tokens)");
+      const hasChainName = tokensTableInfo.some(column => column.name === 'chain_name');
+      const hasChainId = tokensTableInfo.some(column => column.name === 'chain_id');
+
+      if (!hasChainName || !hasChainId) {
+        logger.info('Adding chain support columns to tracked_tokens table...');
+
+        if (!hasChainName) {
+          await this.run('ALTER TABLE tracked_tokens ADD COLUMN chain_name TEXT DEFAULT "ethereum"');
+          await this.run('UPDATE tracked_tokens SET chain_name = "ethereum" WHERE chain_name IS NULL');
+        }
+
+        if (!hasChainId) {
+          await this.run('ALTER TABLE tracked_tokens ADD COLUMN chain_id INTEGER DEFAULT 1');
+          await this.run('UPDATE tracked_tokens SET chain_id = 1 WHERE chain_id IS NULL');
+        }
+
+        logger.info('Successfully migrated tracked_tokens table for multi-chain support');
+      }
+
+      // Check if duration_days column exists in image_fee_payments
+      const imageTableInfo = await this.all("PRAGMA table_info(image_fee_payments)");
+      const hasImageDuration = imageTableInfo.some(column => column.name === 'duration_days');
+
+      if (!hasImageDuration) {
+        logger.info('Adding duration_days column to image_fee_payments table...');
+        await this.run('ALTER TABLE image_fee_payments ADD COLUMN duration_days INTEGER DEFAULT 30');
+        await this.run('UPDATE image_fee_payments SET duration_days = 30 WHERE duration_days IS NULL');
+        logger.info('Successfully migrated image_fee_payments table for duration tracking');
+      }
+
+      // Check if duration_days column exists in footer_ads
+      const footerTableInfo = await this.all("PRAGMA table_info(footer_ads)");
+      const hasFooterDuration = footerTableInfo.some(column => column.name === 'duration_days');
+
+      if (!hasFooterDuration) {
+        logger.info('Adding duration_days column to footer_ads table...');
+        await this.run('ALTER TABLE footer_ads ADD COLUMN duration_days INTEGER DEFAULT 30');
+        await this.run('UPDATE footer_ads SET duration_days = 30 WHERE duration_days IS NULL');
+        logger.info('Successfully migrated footer_ads table for duration tracking');
       }
     } catch (error) {
       logger.error('Error during database migration:', error);
@@ -305,13 +350,15 @@ class Database {
 
 
 
-  async addTrackedToken(contractAddress, tokenData, addedByUserId, webhookId, collectionSlug = null, openSeaSubscriptionId = null) {
+  async addTrackedToken(contractAddress, tokenData, addedByUserId, webhookId, collectionSlug = null, openSeaSubscriptionId = null, chainName = 'ethereum', chainId = 1) {
     const sql = `INSERT OR REPLACE INTO tracked_tokens
-                 (contract_address, collection_slug, token_name, token_symbol, token_type, total_supply,
+                 (contract_address, chain_name, chain_id, collection_slug, token_name, token_symbol, token_type, total_supply,
                   added_by_user_id, webhook_id, opensea_subscription_id, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
     return await this.run(sql, [
       contractAddress,
+      chainName,
+      chainId,
       collectionSlug,
       tokenData.name,
       tokenData.symbol,
@@ -323,9 +370,15 @@ class Database {
     ]);
   }
 
-  async getTrackedToken(contractAddress) {
-    const sql = 'SELECT * FROM tracked_tokens WHERE LOWER(contract_address) = LOWER(?)';
-    return await this.get(sql, [contractAddress]);
+  async getTrackedToken(contractAddress, chainName = null) {
+    if (chainName) {
+      const sql = 'SELECT * FROM tracked_tokens WHERE LOWER(contract_address) = LOWER(?) AND chain_name = ?';
+      return await this.get(sql, [contractAddress, chainName]);
+    } else {
+      // Fallback for backwards compatibility - return first match
+      const sql = 'SELECT * FROM tracked_tokens WHERE LOWER(contract_address) = LOWER(?)';
+      return await this.get(sql, [contractAddress]);
+    }
   }
 
   async getTrackedTokenByCollectionSlug(collectionSlug) {
@@ -343,13 +396,25 @@ class Database {
     return await this.all(sql);
   }
 
-  async getUserTrackedTokens(userId, chatId) {
-    const sql = `SELECT tt.*, us.notification_enabled
-                 FROM tracked_tokens tt
-                 JOIN user_subscriptions us ON tt.id = us.token_id
-                 WHERE us.user_id = ? AND us.chat_id = ? AND tt.is_active = 1 AND (us.notification_enabled = 1 OR us.notification_enabled IS NULL)
-                 ORDER BY tt.created_at DESC`;
-    return await this.all(sql, [userId, chatId]);
+  async getUserTrackedTokens(userId, chatId, chainName = null) {
+    let sql = `SELECT tt.*, us.notification_enabled
+               FROM tracked_tokens tt
+               JOIN user_subscriptions us ON tt.id = us.token_id
+               WHERE us.user_id = ? AND us.chat_id = ? AND tt.is_active = 1 AND (us.notification_enabled = 1 OR us.notification_enabled IS NULL)`;
+
+    const params = [userId, chatId];
+
+    if (chainName) {
+      sql += ` AND tt.chain_name = ?`;
+      params.push(chainName);
+    }
+
+    sql += ` ORDER BY tt.created_at DESC`;
+    return await this.all(sql, params);
+  }
+
+  async getUserTrackedTokensByChain(userId, chatId, chainName) {
+    return await this.getUserTrackedTokens(userId, chatId, chainName);
   }
 
   // Debug method to see all user subscriptions
@@ -497,12 +562,12 @@ class Database {
   }
 
   // Image Fee Payment Methods
-  async addImageFeePayment(userId, contractAddress, paymentAmount, transactionHash, payerAddress) {
-    const endTime = new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)).toISOString(); // 30 days
-    const sql = `INSERT INTO image_fee_payments 
-                 (user_id, contract_address, payment_amount, transaction_hash, payer_address, end_time, is_validated, validation_timestamp) 
-                 VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`;
-    return await this.run(sql, [userId, contractAddress, paymentAmount, transactionHash, payerAddress, endTime]);
+  async addImageFeePayment(userId, contractAddress, paymentAmount, transactionHash, payerAddress, durationDays = 30) {
+    const endTime = new Date(Date.now() + (durationDays * 24 * 60 * 60 * 1000)).toISOString();
+    const sql = `INSERT INTO image_fee_payments
+                 (user_id, contract_address, payment_amount, transaction_hash, payer_address, end_time, duration_days, is_validated, validation_timestamp)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`;
+    return await this.run(sql, [userId, contractAddress, paymentAmount, transactionHash, payerAddress, endTime, durationDays]);
   }
 
   async isImageFeeActive(contractAddress) {
@@ -529,12 +594,12 @@ class Database {
     return await this.run(sql);
   }
 
-  async addFooterAd(userId, contractAddress, tokenSymbol, customLink, paymentAmount, transactionHash, payerAddress) {
-    const endTime = new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)).toISOString(); // 30 days
-    const sql = `INSERT INTO footer_ads 
-                 (user_id, contract_address, token_symbol, custom_link, payment_amount, transaction_hash, payer_address, end_time, is_validated, validation_timestamp) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`;
-    return await this.run(sql, [userId, contractAddress, tokenSymbol, customLink, paymentAmount, transactionHash, payerAddress, endTime]);
+  async addFooterAd(userId, contractAddress, tokenSymbol, customLink, paymentAmount, transactionHash, payerAddress, durationDays = 30) {
+    const endTime = new Date(Date.now() + (durationDays * 24 * 60 * 60 * 1000)).toISOString();
+    const sql = `INSERT INTO footer_ads
+                 (user_id, contract_address, token_symbol, custom_link, payment_amount, transaction_hash, payer_address, end_time, duration_days, is_validated, validation_timestamp)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`;
+    return await this.run(sql, [userId, contractAddress, tokenSymbol, customLink, paymentAmount, transactionHash, payerAddress, endTime, durationDays]);
   }
 
   async getActiveFooterAds() {

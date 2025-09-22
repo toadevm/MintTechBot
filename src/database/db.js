@@ -39,13 +39,15 @@ class Database {
       `CREATE TABLE IF NOT EXISTS tracked_tokens (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         contract_address TEXT NOT NULL,
+        collection_slug TEXT, -- OpenSea collection slug for stream subscriptions
         token_name TEXT,
         token_symbol TEXT,
         token_type TEXT, -- ERC721 or ERC1155
         total_supply INTEGER,
         floor_price TEXT,
         added_by_user_id INTEGER,
-        webhook_id TEXT,
+        webhook_id TEXT, -- Keep for Alchemy compatibility during transition
+        opensea_subscription_id TEXT, -- Track OpenSea stream subscriptions
         is_active BOOLEAN DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -58,11 +60,12 @@ class Database {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         token_id INTEGER NOT NULL,
+        chat_id TEXT NOT NULL, -- Chat context: positive for private, negative for groups
         notification_enabled BOOLEAN DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
         FOREIGN KEY (token_id) REFERENCES tracked_tokens (id) ON DELETE CASCADE,
-        UNIQUE(user_id, token_id)
+        UNIQUE(user_id, token_id, chat_id)
       )`,
 
 
@@ -194,6 +197,7 @@ class Database {
       }
 
       await this.createIndexes();
+      await this.migrateDatabase();
       logger.info('Database tables created successfully');
       return true;
     } catch (error) {
@@ -206,6 +210,7 @@ class Database {
     const indexes = [
       'CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)',
       'CREATE INDEX IF NOT EXISTS idx_tracked_tokens_contract ON tracked_tokens(contract_address)',
+      'CREATE INDEX IF NOT EXISTS idx_tracked_tokens_collection_slug ON tracked_tokens(collection_slug)',
       'CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_id ON user_subscriptions(user_id)',
       'CREATE INDEX IF NOT EXISTS idx_user_subscriptions_token_id ON user_subscriptions(token_id)',
       'CREATE INDEX IF NOT EXISTS idx_trending_payments_active ON trending_payments(is_active, end_time)',
@@ -226,6 +231,29 @@ class Database {
     }
   }
 
+  async migrateDatabase() {
+    try {
+      // Check if chat_id column exists in user_subscriptions
+      const tableInfo = await this.all("PRAGMA table_info(user_subscriptions)");
+      const hasChatId = tableInfo.some(column => column.name === 'chat_id');
+
+      if (!hasChatId) {
+        logger.info('Adding chat_id column to user_subscriptions table...');
+
+        // Add chat_id column with default value (private chat context)
+        await this.run('ALTER TABLE user_subscriptions ADD COLUMN chat_id TEXT DEFAULT "private"');
+
+        // Update existing records to use private chat context
+        await this.run('UPDATE user_subscriptions SET chat_id = "private" WHERE chat_id IS NULL');
+
+        // We can't modify UNIQUE constraints in SQLite, so we'll handle it in application logic
+        logger.info('Successfully migrated user_subscriptions table for context-specific tracking');
+      }
+    } catch (error) {
+      logger.error('Error during database migration:', error);
+      throw error;
+    }
+  }
 
   run(sql, params = []) {
     return new Promise((resolve, reject) => {
@@ -277,19 +305,21 @@ class Database {
 
 
 
-  async addTrackedToken(contractAddress, tokenData, addedByUserId, webhookId) {
-    const sql = `INSERT OR REPLACE INTO tracked_tokens 
-                 (contract_address, token_name, token_symbol, token_type, total_supply, 
-                  added_by_user_id, webhook_id, updated_at) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
+  async addTrackedToken(contractAddress, tokenData, addedByUserId, webhookId, collectionSlug = null, openSeaSubscriptionId = null) {
+    const sql = `INSERT OR REPLACE INTO tracked_tokens
+                 (contract_address, collection_slug, token_name, token_symbol, token_type, total_supply,
+                  added_by_user_id, webhook_id, opensea_subscription_id, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
     return await this.run(sql, [
-      contractAddress, 
-      tokenData.name, 
-      tokenData.symbol, 
+      contractAddress,
+      collectionSlug,
+      tokenData.name,
+      tokenData.symbol,
       tokenData.tokenType,
       tokenData.totalSupply,
-      addedByUserId, 
-      webhookId
+      addedByUserId,
+      webhookId,
+      openSeaSubscriptionId
     ]);
   }
 
@@ -298,18 +328,28 @@ class Database {
     return await this.get(sql, [contractAddress]);
   }
 
+  async getTrackedTokenByCollectionSlug(collectionSlug) {
+    const sql = 'SELECT * FROM tracked_tokens WHERE collection_slug = ? AND is_active = 1';
+    return await this.get(sql, [collectionSlug]);
+  }
+
+  async getTokensForCollectionSlug(collectionSlug) {
+    const sql = 'SELECT * FROM tracked_tokens WHERE collection_slug = ? AND is_active = 1';
+    return await this.all(sql, [collectionSlug]);
+  }
+
   async getAllTrackedTokens() {
     const sql = 'SELECT * FROM tracked_tokens WHERE is_active = 1 ORDER BY created_at DESC';
     return await this.all(sql);
   }
 
-  async getUserTrackedTokens(userId) {
+  async getUserTrackedTokens(userId, chatId) {
     const sql = `SELECT tt.*, us.notification_enabled
                  FROM tracked_tokens tt
                  JOIN user_subscriptions us ON tt.id = us.token_id
-                 WHERE us.user_id = ? AND tt.is_active = 1 AND (us.notification_enabled = 1 OR us.notification_enabled IS NULL)
+                 WHERE us.user_id = ? AND us.chat_id = ? AND tt.is_active = 1 AND (us.notification_enabled = 1 OR us.notification_enabled IS NULL)
                  ORDER BY tt.created_at DESC`;
-    return await this.all(sql, [userId]);
+    return await this.all(sql, [userId, chatId]);
   }
 
   // Debug method to see all user subscriptions
@@ -323,15 +363,15 @@ class Database {
   }
 
 
-  async subscribeUserToToken(userId, tokenId) {
-    const sql = `INSERT OR IGNORE INTO user_subscriptions (user_id, token_id, notification_enabled)
-                 VALUES (?, ?, 1)`;
-    return await this.run(sql, [userId, tokenId]);
+  async subscribeUserToToken(userId, tokenId, chatId) {
+    const sql = `INSERT OR IGNORE INTO user_subscriptions (user_id, token_id, chat_id, notification_enabled)
+                 VALUES (?, ?, ?, 1)`;
+    return await this.run(sql, [userId, tokenId, chatId]);
   }
 
-  async unsubscribeUserFromToken(userId, tokenId) {
-    const sql = 'DELETE FROM user_subscriptions WHERE user_id = ? AND token_id = ?';
-    return await this.run(sql, [userId, tokenId]);
+  async unsubscribeUserFromToken(userId, tokenId, chatId) {
+    const sql = 'DELETE FROM user_subscriptions WHERE user_id = ? AND token_id = ? AND chat_id = ?';
+    return await this.run(sql, [userId, tokenId, chatId]);
   }
 
 

@@ -1,15 +1,18 @@
 const logger = require('../services/logger');
 
 class WebhookHandlers {
-  constructor(database, bot, trendingService = null, secureTrendingService = null) {
+  constructor(database, bot, trendingService = null, secureTrendingService = null, openSeaService = null) {
     this.db = database;
     this.bot = bot;
     this.trending = trendingService;
     this.secureTrending = secureTrendingService;
+    this.openSea = openSeaService;
     this.processedTransactions = new Map();
+    this.processedOpenSeaEvents = new Map(); // Track OpenSea events to prevent duplicates
     this.CACHE_EXPIRY_MS = 10 * 60 * 1000;
     setInterval(() => {
       this.cleanupExpiredTransactions();
+      this.cleanupExpiredOpenSeaEvents();
     }, 5 * 60 * 1000);
   }
 
@@ -88,6 +91,20 @@ class WebhookHandlers {
     }
     if (removedCount > 0) {
       logger.debug(`Cleaned up ${removedCount} expired transaction cache entries`);
+    }
+  }
+
+  cleanupExpiredOpenSeaEvents() {
+    const now = Date.now();
+    let removedCount = 0;
+    for (const [eventKey, timestamp] of this.processedOpenSeaEvents.entries()) {
+      if (now - timestamp > this.CACHE_EXPIRY_MS) {
+        this.processedOpenSeaEvents.delete(eventKey);
+        removedCount++;
+      }
+    }
+    if (removedCount > 0) {
+      logger.debug(`Cleaned up ${removedCount} expired OpenSea event cache entries`);
     }
   }
 
@@ -290,47 +307,56 @@ class WebhookHandlers {
 
   async notifyUsers(token, activityData) {
     try {
-
-      const users = await this.db.all(`
-        SELECT u.telegram_id, u.username, us.notification_enabled
+      // Get users with their subscription context (chat_id)
+      const subscriptions = await this.db.all(`
+        SELECT u.telegram_id, u.username, us.notification_enabled, us.chat_id
         FROM users u
         JOIN user_subscriptions us ON u.id = us.user_id
         WHERE us.token_id = ? AND us.notification_enabled = 1 AND u.is_active = 1
       `, [token.id]);
 
-      const message = await this.formatActivityMessage(token, activityData);
-
-      const adminChatId = process.env.ADMIN_CHAT_ID;
-      if (adminChatId) {
-        try {
-          await this.sendNotificationWithImage(adminChatId, message, token, activityData);
-          logger.info(`Sent notification to group chat ${adminChatId} for token ${token.contract_address}`);
-        } catch (error) {
-          logger.error(`Failed to send notification to group chat ${adminChatId}:`, error);
-        }
+      if (!subscriptions || subscriptions.length === 0) {
+        logger.debug(`No users subscribed to token: ${token.contract_address}`);
+        return false;
       }
 
+      const message = await this.formatActivityMessage(token, activityData);
+      logger.info(`📤 Sending notification to ${subscriptions.length} subscription(s) for ${token.token_name}`);
 
+      // Send notifications to users in their specific subscribed contexts
+      let successCount = 0;
 
-
-      for (const user of users) {
+      // Send to subscribed users in their correct context
+      for (const subscription of subscriptions) {
         try {
-          await this.sendNotificationWithImage(user.telegram_id, message, token, activityData);
-          logger.debug(`Notified user ${user.telegram_id} about ${token.contract_address} activity`);
+          // Determine target chat ID based on subscription context
+          let targetChatId;
+          if (subscription.chat_id === 'private') {
+            // For private chats, send to user's private chat
+            targetChatId = subscription.telegram_id;
+          } else {
+            // For group chats, send to the specific group where they subscribed
+            targetChatId = subscription.chat_id;
+          }
+
+          await this.sendNotificationWithImage(targetChatId, message, token, activityData);
+          successCount++;
+          logger.info(`✅ Notification sent to ${subscription.chat_id === 'private' ? 'private chat' : 'group'} ${targetChatId} for user ${subscription.telegram_id}`);
         } catch (error) {
-          logger.error(`Failed to notify user ${user.telegram_id}:`, error);
+          logger.error(`❌ Failed to send notification to ${subscription.chat_id} for user ${subscription.telegram_id}:`, error);
 
           if (error.response?.error_code === 403 || error.response?.error_code === 400) {
             await this.db.run(
               'UPDATE users SET is_active = 0 WHERE telegram_id = ?',
-              [user.telegram_id]
+              [subscription.telegram_id]
             );
-            logger.info(`Deactivated user ${user.telegram_id} due to delivery failure`);
+            logger.info(`Deactivated user ${subscription.telegram_id} due to delivery failure`);
           }
         }
       }
 
-      logger.info(`Notified group chat and ${users.length} users about ${token.contract_address} activity`);
+      logger.info(`📊 Notification summary: ${successCount}/${subscriptions.length} notifications sent successfully`);
+      return successCount > 0;
     } catch (error) {
       logger.error('Error notifying users:', error);
     }
@@ -793,6 +819,462 @@ class WebhookHandlers {
     }
 
     return tokenId.toString();
+  }
+
+  // OpenSea Event Handling Methods
+  async handleOpenSeaEvent(eventType, eventData, rawEvent) {
+    try {
+      logger.info(`Processing OpenSea ${eventType} event:`, JSON.stringify(eventData, null, 2));
+
+      // Create unique key for deduplication
+      const eventKey = this.createOpenSeaEventKey(eventType, eventData);
+
+      if (this.isOpenSeaEventProcessed(eventKey)) {
+        logger.info(`OpenSea event ${eventKey} already processed, skipping`);
+        return false;
+      }
+
+      // Mark as being processed
+      this.markOpenSeaEventProcessed(eventKey);
+
+      // Check if we have tracked tokens for this collection
+      const tokens = await this.db.getTokensForCollectionSlug(eventData.collectionSlug);
+      if (!tokens || tokens.length === 0) {
+        logger.debug(`No tracked tokens found for collection: ${eventData.collectionSlug}`);
+        return false;
+      }
+
+      // Process each tracked token in this collection
+      let processedCount = 0;
+      for (const token of tokens) {
+        try {
+          await this.processOpenSeaEventForToken(eventType, eventData, token, rawEvent);
+          processedCount++;
+        } catch (error) {
+          logger.error(`Error processing OpenSea event for token ${token.contract_address}:`, error);
+        }
+      }
+
+      logger.info(`Processed OpenSea ${eventType} event for ${processedCount} tokens`);
+      return processedCount > 0;
+    } catch (error) {
+      logger.error(`Error handling OpenSea ${eventType} event:`, error);
+      return false;
+    }
+  }
+
+  async processOpenSeaEventForToken(eventType, eventData, token, rawEvent) {
+    try {
+      // Convert OpenSea event to our internal activity format
+      const activityData = this.convertOpenSeaEventToActivity(eventType, eventData, token);
+
+      // Log the activity
+      await this.db.logNFTActivity(activityData);
+
+      // Notify users subscribed to this specific token with rich OpenSea data
+      await this.notifyUsersOpenSea(token, eventType, eventData, activityData);
+
+      // Check if token should notify channels
+      const shouldNotifyChannels = await this.shouldNotifyChannelsForToken(token.contract_address);
+      if (shouldNotifyChannels.notify) {
+        logger.info(`📢 Notifying channels for ${token.token_name} via OpenSea event (${shouldNotifyChannels.reason})`);
+        await this.notifyChannelsOpenSea(token, eventType, eventData, activityData, shouldNotifyChannels.channels, shouldNotifyChannels.isTrending);
+      }
+
+      logger.info(`Successfully processed OpenSea ${eventType} event for token ${token.contract_address}`);
+    } catch (error) {
+      logger.error(`Error processing OpenSea event for token ${token.contract_address}:`, error);
+      throw error;
+    }
+  }
+
+  convertOpenSeaEventToActivity(eventType, eventData, token) {
+    // Map OpenSea event types to our activity types (excluding cancelled events)
+    const activityTypeMap = {
+      'listed': 'sale',
+      'sold': 'buy',
+      'transferred': 'transfer',
+      'metadata_updated': 'transfer',
+      'received_bid': 'sale',
+      'received_offer': 'sale'
+    };
+
+    return {
+      contractAddress: eventData.contractAddress || token.contract_address,
+      tokenId: eventData.tokenId || null,
+      activityType: activityTypeMap[eventType] || 'transfer',
+      fromAddress: eventData.fromAddress || eventData.makerAddress,
+      toAddress: eventData.toAddress || eventData.takerAddress,
+      transactionHash: eventData.transactionHash || null,
+      blockNumber: eventData.blockNumber || null,
+      price: eventData.price || '1000000000000000', // Default to 0.001 ETH in wei
+      marketplace: 'OpenSea'
+    };
+  }
+
+  createOpenSeaEventKey(eventType, eventData) {
+    // Create unique key for deduplication
+    const contractAddress = eventData.contractAddress || 'unknown';
+    const tokenId = eventData.tokenId || 'unknown';
+    const txHash = eventData.transactionHash || eventData.orderHash || 'unknown';
+    const timestamp = eventData.sentAt || new Date().toISOString();
+
+    return `opensea:${eventType}:${contractAddress}:${tokenId}:${txHash}:${timestamp}`;
+  }
+
+  isOpenSeaEventProcessed(eventKey) {
+    const timestamp = this.processedOpenSeaEvents.get(eventKey);
+    if (!timestamp) return false;
+
+    const isValid = (Date.now() - timestamp) <= this.CACHE_EXPIRY_MS;
+    if (!isValid) {
+      this.processedOpenSeaEvents.delete(eventKey);
+      return false;
+    }
+    return true;
+  }
+
+  markOpenSeaEventProcessed(eventKey) {
+    this.processedOpenSeaEvents.set(eventKey, Date.now());
+  }
+
+  // Setup OpenSea event handlers for a collection
+  async setupOpenSeaHandlers(collectionSlug) {
+    try {
+      if (!this.openSea) {
+        logger.warn('OpenSea service not available');
+        return null;
+      }
+
+      const eventHandlers = {
+        listed: (eventData, rawEvent) => this.handleOpenSeaEvent('listed', eventData, rawEvent),
+        sold: (eventData, rawEvent) => this.handleOpenSeaEvent('sold', eventData, rawEvent),
+        transferred: (eventData, rawEvent) => this.handleOpenSeaEvent('transferred', eventData, rawEvent),
+        metadata_updated: (eventData, rawEvent) => this.handleOpenSeaEvent('metadata_updated', eventData, rawEvent),
+        cancelled: (eventData, rawEvent) => this.handleOpenSeaEvent('cancelled', eventData, rawEvent),
+        received_bid: (eventData, rawEvent) => this.handleOpenSeaEvent('received_bid', eventData, rawEvent),
+        received_offer: (eventData, rawEvent) => this.handleOpenSeaEvent('received_offer', eventData, rawEvent),
+        default: (eventType, eventData, rawEvent) => this.handleOpenSeaEvent(eventType, eventData, rawEvent)
+      };
+
+      const subscription = await this.openSea.subscribeToCollection(collectionSlug, eventHandlers);
+      logger.info(`Set up OpenSea event handlers for collection: ${collectionSlug}`);
+      return subscription;
+    } catch (error) {
+      logger.error(`Failed to setup OpenSea handlers for collection ${collectionSlug}:`, error);
+      throw error;
+    }
+  }
+
+  // OpenSea-specific notification methods with rich data formatting
+  async notifyUsersOpenSea(token, eventType, eventData, activityData) {
+    try {
+      // Get users with their subscription context (chat_id)
+      const subscriptions = await this.db.all(`
+        SELECT u.telegram_id, u.username, us.notification_enabled, us.chat_id
+        FROM users u
+        JOIN user_subscriptions us ON u.id = us.user_id
+        WHERE us.token_id = ? AND us.notification_enabled = 1 AND u.is_active = 1
+      `, [token.id]);
+
+      if (!subscriptions || subscriptions.length === 0) {
+        logger.debug(`No users subscribed to token: ${token.contract_address}`);
+        return false;
+      }
+
+      const message = await this.formatOpenSeaActivityMessage(eventType, eventData, token);
+      logger.info(`📤 Sending OpenSea ${eventType} notification to ${subscriptions.length} subscription(s) for ${token.token_name}`);
+
+      // Send notifications to users in their specific subscribed contexts
+      let successCount = 0;
+
+      // Send to subscribed users in their correct context
+      for (const subscription of subscriptions) {
+        try {
+          // Determine target chat ID based on subscription context
+          let targetChatId;
+          if (subscription.chat_id === 'private') {
+            // For private chats, send to user's private chat
+            targetChatId = subscription.telegram_id;
+          } else {
+            // For group chats, send to the specific group where they subscribed
+            targetChatId = subscription.chat_id;
+          }
+
+          await this.sendOpenSeaNotificationWithImage(targetChatId, message, eventData);
+          successCount++;
+          logger.info(`✅ OpenSea notification sent to ${subscription.chat_id === 'private' ? 'private chat' : 'group'} ${targetChatId} for user ${subscription.telegram_id}`);
+        } catch (error) {
+          logger.error(`❌ Failed to send OpenSea notification to ${subscription.chat_id} for user ${subscription.telegram_id}:`, error);
+        }
+      }
+
+      logger.info(`📊 OpenSea notification summary: ${successCount}/${subscriptions.length} notifications sent successfully`);
+      return successCount > 0;
+    } catch (error) {
+      logger.error('Error notifying users for OpenSea event:', error);
+      return false;
+    }
+  }
+
+  async notifyChannelsOpenSea(token, eventType, eventData, activityData, channels, isTrending = false) {
+    try {
+      if (!channels || channels.length === 0) {
+        return false;
+      }
+
+      const message = isTrending
+        ? await this.formatTrendingOpenSeaMessage(eventType, eventData, token)
+        : await this.formatOpenSeaActivityMessage(eventType, eventData, token);
+
+      let notifiedCount = 0;
+      for (const channel of channels) {
+        try {
+          // Use same field name as original: telegram_chat_id
+          await this.sendOpenSeaNotificationWithImage(channel.telegram_chat_id, message, eventData);
+          notifiedCount++;
+          logger.info(`📢 OpenSea notification sent to channel: ${channel.channel_title || channel.channel_name}`);
+        } catch (error) {
+          logger.error(`❌ Failed to send OpenSea notification to channel ${channel.channel_title || channel.channel_name}:`, error);
+
+          // Handle bot removal from channel (same as original)
+          if (error.response?.error_code === 403) {
+            await this.db.run(
+              'UPDATE channels SET is_active = 0 WHERE telegram_chat_id = ?',
+              [channel.telegram_chat_id]
+            );
+            logger.info(`Deactivated channel ${channel.telegram_chat_id} due to bot removal`);
+          }
+        }
+      }
+
+      logger.info(`📢 Notified ${notifiedCount}/${channels.length} channels for OpenSea ${eventType} event`);
+      return notifiedCount > 0;
+    } catch (error) {
+      logger.error('Error notifying channels for OpenSea event:', error);
+      return false;
+    }
+  }
+
+  async formatOpenSeaActivityMessage(eventType, eventData, token) {
+    const collectionName = eventData.collectionName || token.token_name || 'NFT Collection';
+    const nftName = eventData.nftName || `#${eventData.tokenId || 'Unknown'}`;
+
+    // Get event-specific emoji and action
+    const eventInfo = this.getOpenSeaEventInfo(eventType);
+
+    let message = `${eventInfo.emoji} **${collectionName}** ${eventInfo.action}\n\n`;
+
+    // NFT details
+    message += `🖼️ **NFT:** ${nftName}\n`;
+    if (eventData.tokenId) {
+      message += `🔢 **Token ID:** ${eventData.tokenId}\n`;
+    }
+
+    // Price information (for relevant events)
+    if (eventData.price && eventType !== 'transferred') {
+      const priceFormatted = this.formatOpenSeaPrice(eventData.price, eventData.paymentTokenSymbol, eventData.paymentTokenDecimals);
+      message += `💰 **${eventInfo.priceLabel}:** ${priceFormatted}`;
+
+      // Add USD value if available
+      if (eventData.priceUsd) {
+        message += ` ($${this.formatUsdAmount(eventData.priceUsd)})`;
+      } else {
+        // Debug info when USD is missing
+        logger.warn(`💰 USD price missing for ${eventType} event:`, {
+          event_type: eventType,
+          has_price: !!eventData.price,
+          price_value: eventData.price,
+          payment_token_symbol: eventData.paymentTokenSymbol,
+          payment_token_usd_price: eventData.paymentTokenUsdPrice,
+          contract: eventData.contractAddress,
+          token_id: eventData.tokenId
+        });
+      }
+      message += '\n';
+    }
+
+    // User addresses
+    if (eventType === 'sold') {
+      if (eventData.makerAddress) {
+        message += `👤 **Seller:** \`${this.shortenAddress(eventData.makerAddress)}\`\n`;
+      }
+      if (eventData.takerAddress) {
+        message += `👤 **Buyer:** \`${this.shortenAddress(eventData.takerAddress)}\`\n`;
+      }
+    } else if (eventType === 'listed') {
+      if (eventData.makerAddress) {
+        message += `👤 **Listed by:** \`${this.shortenAddress(eventData.makerAddress)}\`\n`;
+      }
+    } else if (eventType === 'transferred') {
+      if (eventData.fromAddress) {
+        message += `📤 **From:** \`${this.shortenAddress(eventData.fromAddress)}\`\n`;
+      }
+      if (eventData.toAddress) {
+        message += `📥 **To:** \`${this.shortenAddress(eventData.toAddress)}\`\n`;
+      }
+    } else if (eventType === 'received_bid' || eventType === 'received_offer') {
+      if (eventData.makerAddress) {
+        message += `👤 **${eventType === 'received_bid' ? 'Bidder' : 'Offerer'}:** \`${this.shortenAddress(eventData.makerAddress)}\`\n`;
+      }
+    }
+
+    // Collection and marketplace info
+    message += `🏪 **Marketplace:** OpenSea\n`;
+    message += `📮 **Collection:** \`${eventData.collectionSlug || 'Unknown'}\`\n`;
+
+    // Transaction link
+    if (eventData.transactionHash) {
+      message += `🔗 **TX:** \`${this.shortenAddress(eventData.transactionHash)}\`\n`;
+      message += `[View on Etherscan](https://etherscan.io/tx/${eventData.transactionHash})\n`;
+    }
+
+    // OpenSea link (using the exact format from OpenSea's item.permalink or manual construction)
+    if (eventData.contractAddress && eventData.tokenId) {
+      // OpenSea URLs are: https://opensea.io/assets/ethereum/{contract}/{tokenId}
+      message += `[View on OpenSea](https://opensea.io/assets/ethereum/${eventData.contractAddress}/${eventData.tokenId})\n`;
+    } else if (eventData.collectionSlug) {
+      message += `[View Collection](https://opensea.io/collection/${eventData.collectionSlug})\n`;
+    }
+
+    message += `\n\nPowered by [Candy Codex](https://t.me/testcandybot)`;
+
+    // Add footer advertisements if available
+    if (this.secureTrending) {
+      try {
+        const footerAds = await this.secureTrending.getActiveFooterAds();
+        if (footerAds && footerAds.length > 0) {
+          const adLinks = footerAds.map(ad => `[${ad.token_symbol}](${ad.custom_link})`).join(' 🎨');
+          message += `\n🎨 ${adLinks}`;
+        } else {
+          message += `\n[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)`;
+        }
+      } catch (error) {
+        message += `\n[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)`;
+      }
+    } else {
+      message += `\n[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)`;
+    }
+
+    return message;
+  }
+
+  async formatTrendingOpenSeaMessage(eventType, eventData, token) {
+    const collectionName = eventData.collectionName || token.token_name || 'NFT Collection';
+    const eventInfo = this.getOpenSeaEventInfo(eventType);
+
+    let message = `🔥 **TRENDING:** ${collectionName} ${eventInfo.action}\n\n`;
+
+    // Add rest of the message using the regular formatter
+    const regularMessage = await this.formatOpenSeaActivityMessage(eventType, eventData, token);
+    // Remove the first line and add to trending message
+    const lines = regularMessage.split('\n');
+    message += lines.slice(1).join('\n');
+
+    return message;
+  }
+
+  getOpenSeaEventInfo(eventType) {
+    const eventMap = {
+      'sold': {
+        emoji: '💰',
+        action: 'Sale',
+        priceLabel: 'Sale Price'
+      },
+      'listed': {
+        emoji: '📝',
+        action: 'Listed',
+        priceLabel: 'List Price'
+      },
+      'transferred': {
+        emoji: '🔄',
+        action: 'Transfer',
+        priceLabel: 'Value'
+      },
+      'received_bid': {
+        emoji: '🏷️',
+        action: 'Bid Received',
+        priceLabel: 'Bid Amount'
+      },
+      'received_offer': {
+        emoji: '💱',
+        action: 'Offer Received',
+        priceLabel: 'Offer Amount'
+      },
+      'metadata_updated': {
+        emoji: '📊',
+        action: 'Updated',
+        priceLabel: 'Value'
+      }
+    };
+
+    return eventMap[eventType] || {
+      emoji: '🎯',
+      action: 'Activity',
+      priceLabel: 'Price'
+    };
+  }
+
+  formatOpenSeaPrice(priceWei, tokenSymbol = 'ETH', decimals = 18) {
+    if (!priceWei || parseFloat(priceWei) <= 0) {
+      return '0 ETH';
+    }
+
+    const priceInToken = parseFloat(priceWei) / Math.pow(10, decimals);
+
+    if (priceInToken >= 1) {
+      return `${priceInToken.toFixed(3)} ${tokenSymbol}`;
+    } else if (priceInToken >= 0.001) {
+      return `${priceInToken.toFixed(4)} ${tokenSymbol}`;
+    } else {
+      return `${(priceInToken * 1000).toFixed(2)} m${tokenSymbol}`;
+    }
+  }
+
+  formatUsdAmount(usdValue) {
+    const value = parseFloat(usdValue);
+    if (value >= 1000) {
+      return `${(value / 1000).toFixed(1)}K`;
+    } else if (value >= 1) {
+      return value.toFixed(2);
+    } else {
+      return value.toFixed(4);
+    }
+  }
+
+  async sendOpenSeaNotificationWithImage(chatId, message, eventData) {
+    try {
+      // Check if we have an NFT image from OpenSea metadata
+      if (eventData.nftImageUrl && eventData.nftImageUrl.startsWith('http')) {
+        logger.info(`📸 Sending OpenSea notification with image: ${eventData.nftImageUrl}`);
+
+        try {
+          // Send as photo with caption
+          await this.bot.telegram.sendPhoto(chatId, eventData.nftImageUrl, {
+            caption: message,
+            parse_mode: 'Markdown'
+          });
+          logger.info(`✅ OpenSea notification with image sent successfully to ${chatId}`);
+          return;
+        } catch (imageError) {
+          logger.warn(`⚠️ Failed to send image, falling back to text message: ${imageError.message}`);
+          // Fall through to text-only message
+        }
+      } else {
+        logger.debug(`📝 No image URL available for OpenSea notification, using text only`);
+      }
+
+      // Fallback to text-only message
+      await this.bot.telegram.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        disable_web_page_preview: false
+      });
+      logger.info(`✅ OpenSea text notification sent successfully to ${chatId}`);
+
+    } catch (error) {
+      logger.error(`❌ Failed to send OpenSea notification to ${chatId}:`, error);
+      throw error;
+    }
   }
 }
 

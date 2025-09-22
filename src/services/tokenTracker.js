@@ -1,14 +1,26 @@
 const logger = require('./logger');
+const CollectionResolver = require('./collectionResolver');
 
 class TokenTracker {
-  constructor(database, alchemyService) {
+  constructor(database, openSeaService, webhookHandlers = null) {
     this.db = database;
-    this.alchemy = alchemyService;
+    this.openSea = openSeaService;
+    this.webhookHandlers = webhookHandlers; // Add webhook handlers reference
     this.trackingIntervals = new Map();
+    this.openSeaSubscriptions = new Map(); // Track OpenSea collection subscriptions
+    this.collectionResolver = new CollectionResolver(); // Add collection resolver
+  }
+
+  // Method to set webhook handlers after initialization
+  setWebhookHandlers(webhookHandlers) {
+    this.webhookHandlers = webhookHandlers;
+    logger.info('WebhookHandlers set for TokenTracker - OpenSea notifications enabled');
   }
 
   async initialize() {
     try {
+      // Initialize collection resolver with known mappings
+      this.collectionResolver.initializeKnownCollections();
 
       await this.loadExistingTokens();
 
@@ -25,25 +37,25 @@ class TokenTracker {
     try {
       const tokens = await this.db.getAllTrackedTokens();
       logger.info(`Loading ${tokens.length} existing tracked tokens`);
-      for (const token of tokens) {
-        if (token.is_active && token.webhook_id) {
 
-          try {
-            const webhooks = await this.alchemy.listWebhooks();
-            const webhookExists = webhooks.find(w => w.id === token.webhook_id);
-            if (!webhookExists && webhooks.length >= 0) {
-              logger.warn(`Webhook ${token.webhook_id} not found for token ${token.contract_address}, recreating...`);
-              await this.recreateWebhookForToken(token);
-            }
-          } catch (error) {
-            if (error.message && error.message.includes('Unauthenticated')) {
-              logger.warn(`Webhook authentication failed for token ${token.contract_address} - webhooks disabled`);
-            } else {
-              logger.error(`Error checking webhook for token ${token.contract_address}:`, error);
-            }
-          }
+      // Track unique collection slugs for OpenSea subscriptions
+      const collectionsToSubscribe = new Set();
+
+      for (const token of tokens) {
+        // Collect OpenSea collections to subscribe to
+        // We need to set up subscriptions for ALL collections, regardless of database subscription ID
+        // because the database ID is just a placeholder - the real subscription is in memory
+        if (token.is_active && token.collection_slug) {
+          collectionsToSubscribe.add(token.collection_slug);
         }
       }
+
+      // Set up OpenSea subscriptions for existing tokens
+      if (this.openSea && collectionsToSubscribe.size > 0) {
+        logger.info(`🌊 Setting up OpenSea subscriptions for ${collectionsToSubscribe.size} existing collections...`);
+        await this.setupExistingOpenSeaSubscriptions(Array.from(collectionsToSubscribe));
+      }
+
       logger.info('Existing tokens loaded and verified');
     } catch (error) {
       logger.error('Error loading existing tokens:', error);
@@ -51,44 +63,17 @@ class TokenTracker {
     }
   }
 
-  async recreateWebhookForToken(token) {
+
+  async addToken(contractAddress, userId, telegramId, chatId, collectionSlug = null) {
     try {
-      const webhook = await this.alchemy.createNFTActivityWebhook(
-        [token.contract_address],
-        process.env.WEBHOOK_URL + '/webhook/alchemy'
-      );
-
-      if (webhook && webhook.id) {
-        await this.db.run(
-          'UPDATE tracked_tokens SET webhook_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-          [webhook.id, token.id]
-        );
-        logger.info(`Recreated webhook for token ${token.contract_address}: ${webhook.id}`);
-      } else {
-
-        await this.db.run(
-          'UPDATE tracked_tokens SET webhook_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-          [token.id]
-        );
-        logger.warn(`Webhook creation failed for token ${token.contract_address} - cleared webhook ID`);
-      }
-      return webhook;
-    } catch (error) {
-      logger.error(`Failed to recreate webhook for token ${token.contract_address}:`, error);
-      throw error;
-    }
-  }
-
-  async addToken(contractAddress, userId, telegramId) {
-    try {
-      logger.info(`Adding token ${contractAddress} for user ${userId}`);
+      logger.info(`Adding token ${contractAddress} for user ${userId} with collection slug: ${collectionSlug}`);
 
       const { ethers } = require('ethers');
       if (!ethers.isAddress(contractAddress)) {
         throw new Error('Invalid contract address format');
       }
 
-
+      // Check if token already exists
       const existingToken = await this.db.getTrackedToken(contractAddress);
       if (existingToken) {
         // Reactivate token if it was previously deactivated
@@ -100,11 +85,11 @@ class TokenTracker {
           logger.info(`Reactivated previously inactive token ${contractAddress}`);
         }
 
-        const subscriptionResult = await this.db.subscribeUserToToken(userId, existingToken.id);
-        logger.info(`User ${userId} subscribed to existing token ${contractAddress}. Subscription result:`, subscriptionResult);
+        const subscriptionResult = await this.db.subscribeUserToToken(userId, existingToken.id, chatId);
+        logger.info(`User ${userId} subscribed to existing token ${contractAddress} in chat ${chatId}. Subscription result:`, subscriptionResult);
 
         // Verify subscription was created
-        const userTokens = await this.db.getUserTrackedTokens(userId);
+        const userTokens = await this.db.getUserTrackedTokens(userId, chatId);
         const isSubscribed = userTokens.some(token => token.id === existingToken.id);
         logger.info(`Subscription verification - User ${userId} has ${userTokens.length} tokens, subscribed to ${contractAddress}: ${isSubscribed}`);
 
@@ -115,48 +100,94 @@ class TokenTracker {
         };
       }
 
-
-      const validation = await this.alchemy.validateContract(contractAddress);
+      // Validate contract using OpenSea
+      if (!this.openSea) {
+        throw new Error('OpenSea service not available for contract validation');
+      }
+      const validation = await this.openSea.validateContract(contractAddress);
       if (!validation.isValid) {
         throw new Error(`Invalid NFT contract: ${validation.reason}`);
       }
 
+      // Set up OpenSea stream subscription
+      let openSeaSubscriptionId = null;
 
-      const webhook = await this.alchemy.createNFTActivityWebhook(
-        [contractAddress],
-        process.env.WEBHOOK_URL + '/webhook/alchemy'
-      );
+      // Resolve collection slug if not provided
+      if (!collectionSlug && this.collectionResolver) {
+        try {
+          logger.info(`Attempting to resolve collection slug for ${contractAddress}...`);
+          collectionSlug = await this.collectionResolver.resolveCollectionSlug(contractAddress, 'ethereum');
+          if (collectionSlug) {
+            logger.info(`✅ Auto-resolved collection slug: ${collectionSlug}`);
+          } else {
+            logger.info(`⚠️ Could not auto-resolve collection slug for ${contractAddress}`);
+          }
+        } catch (error) {
+          logger.warn(`Error auto-resolving collection slug:`, error);
+        }
+      }
 
+      // Set up OpenSea stream subscription if collection slug available and service available
+      if (collectionSlug && this.openSea) {
+        try {
+          const openSeaSubscription = await this.setupOpenSeaSubscription(collectionSlug);
+          if (openSeaSubscription) {
+            openSeaSubscriptionId = openSeaSubscription.collectionSlug;
+            logger.info(`Set up OpenSea subscription for collection: ${collectionSlug}`);
+          }
+        } catch (error) {
+          logger.warn(`Failed to set up OpenSea subscription for ${collectionSlug}:`, error);
+        }
+      }
 
+      // Add token to database with collection slug
       const tokenResult = await this.db.addTrackedToken(
         contractAddress,
         validation,
         userId,
-        webhook ? webhook.id : null
+        null, // No Alchemy webhook
+        collectionSlug,
+        openSeaSubscriptionId
       );
 
-
-      const subscriptionResult = await this.db.subscribeUserToToken(userId, tokenResult.id);
-      logger.info(`User ${userId} subscribed to new token ${contractAddress} (token ID: ${tokenResult.id}). Subscription result:`, subscriptionResult);
+      // Subscribe user to token
+      const subscriptionResult = await this.db.subscribeUserToToken(userId, tokenResult.id, chatId);
+      logger.info(`User ${userId} subscribed to new token ${contractAddress} in chat ${chatId} (token ID: ${tokenResult.id}). Subscription result:`, subscriptionResult);
 
       // Verify subscription was created
-      const userTokens = await this.db.getUserTrackedTokens(userId);
+      const userTokens = await this.db.getUserTrackedTokens(userId, chatId);
       const isSubscribed = userTokens.some(token => token.id === tokenResult.id);
       logger.info(`New token verification - User ${userId} has ${userTokens.length} tokens, subscribed to ${contractAddress}: ${isSubscribed}`);
 
+      // Start periodic data tracking
       await this.startTokenDataTracking(contractAddress);
 
-      logger.info(`Token ${contractAddress} added successfully${webhook ? ` with webhook ${webhook.id}` : ' (webhook creation failed - using manual tracking)'}`);
+      const streamStatus = collectionSlug && openSeaSubscriptionId ? ` + OpenSea stream (${collectionSlug})` : '';
+      logger.info(`Token ${contractAddress} added successfully${streamStatus}`);
+
+      // Create detailed success message
+      let successMessage = `✅ *${validation.name || 'NFT Collection'}* added successfully!\n\n`;
+      successMessage += `🔔 You'll now receive alerts for this collection.\n`;
+
+      if (collectionSlug) {
+        successMessage += `🌊 *OpenSea Real-time Tracking*: ✅ Enabled\n`;
+        successMessage += `   Collection: \`${collectionSlug}\`\n`;
+      } else {
+        successMessage += `🌊 *OpenSea Real-time Tracking*: ⚠️ Not available\n`;
+        successMessage += `   (Collection slug needed for real-time tracking)\n`;
+      }
+
       return {
         success: true,
-        message: `✅ *${validation.name || 'NFT Collection'}* added successfully!\n\n🔔 You'll now receive alerts for this collection.`,
+        message: successMessage,
         token: {
           id: tokenResult.id,
           contract_address: contractAddress,
+          collection_slug: collectionSlug,
           token_name: validation.name,
           token_symbol: validation.symbol,
           token_type: validation.tokenType,
-          webhook_id: webhook ? webhook.id : null
+          opensea_subscription_id: openSeaSubscriptionId
         }
       };
     } catch (error) {
@@ -195,14 +226,7 @@ class TokenTracker {
         );
 
 
-        if (token.webhook_id) {
-          try {
-            await this.alchemy.deleteWebhook(token.webhook_id);
-            logger.info(`Deleted webhook ${token.webhook_id} for token ${contractAddress}`);
-          } catch (error) {
-            logger.error(`Error deleting webhook ${token.webhook_id}:`, error);
-          }
-        }
+        // Clean up any remaining OpenSea subscriptions if needed
 
 
         if (this.trackingIntervals.has(contractAddress)) {
@@ -249,14 +273,8 @@ class TokenTracker {
       logger.debug(`Updating data for token ${contractAddress}`);
 
       let floorPrice = null;
-      try {
-        const floorPriceData = await this.alchemy.getFloorPrice(contractAddress);
-        if (floorPriceData && floorPriceData.openSea) {
-          floorPrice = floorPriceData.openSea.floorPrice.toString();
-        }
-      } catch (error) {
-        logger.debug(`No floor price data for ${contractAddress}:`, error.message);
-      }
+      // Floor price tracking removed with Alchemy deprecation
+      // OpenSea API can be used for floor price data if needed in the future
 
 
       if (floorPrice) {
@@ -332,13 +350,9 @@ class TokenTracker {
       stats.activity_24h = activityCount ? activityCount.count : 0;
 
 
-      try {
-        const owners = await this.alchemy.getOwnersForContract(contractAddress);
-        stats.unique_owners = owners.length;
-      } catch (error) {
-        logger.debug(`Could not get owners for ${contractAddress}:`, error.message);
-        stats.unique_owners = 'N/A';
-      }
+      // Owner count tracking removed with Alchemy deprecation
+      // OpenSea API can be used for owner data if needed in the future
+      stats.unique_owners = 'N/A';
 
       return stats;
     } catch (error) {
@@ -407,13 +421,139 @@ class TokenTracker {
     }
   }
 
-  async cleanup() {
+  async setupExistingOpenSeaSubscriptions(collectionSlugs) {
+    try {
+      if (!this.openSea) {
+        logger.warn('OpenSea service not available for existing subscriptions');
+        return;
+      }
 
+      logger.info(`🔗 Setting up OpenSea subscriptions for existing collections: ${collectionSlugs.join(', ')}`);
+
+      for (const collectionSlug of collectionSlugs) {
+        try {
+          const subscription = await this.setupOpenSeaSubscription(collectionSlug);
+          if (subscription) {
+            logger.info(`✅ OpenSea subscription active for existing collection: ${collectionSlug}`);
+          }
+          // Rate limiting
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (error) {
+          logger.error(`❌ Failed to setup subscription for existing collection ${collectionSlug}:`, error);
+        }
+      }
+
+      logger.info(`🌊 Completed OpenSea subscription setup for existing collections`);
+    } catch (error) {
+      logger.error('Error setting up existing OpenSea subscriptions:', error);
+    }
+  }
+
+  async setupOpenSeaSubscription(collectionSlug) {
+    try {
+      if (!this.openSea) {
+        logger.warn('OpenSea service not available');
+        return null;
+      }
+
+      // Check if we already have a subscription for this collection
+      if (this.openSeaSubscriptions.has(collectionSlug)) {
+        logger.info(`Already subscribed to OpenSea collection: ${collectionSlug}`);
+        return this.openSeaSubscriptions.get(collectionSlug);
+      }
+
+      // Import the webhook handlers
+      const WebhookHandlers = require('../webhooks/handlers');
+
+      // Create event handlers for this collection (excluding cancelled events)
+      const eventHandlers = {
+        listed: (eventData, rawEvent) => this.handleOpenSeaEvent('listed', eventData, rawEvent),
+        sold: (eventData, rawEvent) => this.handleOpenSeaEvent('sold', eventData, rawEvent),
+        transferred: (eventData, rawEvent) => this.handleOpenSeaEvent('transferred', eventData, rawEvent),
+        metadata_updated: (eventData, rawEvent) => this.handleOpenSeaEvent('metadata_updated', eventData, rawEvent),
+        received_bid: (eventData, rawEvent) => this.handleOpenSeaEvent('received_bid', eventData, rawEvent),
+        received_offer: (eventData, rawEvent) => this.handleOpenSeaEvent('received_offer', eventData, rawEvent),
+        default: (eventType, eventData, rawEvent) => this.handleOpenSeaEvent(eventType, eventData, rawEvent)
+      };
+
+      // Subscribe to the collection
+      const subscription = await this.openSea.subscribeToCollection(collectionSlug, eventHandlers);
+
+      if (subscription) {
+        this.openSeaSubscriptions.set(collectionSlug, subscription);
+        logger.info(`Successfully subscribed to OpenSea collection: ${collectionSlug}`);
+      }
+
+      return subscription;
+    } catch (error) {
+      logger.error(`Failed to setup OpenSea subscription for ${collectionSlug}:`, error);
+      throw error;
+    }
+  }
+
+  async handleOpenSeaEvent(eventType, eventData, rawEvent) {
+    try {
+      // This method will be called by OpenSea event handlers
+      logger.info(`TokenTracker received OpenSea ${eventType} event for collection: ${eventData.collectionSlug}`);
+
+      // Route to WebhookHandlers for proper notification processing
+      if (this.webhookHandlers) {
+        logger.info(`🌊 Routing OpenSea ${eventType} event to notification system`);
+        return await this.webhookHandlers.handleOpenSeaEvent(eventType, eventData, rawEvent);
+      } else {
+        logger.warn('WebhookHandlers not available - OpenSea event not processed for notifications');
+        logger.debug(`OpenSea event data:`, JSON.stringify(eventData, null, 2));
+        return false;
+      }
+    } catch (error) {
+      logger.error(`Error handling OpenSea ${eventType} event:`, error);
+      return false;
+    }
+  }
+
+  async unsubscribeFromOpenSeaCollection(collectionSlug) {
+    try {
+      if (!this.openSea) {
+        return false;
+      }
+
+      const subscription = this.openSeaSubscriptions.get(collectionSlug);
+      if (!subscription) {
+        logger.warn(`No OpenSea subscription found for collection: ${collectionSlug}`);
+        return false;
+      }
+
+      await this.openSea.unsubscribeFromCollection(collectionSlug);
+      this.openSeaSubscriptions.delete(collectionSlug);
+
+      logger.info(`Unsubscribed from OpenSea collection: ${collectionSlug}`);
+      return true;
+    } catch (error) {
+      logger.error(`Failed to unsubscribe from OpenSea collection ${collectionSlug}:`, error);
+      return false;
+    }
+  }
+
+  getOpenSeaSubscriptions() {
+    return Array.from(this.openSeaSubscriptions.keys());
+  }
+
+  async cleanup() {
+    // Clean up tracking intervals
     for (const [contractAddress, interval] of this.trackingIntervals) {
       clearInterval(interval);
       logger.info(`Cleared tracking interval for ${contractAddress}`);
     }
     this.trackingIntervals.clear();
+
+    // Clean up OpenSea subscriptions
+    for (const collectionSlug of this.openSeaSubscriptions.keys()) {
+      try {
+        await this.unsubscribeFromOpenSeaCollection(collectionSlug);
+      } catch (error) {
+        logger.error(`Error unsubscribing from OpenSea collection ${collectionSlug}:`, error);
+      }
+    }
   }
 }
 

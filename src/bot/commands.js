@@ -3,9 +3,8 @@ const logger = require('../services/logger');
 const { ethers } = require('ethers');
 
 class BotCommands {
-  constructor(database, alchemyService, tokenTracker, trendingService, channelService, secureTrendingService = null) {
+  constructor(database, tokenTracker, trendingService, channelService, secureTrendingService = null) {
     this.db = database;
-    this.alchemy = alchemyService;
     this.tokenTracker = tokenTracker;
     this.trending = trendingService;
     this.secureTrending = secureTrendingService;
@@ -56,6 +55,23 @@ class BotCommands {
     logger.debug(`Cleared ${type} session data for user ${userId}`);
   }
 
+  // Normalize chat context for consistent storage
+  normalizeChatContext(ctx) {
+    const chatType = ctx.chat.type;
+    const chatId = ctx.chat.id.toString();
+
+    // For private chats, always use "private" as the context
+    if (chatType === 'private') {
+      logger.debug(`Chat context normalized: ${chatType} (${chatId}) → "private"`);
+      return 'private';
+    }
+
+    // For groups, supergroups, and channels, use the actual chat ID
+    // This ensures separation between different groups/channels
+    logger.debug(`Chat context normalized: ${chatType} (${chatId}) → "${chatId}"`);
+    return chatId;
+  }
+
   async setupCommands(bot) {
 
     bot.command('startcandy', async (ctx) => {
@@ -81,11 +97,21 @@ I help you track NFT collections and get real-time alerts for:
       logger.info(`New user started bot: ${user.id} (${user.username})`);
     });
 
-    // Add /start command that works the same as /startcandy
+    // Add /start command that works the same as /startcandy but with parameter handling
     bot.start(async (ctx) => {
       const user = ctx.from;
-
       await this.db.createUser(user.id.toString(), user.username, user.first_name);
+
+      // Check for start parameters (deep links)
+      const startPayload = ctx.startPayload;
+
+      if (startPayload === 'buy_footer') {
+        // Direct user to footer ads menu when clicking "Buy Ad spot" link
+        logger.info(`User started bot with buy_footer parameter: ${user.id} (${user.username})`);
+        return this.showFooterMenu(ctx);
+      }
+
+      // Default start behavior - show main menu
       const welcomeMessage = `🚀 <b>Welcome to MintTechBot!</b> 🚀
 
 I help you track NFT collections and get real-time alerts for:
@@ -418,21 +444,12 @@ Simple and focused - boost your NFTs easily! 🚀`;
           return ctx.reply('Please start the bot first with /startcandy');
         }
 
-        logger.info(`/my_tokens - Telegram ID: ${ctx.from.id}, Database User ID: ${user.id}`);
+        const chatId = this.normalizeChatContext(ctx);
+        logger.info(`/my_tokens - Telegram ID: ${ctx.from.id}, Database User ID: ${user.id}, Chat Context: ${chatId}`);
 
-        // Debug: Get all subscriptions to see what's in the database
-        const allSubscriptions = await this.db.getAllUserSubscriptions(user.id);
-        logger.info(`All subscriptions for user ${user.id}:`, allSubscriptions.map(t => ({
-          id: t.id,
-          address: t.contract_address,
-          name: t.token_name,
-          notification_enabled: t.notification_enabled,
-          is_active: t.is_active,
-          subscription_date: t.subscription_date
-        })));
-
-        const tokens = await this.db.getUserTrackedTokens(user.id);
-        logger.info(`Filtered tokens for user ${user.id}:`, tokens.map(t => ({ id: t.id, address: t.contract_address, name: t.token_name, notification_enabled: t.notification_enabled })));
+        // Get context-specific tokens only
+        const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
+        logger.info(`Context-specific tokens for user ${user.id} in ${chatId}:`, tokens.map(t => ({ id: t.id, address: t.contract_address, name: t.token_name, notification_enabled: t.notification_enabled })));
 
         if (tokens.length === 0) {
           const keyboard = Markup.inlineKeyboard([
@@ -450,10 +467,19 @@ Simple and focused - boost your NFTs easily! 🚀`;
         tokens.forEach((token, index) => {
           message += `${index + 1}. *${token.token_name || 'Unknown'}* (${token.token_symbol || 'N/A'})\n`;
           message += `   📮 \`${token.contract_address}\`\n`;
-          message += `   🔔 Notifications: ${token.notification_enabled ? '✅' : '❌'}\n\n`;
+          message += `   🔔 Notifications: ${token.notification_enabled ? '✅' : '❌'}\n`;
+
+          // Show OpenSea tracking status
+          if (token.collection_slug) {
+            message += `   🌊 OpenSea: ✅ Real-time tracking (${token.collection_slug})\n`;
+          } else {
+            message += `   🌊 OpenSea: ⚠️ No real-time tracking\n`;
+          }
+          message += '\n';
+
           keyboard.push([
             Markup.button.callback(
-              `${token.notification_enabled ? '🔕' : '🔔'} ${token.token_name || token.contract_address.slice(0, 8)}...`, 
+              `${token.notification_enabled ? '🔕' : '🔔'} ${token.token_name || token.contract_address.slice(0, 8)}...`,
               `toggle_${token.id}`
             )
           ]);
@@ -476,7 +502,8 @@ Simple and focused - boost your NFTs easily! 🚀`;
           return ctx.reply('Please start the bot first with /startcandy');
         }
 
-        const tokens = await this.db.getUserTrackedTokens(user.id);
+        const chatId = this.normalizeChatContext(ctx);
+        const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
         if (!tokens || tokens.length === 0) {
           const keyboard = Markup.inlineKeyboard([
             [Markup.button.callback('➕ Add Token', 'add_token_start')]
@@ -706,7 +733,8 @@ Select an option to boost your NFT collections:`;
           if (!user) {
             return ctx.reply('Please start the bot first with /startcandy');
           }
-          const tokens = await this.db.getUserTrackedTokens(user.id);
+          const chatId = this.normalizeChatContext(ctx);
+          const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
           if (!tokens || tokens.length === 0) {
             const keyboard = Markup.inlineKeyboard([
               [Markup.button.callback('➕ Add Token', 'add_token_start'), Markup.button.callback('◀️ Back to Tokens Menu', 'menu_tokens')]
@@ -1156,10 +1184,12 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
       this.clearUserState(ctx.from.id);
 
+      const chatId = this.normalizeChatContext(ctx);
       const result = await this.tokenTracker.addToken(
         contractAddress,
         user.id,
-        ctx.from.id.toString()
+        ctx.from.id.toString(),
+        chatId
       );
 
       logger.info(`Token addition result for user ${user.id}:`, result.success);
@@ -1260,42 +1290,50 @@ You can try again with a different transaction hash or contact support.`;
         return ctx.reply('Please start the bot first with /startcandy');
       }
 
+      const chatId = this.normalizeChatContext(ctx);
 
-      const token = await this.db.get(
-        'SELECT * FROM tracked_tokens WHERE id = ? AND added_by_user_id = ?',
-        [tokenId, user.id]
-      );
-
+      // Get token info for the success message
+      const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = ?', [tokenId]);
       if (!token) {
-        return ctx.reply('❌ Token not found or you don\'t have permission to remove it.');
+        return ctx.reply('❌ Token not found.');
       }
 
-
-      await this.db.run(
-        'UPDATE tracked_tokens SET is_active = 0 WHERE id = ? AND added_by_user_id = ?',
-        [tokenId, user.id]
+      // Check if user has subscription in this chat context
+      const subscription = await this.db.get(
+        'SELECT * FROM user_subscriptions WHERE user_id = ? AND token_id = ? AND chat_id = ?',
+        [user.id, tokenId, chatId]
       );
 
-
-      if (token.webhook_id && this.alchemy) {
-        try {
-          await this.alchemy.deleteWebhook(token.webhook_id);
-          logger.info(`Webhook removed for token: ${token.contract_address}`);
-        } catch (webhookError) {
-          logger.warn(`Failed to remove webhook for ${token.contract_address}:`, webhookError.message);
-        }
+      if (!subscription) {
+        return ctx.reply('❌ You are not subscribed to this token in this chat context.');
       }
 
+      // Remove subscription from this specific chat context
+      await this.db.unsubscribeUserFromToken(user.id, tokenId, chatId);
+
+      // Check if there are any remaining subscriptions for this token
+      const remainingSubscriptions = await this.db.all(
+        'SELECT COUNT(*) as count FROM user_subscriptions WHERE token_id = ?',
+        [tokenId]
+      );
+
+      // If no subscriptions remain, deactivate the token globally
+      if (remainingSubscriptions[0].count === 0) {
+        await this.db.run('UPDATE tracked_tokens SET is_active = 0 WHERE id = ?', [tokenId]);
+        logger.info(`Token ${token.contract_address} deactivated - no remaining subscriptions`);
+      }
+
+      const contextName = chatId === 'private' ? 'private messages' : `group chat (${chatId})`;
       const successMessage = `✅ <b>Token Removed Successfully</b>
 
-🗑️ <b>${token.token_name || 'Unknown Collection'}</b> has been removed from your tracking list.
+🗑️ <b>${token.token_name || 'Unknown Collection'}</b> has been removed from your tracking list in ${contextName}.
 
 📮 Contract: <code>${token.contract_address}</code>
 
-You will no longer receive notifications for this token.`;
+You will no longer receive notifications for this token in this chat context.`;
 
       await ctx.replyWithHTML(successMessage);
-      logger.info(`Token removed: ${token.contract_address} by user ${user.id}`);
+      logger.info(`Token subscription removed: ${token.contract_address} by user ${user.id} in chat ${chatId}`);
 
     } catch (error) {
       logger.error('Error removing token:', error);
@@ -1628,7 +1666,8 @@ Choose an option:`;
         return ctx.reply('Please start the bot first with /startcandy');
       }
 
-      const tokens = await this.db.getUserTrackedTokens(user.id);
+      const chatId = this.normalizeChatContext(ctx);
+      const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
       if (tokens.length === 0) {
         const keyboard = Markup.inlineKeyboard([
           [Markup.button.callback('➕ Add Your First Token', 'add_token_start')],
@@ -1695,7 +1734,8 @@ Choose an option:`;
       let token = await this.db.getTrackedToken(contractAddress);
       if (!token) {
         // Contract not tracked yet, validate and add it
-        const result = await this.tokenTracker.addToken(contractAddress, user.id, ctx.from.id.toString());
+        const chatId = this.normalizeChatContext(ctx);
+        const result = await this.tokenTracker.addToken(contractAddress, user.id, ctx.from.id.toString(), chatId);
         if (!result.success) {
           this.clearUserState(ctx.from.id);
           return ctx.reply(`❌ Contract validation failed: ${result.error}`);
@@ -1855,7 +1895,8 @@ Choose an option:`;
       let token = await this.db.getTrackedToken(contractAddress);
       if (!token) {
         // Contract not tracked yet, validate and add it
-        const result = await this.tokenTracker.addToken(contractAddress, user.id, ctx.from.id.toString());
+        const chatId = this.normalizeChatContext(ctx);
+        const result = await this.tokenTracker.addToken(contractAddress, user.id, ctx.from.id.toString(), chatId);
         if (!result.success) {
           this.clearUserState(ctx.from.id);
           return ctx.reply(`❌ Contract validation failed: ${result.error}`);
@@ -1971,7 +2012,8 @@ Choose an option:`;
       let token = await this.db.getTrackedToken(contractAddress);
       if (!token) {
         // Contract not tracked yet, validate and add it
-        const result = await this.tokenTracker.addToken(contractAddress, user.id, ctx.from.id.toString());
+        const chatId = this.normalizeChatContext(ctx);
+        const result = await this.tokenTracker.addToken(contractAddress, user.id, ctx.from.id.toString(), chatId);
         if (!result.success) {
           this.clearUserState(ctx.from.id);
           return ctx.reply(`❌ Contract validation failed: ${result.error}`);

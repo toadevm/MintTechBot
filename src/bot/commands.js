@@ -798,6 +798,11 @@ Choose your trending boost option:`;
               return ctx.reply('❌ Invalid blockchain network selected.');
             }
 
+            // For now, only Ethereum is supported for adding NFT collections
+            if (chainName !== 'ethereum') {
+              return ctx.reply('🚧 Coming soon! Dev is devvin 😎\n\nOther chains will be supported soon. For now, please use Ethereum.');
+            }
+
             // Store the selected chain in user session data
             this.userStates.set(ctx.from.id.toString() + '_selected_chain', chainName);
             this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);

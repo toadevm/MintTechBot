@@ -2,10 +2,11 @@ const logger = require('./logger');
 const CollectionResolver = require('./collectionResolver');
 
 class TokenTracker {
-  constructor(database, openSeaService, webhookHandlers = null) {
+  constructor(database, openSeaService, webhookHandlers = null, chainManager = null) {
     this.db = database;
     this.openSea = openSeaService;
     this.webhookHandlers = webhookHandlers; // Add webhook handlers reference
+    this.chainManager = chainManager;
     this.trackingIntervals = new Map();
     this.openSeaSubscriptions = new Map(); // Track OpenSea collection subscriptions
     this.collectionResolver = new CollectionResolver(); // Add collection resolver
@@ -64,17 +65,17 @@ class TokenTracker {
   }
 
 
-  async addToken(contractAddress, userId, telegramId, chatId, collectionSlug = null) {
+  async addToken(contractAddress, userId, telegramId, chatId, chainName = 'ethereum', collectionSlug = null) {
     try {
-      logger.info(`Adding token ${contractAddress} for user ${userId} with collection slug: ${collectionSlug}`);
+      logger.info(`Adding token ${contractAddress} for user ${userId} on chain ${chainName} with collection slug: ${collectionSlug}`);
 
       const { ethers } = require('ethers');
       if (!ethers.isAddress(contractAddress)) {
         throw new Error('Invalid contract address format');
       }
 
-      // Check if token already exists
-      const existingToken = await this.db.getTrackedToken(contractAddress);
+      // Check if token already exists on this chain
+      const existingToken = await this.db.getTrackedToken(contractAddress, chainName);
       if (existingToken) {
         // Reactivate token if it was previously deactivated
         if (!existingToken.is_active) {
@@ -104,7 +105,7 @@ class TokenTracker {
       if (!this.openSea) {
         throw new Error('OpenSea service not available for contract validation');
       }
-      const validation = await this.openSea.validateContract(contractAddress);
+      const validation = await this.openSea.validateContract(contractAddress, chainName);
       if (!validation.isValid) {
         throw new Error(`Invalid NFT contract: ${validation.reason}`);
       }
@@ -115,15 +116,15 @@ class TokenTracker {
       // Resolve collection slug if not provided
       if (!collectionSlug && this.collectionResolver) {
         try {
-          logger.info(`Attempting to resolve collection slug for ${contractAddress}...`);
-          collectionSlug = await this.collectionResolver.resolveCollectionSlug(contractAddress, 'ethereum');
+          logger.info(`Attempting to resolve collection slug for ${contractAddress} on ${chainName}...`);
+          collectionSlug = await this.collectionResolver.resolveCollectionSlug(contractAddress, chainName);
           if (collectionSlug) {
-            logger.info(`✅ Auto-resolved collection slug: ${collectionSlug}`);
+            logger.info(`✅ Auto-resolved collection slug for ${chainName}: ${collectionSlug}`);
           } else {
-            logger.info(`⚠️ Could not auto-resolve collection slug for ${contractAddress}`);
+            logger.info(`⚠️ Could not auto-resolve collection slug for ${contractAddress} on ${chainName}`);
           }
         } catch (error) {
-          logger.warn(`Error auto-resolving collection slug:`, error);
+          logger.warn(`Error auto-resolving collection slug for ${chainName}:`, error);
         }
       }
 
@@ -140,14 +141,15 @@ class TokenTracker {
         }
       }
 
-      // Add token to database with collection slug
+      // Add token to database with collection slug and chain
       const tokenResult = await this.db.addTrackedToken(
         contractAddress,
         validation,
         userId,
         null, // No Alchemy webhook
         collectionSlug,
-        openSeaSubscriptionId
+        openSeaSubscriptionId,
+        chainName
       );
 
       // Subscribe user to token
@@ -165,16 +167,31 @@ class TokenTracker {
       const streamStatus = collectionSlug && openSeaSubscriptionId ? ` + OpenSea stream (${collectionSlug})` : '';
       logger.info(`Token ${contractAddress} added successfully${streamStatus}`);
 
-      // Create detailed success message
+      // Create detailed success message with chain information
+      const chainConfig = this.chainManager ? this.chainManager.getChain(chainName) : null;
+      const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : chainName;
+
       let successMessage = `✅ *${validation.name || 'NFT Collection'}* added successfully!\n\n`;
+      successMessage += `🔗 *Chain:* ${chainDisplay}\n`;
       successMessage += `🔔 You'll now receive alerts for this collection.\n`;
 
-      if (collectionSlug) {
+      // Handle BSC and other external marketplace chains
+      if (chainConfig?.externalMarketplace) {
+        successMessage += `🌊 *Marketplace Support:* ${chainConfig.marketplaceName}\n`;
+        successMessage += `   Real-time tracking may be limited\n`;
+      } else if (collectionSlug) {
         successMessage += `🌊 *OpenSea Real-time Tracking*: ✅ Enabled\n`;
         successMessage += `   Collection: \`${collectionSlug}\`\n`;
       } else {
         successMessage += `🌊 *OpenSea Real-time Tracking*: ⚠️ Not available\n`;
         successMessage += `   (Collection slug needed for real-time tracking)\n`;
+      }
+
+      // Add metadata quality indicator
+      if (validation.name !== 'Unknown Collection') {
+        successMessage += `📊 *Metadata:* ✅ Complete\n`;
+      } else {
+        successMessage += `📊 *Metadata:* ⚠️ Partial (contract validated but name unavailable)\n`;
       }
 
       return {

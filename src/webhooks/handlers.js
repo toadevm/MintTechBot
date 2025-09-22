@@ -1,12 +1,13 @@
 const logger = require('../services/logger');
 
 class WebhookHandlers {
-  constructor(database, bot, trendingService = null, secureTrendingService = null, openSeaService = null) {
+  constructor(database, bot, trendingService = null, secureTrendingService = null, openSeaService = null, chainManager = null) {
     this.db = database;
     this.bot = bot;
     this.trending = trendingService;
     this.secureTrending = secureTrendingService;
     this.openSea = openSeaService;
+    this.chainManager = chainManager;
     this.processedTransactions = new Map();
     this.processedOpenSeaEvents = new Map(); // Track OpenSea events to prevent duplicates
     this.CACHE_EXPIRY_MS = 10 * 60 * 1000;
@@ -514,6 +515,17 @@ class WebhookHandlers {
       message += `📥 **To:** \`${this.shortenAddress(activityData.toAddress)}\`\n`;
     }
     message += `📮 **CA:** \`${this.shortenAddress(token.contract_address)}\`\n`;
+
+    // Add chain information
+    if (this.chainManager && token.chain_name) {
+      const chainConfig = this.chainManager.getChain(token.chain_name);
+      if (chainConfig) {
+        message += `🔗 **Chain:** ${chainConfig.emoji} ${chainConfig.displayName}\n`;
+      } else {
+        message += `🔗 **Chain:** ${token.chain_name}\n`;
+      }
+    }
+
     if (activityData.transactionHash) {
       message += `🔗 **TX:** \`${this.shortenAddress(activityData.transactionHash)}\`\n`;
       message += `[View on Etherscan](https://etherscan.io/tx/${activityData.transactionHash})`;
@@ -1123,6 +1135,16 @@ class WebhookHandlers {
     message += `🏪 **Marketplace:** OpenSea\n`;
     message += `📮 **Collection:** \`${eventData.collectionSlug || 'Unknown'}\`\n`;
 
+    // Add chain information for OpenSea events
+    if (this.chainManager && token.chain_name) {
+      const chainConfig = this.chainManager.getChain(token.chain_name);
+      if (chainConfig) {
+        message += `🔗 **Chain:** ${chainConfig.emoji} ${chainConfig.displayName}\n`;
+      } else {
+        message += `🔗 **Chain:** ${token.chain_name}\n`;
+      }
+    }
+
     // Transaction link
     if (eventData.transactionHash) {
       message += `🔗 **TX:** \`${this.shortenAddress(eventData.transactionHash)}\`\n`;
@@ -1131,8 +1153,18 @@ class WebhookHandlers {
 
     // OpenSea link (using the exact format from OpenSea's item.permalink or manual construction)
     if (eventData.contractAddress && eventData.tokenId) {
-      // OpenSea URLs are: https://opensea.io/assets/ethereum/{contract}/{tokenId}
-      message += `[View on OpenSea](https://opensea.io/assets/ethereum/${eventData.contractAddress}/${eventData.tokenId})\n`;
+      // Get chain name for OpenSea URL - map our chain names to OpenSea's format
+      const openSeaChainMap = {
+        'ethereum': 'ethereum',
+        'arbitrum': 'arbitrum',
+        'optimism': 'optimism',
+        'bsc': 'bsc',
+        'hyperblast': 'ethereum' // Fallback to ethereum since HyperEVM not supported on OpenSea
+      };
+      const chainForUrl = openSeaChainMap[token.chain_name] || 'ethereum';
+
+      // OpenSea URLs are: https://opensea.io/assets/{chain}/{contract}/{tokenId}
+      message += `[View on OpenSea](https://opensea.io/assets/${chainForUrl}/${eventData.contractAddress}/${eventData.tokenId})\n`;
     } else if (eventData.collectionSlug) {
       message += `[View Collection](https://opensea.io/collection/${eventData.collectionSlug})\n`;
     }
@@ -1246,16 +1278,33 @@ class WebhookHandlers {
     try {
       // Check if we have an NFT image from OpenSea metadata
       if (eventData.nftImageUrl && eventData.nftImageUrl.startsWith('http')) {
-        logger.info(`📸 Sending OpenSea notification with image: ${eventData.nftImageUrl}`);
+        logger.info(`📸 Processing OpenSea image for 300x300 resize: ${eventData.nftImageUrl}`);
 
         try {
-          // Send as photo with caption
-          await this.bot.telegram.sendPhoto(chatId, eventData.nftImageUrl, {
-            caption: message,
-            parse_mode: 'Markdown'
-          });
-          logger.info(`✅ OpenSea notification with image sent successfully to ${chatId}`);
-          return;
+          // Download and resize the image to 300x300
+          const processedImagePath = await this.downloadAndResizeOpenSeaImage(eventData.nftImageUrl, eventData.tokenId || 'unknown');
+
+          if (processedImagePath) {
+            // Send the resized local image file
+            await this.bot.telegram.sendPhoto(chatId, { source: processedImagePath }, {
+              caption: message,
+              parse_mode: 'Markdown'
+            });
+            logger.info(`✅ OpenSea notification with resized image (300x300) sent successfully to ${chatId}`);
+
+            // Clean up the temporary file after sending
+            this.cleanupTempImage(processedImagePath);
+            return;
+          } else {
+            // If processing failed, try original URL as fallback
+            logger.warn(`⚠️ Image processing failed, trying original URL`);
+            await this.bot.telegram.sendPhoto(chatId, eventData.nftImageUrl, {
+              caption: message,
+              parse_mode: 'Markdown'
+            });
+            logger.info(`✅ OpenSea notification with original image sent successfully to ${chatId}`);
+            return;
+          }
         } catch (imageError) {
           logger.warn(`⚠️ Failed to send image, falling back to text message: ${imageError.message}`);
           // Fall through to text-only message
@@ -1274,6 +1323,80 @@ class WebhookHandlers {
     } catch (error) {
       logger.error(`❌ Failed to send OpenSea notification to ${chatId}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Download and resize an OpenSea image to 300x300
+   * @param {string} imageUrl - The OpenSea image URL
+   * @param {string} tokenId - Token ID for filename uniqueness
+   * @returns {string|null} Path to resized image file or null if failed
+   */
+  async downloadAndResizeOpenSeaImage(imageUrl, tokenId) {
+    const axios = require('axios');
+    const sharp = require('sharp');
+    const fs = require('fs').promises;
+    const path = require('path');
+
+    try {
+      // Create temp directory if it doesn't exist
+      const tempDir = path.join(__dirname, '../../temp_opensea_images');
+      await fs.mkdir(tempDir, { recursive: true });
+
+      // Generate unique filename
+      const fileName = `opensea_${tokenId}_${Date.now()}.jpg`;
+      const tempPath = path.join(tempDir, fileName);
+      const resizedPath = path.join(tempDir, `resized_${fileName}`);
+
+      // Download the image
+      logger.info(`📥 Downloading OpenSea image: ${imageUrl}`);
+      const response = await axios.get(imageUrl, {
+        responseType: 'arraybuffer',
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+
+      // Save downloaded image
+      await fs.writeFile(tempPath, response.data);
+      logger.info(`💾 Downloaded image saved: ${tempPath}`);
+
+      // Resize to exactly 300x300 with proper aspect ratio handling
+      await sharp(tempPath)
+        .resize(300, 300, {
+          fit: 'cover',           // Ensures exactly 300x300 by cropping if needed
+          position: 'center'      // Center crop
+        })
+        .jpeg({
+          quality: 85,
+          progressive: true
+        })
+        .toFile(resizedPath);
+
+      // Clean up original downloaded file
+      await fs.unlink(tempPath).catch(() => {}); // Ignore errors
+
+      logger.info(`🖼️ Image resized to 300x300: ${resizedPath}`);
+      return resizedPath;
+
+    } catch (error) {
+      logger.error(`❌ Failed to download/resize OpenSea image: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Clean up temporary image file
+   * @param {string} imagePath - Path to image file to delete
+   */
+  async cleanupTempImage(imagePath) {
+    try {
+      const fs = require('fs').promises;
+      await fs.unlink(imagePath);
+      logger.debug(`🗑️ Cleaned up temp image: ${imagePath}`);
+    } catch (error) {
+      logger.debug(`⚠️ Failed to cleanup temp image: ${error.message}`);
     }
   }
 }

@@ -532,44 +532,8 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
     bot.command('remove_token', async (ctx) => {
       try {
-        const user = await this.db.getUser(ctx.from.id.toString());
-        if (!user) {
-          return ctx.reply('Please start the bot first with /startcandy');
-        }
-
-        const chatId = this.normalizeChatContext(ctx);
-        const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
-        if (!tokens || tokens.length === 0) {
-          const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('➕ Add NFT', 'add_token_start')]
-          ]);
-          return ctx.reply(
-            '📝 You have no tracked NFTs to remove.\n\nAdd some NFTs first!',
-            keyboard
-          );
-        }
-
-        let message = `🗑️ <b>Remove Tracked Token</b>\n\nSelect a token to remove from tracking:\n\n`;
-        const keyboard = [];
-        tokens.forEach((token, index) => {
-          message += `${index + 1}. <b>${token.token_name || 'Unknown Collection'}</b>\n`;
-          message += `   📮 <code>${token.contract_address}</code>\n\n`;
-          keyboard.push([{
-            text: `🗑️ Remove ${token.token_name || `Token ${index + 1}`}`,
-            callback_data: `remove_token_${token.id}`
-          }]);
-        });
-
-        keyboard.push([{
-          text: '❌ Cancel',
-          callback_data: 'main_menu'
-        }]);
-
-        await ctx.replyWithHTML(message, {
-          reply_markup: {
-            inline_keyboard: keyboard
-          }
-        });
+        // Use the same working logic as showMyTokens() which has working remove buttons
+        return this.showMyTokens(ctx);
       } catch (error) {
         logger.error('Error in remove_token command:', error);
         ctx.reply('❌ Error loading your NFTs. Please try again.');
@@ -870,34 +834,8 @@ Choose your trending boost option:`;
         }
         if (data === 'remove_token') {
           await ctx.answerCbQuery();
-          const user = await this.db.getUser(ctx.from.id.toString());
-          if (!user) {
-            return ctx.reply('Please start the bot first with /startcandy');
-          }
-          const chatId = this.normalizeChatContext(ctx);
-          const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
-          if (!tokens || tokens.length === 0) {
-            const keyboard = Markup.inlineKeyboard([
-              [Markup.button.callback('➕ Add NFT', 'add_token_start'), Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]
-            ]);
-            return ctx.reply('📝 You have no tracked NFTs to remove.\n\nAdd some NFTs first!', keyboard);
-          }
-          // Call existing remove token functionality
-          let message = `🗑️ <b>Remove Tracked Token</b>\n\nSelect a token to remove from tracking:\n\n`;
-          const keyboard = [];
-          tokens.forEach((token, index) => {
-            message += `${index + 1}. <b>${token.token_name || 'Unknown Collection'}</b>\n`;
-            message += `   📮 <code>${token.contract_address}</code>\n\n`;
-            keyboard.push([{
-              text: `🗑️ Remove ${token.token_name || `Token ${index + 1}`}`,
-              callback_data: `remove_token_${token.id}`
-            }]);
-          });
-          keyboard.push([{
-            text: '◀️ Back to NFTs Menu',
-            callback_data: 'menu_tokens'
-          }]);
-          return ctx.replyWithHTML(message, { reply_markup: { inline_keyboard: keyboard } });
+          // Use the same working logic as showMyTokens() which has working remove buttons
+          return this.showMyTokens(ctx);
         }
         if (data === 'buy_image_menu') {
           await ctx.answerCbQuery();
@@ -1572,7 +1510,7 @@ You can try again with a different transaction hash or contact support.`;
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /startcandy');
+        return ctx.reply('❌ User not found. Please start the bot first with /startcandy');
       }
 
       const chatId = this.normalizeChatContext(ctx);
@@ -1590,7 +1528,31 @@ You can try again with a different transaction hash or contact support.`;
       );
 
       if (!subscription) {
-        return ctx.reply('❌ You are not subscribed to this NFT in this chat context.');
+        // Token exists but no subscription - this can happen due to data inconsistency
+        // Let's clean up by removing the token if user has no subscriptions at all
+        const anySubscription = await this.db.get(
+          'SELECT * FROM user_subscriptions WHERE user_id = ? AND token_id = ?',
+          [user.id, tokenId]
+        );
+
+        if (!anySubscription) {
+          // User has no subscriptions for this token anywhere, so we can remove the token entirely
+          await this.db.run('UPDATE tracked_tokens SET is_active = 0 WHERE id = ?', [tokenId]);
+          logger.info(`Token ${token.contract_address} deactivated - no user subscriptions found`);
+
+          const contextName = chatId === 'private' ? 'private messages' : `group chat (${chatId})`;
+          const successMessage = `✅ <b>Token Removed Successfully</b>
+
+🗑️ <b>${token.token_name || 'Unknown Collection'}</b> has been removed from tracking.
+
+📮 Contract: <code>${token.contract_address}</code>
+
+Note: This token had no active subscriptions and has been fully deactivated.`;
+
+          return ctx.replyWithHTML(successMessage);
+        } else {
+          return ctx.reply('❌ You are not subscribed to this NFT in this chat context.');
+        }
       }
 
       // Remove subscription from this specific chat context

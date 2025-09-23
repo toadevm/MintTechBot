@@ -123,7 +123,8 @@ I help you track NFT collections and get real-time alerts for:
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📊 Manage NFTs', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
         [Markup.button.callback('🖼️ Display NFT Image', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
-        [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')]
+        [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')],
+        [Markup.button.callback('❓ Help & Contact', 'help_contact')]
       ]);
 
       await ctx.replyWithHTML(welcomeMessage, keyboard);
@@ -157,7 +158,8 @@ I help you track NFT collections and get real-time alerts for:
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📊 Manage NFTs', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
         [Markup.button.callback('🖼️ Display NFT Image', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
-        [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')]
+        [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')],
+        [Markup.button.callback('❓ Help & Contact', 'help_contact')]
       ]);
 
       await ctx.replyWithHTML(welcomeMessage, keyboard);
@@ -287,7 +289,6 @@ Simple and focused - boost your NFTs easily! 🚀`;
           `💸 Fee: <b>${instructions.feeEth} ETH</b> (30 days)\n\n` +
           `📋 <b>Payment Steps:</b>\n` +
           instructions.instructions.join('\n') + '\n\n' +
-          `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n` +
           `⚠️ After payment, use: <code>/validate_image ${instructions.tokenAddress} &lt;txhash&gt;</code>`;
 
         await ctx.replyWithHTML(message, { disable_web_page_preview: true });
@@ -296,7 +297,9 @@ Simple and focused - boost your NFTs easily! 🚀`;
       } catch (error) {
         logger.error('Error in buy_image command:', error);
         if (error.message.includes('NFT not found')) {
-          ctx.reply('❌ NFT address not found in tracked NFTs. Please add it first with /add_token');
+          const errorMessage = '❌ NFT address not found in tracked NFTs. Please add it first.';
+          const keyboard = Markup.inlineKeyboard([[Markup.button.callback('➕ Add NFT', 'add_token_start')]]);
+          ctx.replyWithHTML(errorMessage, keyboard);
         } else {
           ctx.reply('❌ An error occurred. Please try again.');
         }
@@ -396,7 +399,6 @@ Simple and focused - boost your NFTs easily! 🚀`;
           `📮 <b>Contract:</b> <code>${instructions.contractAddress || contractAddress}</code>\n\n` +
           `📋 <b>Payment Steps:</b>\n` +
           (instructions.instructions || ['Send payment to NFT address']).map((step, i) => `${i + 1}. ${step}`).join('\n') + '\n\n' +
-          (instructions.etherscanUrl ? `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n` : '') +
           `⚠️ After payment, use: <code>/validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt;</code>`;
 
         await ctx.replyWithHTML(message, { disable_web_page_preview: true });
@@ -405,7 +407,9 @@ Simple and focused - boost your NFTs easily! 🚀`;
       } catch (error) {
         logger.error('Error in buy_footer command:', error);
         if (error.message.includes('NFT not found')) {
-          ctx.reply('❌ NFT address not found in tracked NFTs. Please add it first with /add_token');
+          const errorMessage = '❌ NFT address not found in tracked NFTs. Please add it first.';
+          const keyboard = Markup.inlineKeyboard([[Markup.button.callback('➕ Add NFT', 'add_token_start')]]);
+          ctx.replyWithHTML(errorMessage, keyboard);
         } else {
           ctx.reply('❌ An error occurred while generating payment instructions. Please try again.');
         }
@@ -866,28 +870,25 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
           this.userStates.set(ctx.from.id.toString() + '_validation_type', 'trending');
-          return ctx.reply('🔍 <b>Validate Trending Payment</b>\n\nPlease send me your Ethereum transaction hash.\n\n<i>Example: 0xabc123456789def...</i>', {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
-          });
+          const message = '🔍 <b>Validate Trending Payment</b>\n\nPlease send me your Ethereum transaction hash.\n\n<i>Example: 0xabc123456789def...</i>';
+          const keyboard = Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Payments', 'cancel_verify')]]);
+          return ctx.replyWithHTML(message, keyboard);
         }
         if (data === 'verify_image') {
           await ctx.answerCbQuery();
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_CONTRACT);
           this.userStates.set(ctx.from.id.toString() + '_validation_type', 'image');
-          return ctx.reply('🖼️ <b>Validate Image Payment</b>\n\nFirst, please send me the NFT NFT address.\n\n<i>Example: 0x1234567890abcdef...</i>', {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
-          });
+          const message = '🖼️ <b>Validate Image Payment</b>\n\nFirst, please send me the NFT address.\n\n<i>Example: 0x1234567890abcdef...</i>';
+          const keyboard = Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Payments', 'cancel_verify')]]);
+          return ctx.replyWithHTML(message, keyboard);
         }
         if (data === 'verify_footer') {
           await ctx.answerCbQuery();
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_CONTRACT);
           this.userStates.set(ctx.from.id.toString() + '_validation_type', 'footer');
-          return ctx.reply('🔗 <b>Validate Footer Payment</b>\n\nFirst, please send me the NFT NFT address.\n\n<i>Example: 0x1234567890abcdef...</i>', {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
-          });
+          const message = '🔗 <b>Validate Footer Payment</b>\n\nFirst, please send me the NFT address.\n\n<i>Example: 0x1234567890abcdef...</i>';
+          const keyboard = Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Payments', 'cancel_verify')]]);
+          return ctx.replyWithHTML(message, keyboard);
         }
 
         // Duration selection handlers for enhanced payment flow
@@ -1009,10 +1010,9 @@ Choose your trending boost option:`;
 
           // Set state to expect transaction hash
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_IMAGE_TX_HASH);
-          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the image fee payment.\n\n<i>Example: 0xabc123456789def...</i>\n\n', {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_images')]])
-          });
+          const message = '📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the image fee payment.\n\n<i>Example: 0xabc123456789def...</i>\n\n';
+          const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_images')]]);
+          return ctx.replyWithHTML(message, keyboard);
         }
 
         if (data === 'submit_enhanced_footer_tx') {
@@ -1024,20 +1024,18 @@ Choose your trending boost option:`;
 
           // Set state to expect transaction hash
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_TX_HASH);
-          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the footer payment.\n\n<i>Example: 0xabc123456789def...</i>\n\n', {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
-          });
+          const message = '📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the footer payment.\n\n<i>Example: 0xabc123456789def...</i>\n\n';
+          const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]]);
+          return ctx.replyWithHTML(message, keyboard);
         }
 
         // Submit buttons for transactions
         if (data === 'submit_footer_tx') {
           await ctx.answerCbQuery();
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_TX_HASH);
-          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the footer payment.\n\n<i>Example: 0xabc123456789def...</i>\n\n', {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
-          });
+          const message = '📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the footer payment.\n\n<i>Example: 0xabc123456789def...</i>\n\n';
+          const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]]);
+          return ctx.replyWithHTML(message, keyboard);
         }
         if (data === 'submit_image_tx') {
           await ctx.answerCbQuery();
@@ -1203,6 +1201,31 @@ Example: \`0x1234567890abcdef...\`
           } else {
             return ctx.reply(settings.message);
           }
+        }
+        if (data === '/buy_trending') {
+          await ctx.answerCbQuery();
+          const message = `🚀 *Buy Trending Menu*
+
+Choose your trending boost option:`;
+          const keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('💫 Buy Trending', 'buy_trending_normal')],
+            [Markup.button.callback('⭐ Buy Trending Premium', 'buy_trending_premium')],
+            [Markup.button.callback('🔥 View Current Trending', 'view_trending')]
+          ]);
+          return ctx.replyWithMarkdown(message, keyboard);
+        }
+        if (data === 'help_contact') {
+          await ctx.answerCbQuery();
+          const contactMessage = `📞 <b>Help & Contact</b>
+
+🌐 <b>Web:</b> https://www.candycodex.com
+
+📧 <b>Mail:</b> Support@candycodex.com
+
+💬 <b>Telegram:</b> @CandyCodex
+
+<i>Need help? Feel free to reach out through any of these channels!</i>`;
+          return ctx.replyWithHTML(contactMessage);
         }
 
         await ctx.answerCbQuery('Feature coming soon!');
@@ -1452,7 +1475,9 @@ Simple and focused - boost your NFTs easily! 🚀`;
             const verifyTokens = await this.db.getUserTrackedTokens(user.id);
             const addedToken = verifyTokens.find(t => t.contract_address.toLowerCase() === contractAddress.toLowerCase());
             if (addedToken) {
-              await ctx.reply(`✅ Verification: Token is now in your tracking list! Use /my_tokens to view all your NFTs.`);
+              const successMessage = '✅ Verification: Token is now in your tracking list!';
+              const keyboard = Markup.inlineKeyboard([[Markup.button.callback('👁️ View My NFTs', 'my_tokens')]]);
+              await ctx.replyWithHTML(successMessage, keyboard);
             } else {
               // Token added successfully - no warning message needed
             }
@@ -1694,9 +1719,9 @@ You will no longer receive notifications for this NFT in this chat context.`;
       // Debug logging
       console.log(`[showPromoteTokenMenu] User: ${user.id}, ChatId: ${chatId}, Tokens found: ${userTokens.length}, isPremium: ${isPremium}`);
       if (!userTokens || userTokens.length === 0) {
-        return ctx.reply(
-          '📝 You need to add some NFT collections first!\n\nUse /add_token to track your first NFT collection.'
-        );
+        const message = '📝 You need to add some NFT collections first!';
+        const keyboard = Markup.inlineKeyboard([[Markup.button.callback('➕ Add NFT Collection', 'add_token_start')]]);
+        return ctx.replyWithHTML(message, keyboard);
       }
 
       const trendingType = isPremium ? 'Premium' : 'Normal';
@@ -1816,7 +1841,6 @@ Choose an option:`;
       message += `⏱️ Duration: ${duration} hours\n`;
       message += `💰 Fee: ${instructions.feeEth} ETH\n\n`;
       message += `🏦 Payment Address:\n<code>${instructions.contractAddress}</code>\n\n`;
-      message += `🔗 View on Etherscan: <a href="${instructions.etherscanUrl}">View Contract</a>\n\n`;
       message += `📋 Payment Instructions:\n`;
       instructions.instructions.forEach((instruction, index) => {
         message += `${index + 1}. ${instruction}\n`;
@@ -2119,8 +2143,7 @@ Select trending duration:`;
         `⏰ <b>Duration:</b> ${instructions.duration || '30 days'}\n` +
         `📮 <b>Contract:</b> <code>${instructions.contractAddress || contractAddress}</code>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
-        (instructions.instructions || ['Send payment to NFT address']).map((step, i) => `${i + 1}. ${step}`).join('\n') + '\n\n' +
-        (instructions.etherscanUrl ? `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n` : '');
+        (instructions.instructions || ['Send payment to NFT address']).map((step, i) => `${i + 1}. ${step}`).join('\n') + '\n\n';
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📝 Submit Transaction Hash', 'submit_footer_tx')],
@@ -2144,9 +2167,9 @@ Select trending duration:`;
 
       // Validate transaction hash format
       if (!txHash.match(/^0x[a-fA-F0-9]{64}$/)) {
-        return ctx.reply('❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).', {
-          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
-        });
+        const errorMessage = '❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).';
+        const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]]);
+        return ctx.replyWithHTML(errorMessage, keyboard);
       }
 
       const userId = ctx.from.id.toString();
@@ -2357,8 +2380,7 @@ Select trending duration:`;
         `📮 Contract: <code>${instructions.tokenAddress}</code>\n` +
         `💸 Fee: <b>${instructions.feeEth} ETH</b> (30 days)\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
-        instructions.instructions.join('\n') + '\n\n' +
-        `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n`;
+        instructions.instructions.join('\n') + '\n\n';
 
       // Store NFT address for later validation
       this.userStates.set(ctx.from.id.toString() + '_image_contract', contractAddress);
@@ -2481,10 +2503,9 @@ Select trending duration:`;
       this.userStates.set(userId + '_validation_contract', contractAddress);
       this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
 
-      return ctx.reply(`📝 <b>Transaction Hash Required</b>\n\nNow please send me the transaction hash for your ${validationType} payment.\n\n<i>Example: 0xabc123456789def...</i>`, {
-        parse_mode: 'HTML',
-        reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
-      });
+      const message = `📝 <b>Transaction Hash Required</b>\n\nNow please send me the transaction hash for your ${validationType} payment.\n\n<i>Example: 0xabc123456789def...</i>`;
+      const keyboard = Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Payments', 'cancel_verify')]]);
+      return ctx.replyWithHTML(message, keyboard);
     } catch (error) {
       logger.error('Error handling validation contract:', error);
       this.clearUserState(ctx.from.id);
@@ -2998,7 +3019,6 @@ Select trending duration:`;
         `💸 Fee: <b>${amountText} ETH</b>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
         instructions.instructions.join('\n') + '\n\n' +
-        `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n` +
         `After making the payment, click the button below to submit your transaction hash.`;
 
       const keyboard = Markup.inlineKeyboard([
@@ -3108,7 +3128,8 @@ Select trending duration:`;
 
       // Validate ticker format
       if (!ticker.match(/^\$[A-Z0-9]{1,10}$/)) {
-        return ctx.reply('❌ Invalid ticker format. Please use only letters and numbers, max 10 characters.\n\n<i>Examples: $CANDY, $PEPE, $MYTOKEN</i>', {
+        return ctx.reply('❌ Invalid ticker format. Please use only letters and numbers, max 10 characters. <b>No spaces allowed.</b>\n\n<i>Examples: $CANDY, $PEPE, $MYTOKEN</i>', {
+          parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
         });
       }
@@ -3190,7 +3211,6 @@ Select trending duration:`;
         `💸 Fee: <b>${amountText} ETH</b>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
         instructions.instructions.join('\n') + '\n\n' +
-        `🔗 <a href="${instructions.etherscanUrl}">View Contract on Etherscan</a>\n\n` +
         `After making the payment, click the button below to submit your transaction hash.`;
 
       const keyboard = Markup.inlineKeyboard([
@@ -3244,7 +3264,6 @@ Select trending duration:`;
         `3. No additional data or function calls required - just a simple ETH transfer\n` +
         `4. Wait for transaction confirmation\n` +
         `5. Submit your transaction hash below\n\n` +
-        `🔗 <a href="https://etherscan.io/address/${paymentContract}">View Contract on Etherscan</a>\n\n` +
         `After making the payment, click the button below to submit your transaction hash.`;
 
       const keyboard = Markup.inlineKeyboard([

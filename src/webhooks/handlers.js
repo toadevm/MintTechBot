@@ -798,7 +798,7 @@ class WebhookHandlers {
         inline_keyboard: [[
           {
             text: 'BOOST YOUR NFT🟢',
-            url: `https://t.me/MintTechBot?start=buy_trending`
+            callback_data: '/buy_trending'
           }
         ]]
       };
@@ -849,7 +849,7 @@ class WebhookHandlers {
           inline_keyboard: [[
             {
               text: 'BOOST YOUR NFT🟢',
-              url: `https://t.me/MintTechBot?start=buy_trending`
+              callback_data: '/buy_trending'
             }
           ]]
         };
@@ -1433,7 +1433,7 @@ class WebhookHandlers {
         inline_keyboard: [[
           {
             text: 'BOOST YOUR NFT🟢',
-            url: `https://t.me/MintTechBot?start=buy_trending`
+            callback_data: '/buy_trending'
           }
         ]]
       };
@@ -1467,7 +1467,7 @@ class WebhookHandlers {
           inline_keyboard: [[
             {
               text: 'BOOST YOUR NFT🟢',
-              url: `https://t.me/MintTechBot?start=buy_trending`
+              callback_data: '/buy_trending'
             }
           ]]
         };

@@ -764,7 +764,9 @@ class WebhookHandlers {
       } else {
         // For UNPAID tokens: Use default tracking image immediately
         logger.info(`🚫 IMAGE FEE NOT PAID: Using default tracking image for ${token.token_name}`);
-        imagePath = await metadataService.resizeImage('./src/bot/defaultTracking.jpg', 300, 300);
+        // Use pre-sized default tracking image for better performance
+        const path = require('path');
+        imagePath = path.join(__dirname, '../../src/bot/defaultTracking_300x300.jpg');
       }
 
       // Format the enhanced message with traits
@@ -803,10 +805,8 @@ class WebhookHandlers {
         }
       );
 
-      // Cleanup downloaded images after a delay (but not the default image)
-      const imagesToCleanup = [originalImagePath, imagePath]
-        .filter(Boolean)
-        .filter(path => !path.includes('defaultTracking.jpg')); // Don't cleanup default image
+      // Cleanup downloaded images after a delay (only for paid tokens with NFT metadata images)
+      const imagesToCleanup = hasImageFee ? [originalImagePath, imagePath].filter(Boolean) : []; // Only cleanup NFT metadata images for paid tokens
       if (imagesToCleanup.length > 0) {
         setTimeout(async () => {
           for (const imageToCleanup of imagesToCleanup) {
@@ -833,7 +833,9 @@ class WebhookHandlers {
       logger.warn(`Unpaid token ${token.token_name} failed, retrying with default image: ${imageError.message}`);
 
       try {
-        const defaultImagePath = await metadataService.resizeImage('./src/bot/defaultTracking.jpg', 300, 300);
+        // Use pre-sized default tracking image for better performance
+        const path = require('path');
+        const defaultImagePath = path.join(__dirname, '../../src/bot/defaultTracking_300x300.jpg');
         const boostButton = {
           inline_keyboard: [[
             {
@@ -971,6 +973,20 @@ class WebhookHandlers {
 
   async processOpenSeaEventForToken(eventType, eventData, token, rawEvent) {
     try {
+      // SAFEGUARD: Verify token still exists in database before processing
+      const tokenExists = await this.db.get('SELECT id FROM tracked_tokens WHERE id = ? AND is_active = 1', [token.id]);
+      if (!tokenExists) {
+        logger.warn(`🚫 Skipping OpenSea event processing - token ${token.contract_address} no longer exists in database`);
+        return;
+      }
+
+      // SAFEGUARD: Check if any users exist in database at all
+      const userCount = await this.db.get('SELECT COUNT(*) as count FROM users WHERE is_active = 1');
+      if (!userCount || userCount.count === 0) {
+        logger.warn(`🚫 Skipping OpenSea event processing - no active users in database`);
+        return;
+      }
+
       // Convert OpenSea event to our internal activity format
       const activityData = this.convertOpenSeaEventToActivity(eventType, eventData, token);
 
@@ -1075,6 +1091,20 @@ class WebhookHandlers {
   // OpenSea-specific notification methods with rich data formatting
   async notifyUsersOpenSea(token, eventType, eventData, activityData) {
     try {
+      // SAFEGUARD: Verify token still exists in database
+      const tokenExists = await this.db.get('SELECT id FROM tracked_tokens WHERE id = ? AND is_active = 1', [token.id]);
+      if (!tokenExists) {
+        logger.warn(`🚫 Skipping notification - token ${token.contract_address} no longer exists in database`);
+        return false;
+      }
+
+      // SAFEGUARD: Check if any users exist in database at all
+      const userCount = await this.db.get('SELECT COUNT(*) as count FROM users WHERE is_active = 1');
+      if (!userCount || userCount.count === 0) {
+        logger.warn(`🚫 Skipping notification - no active users in database`);
+        return false;
+      }
+
       // Get users with their subscription context (chat_id)
       const subscriptions = await this.db.all(`
         SELECT u.telegram_id, u.username, us.notification_enabled, us.chat_id
@@ -1398,8 +1428,8 @@ class WebhookHandlers {
       });
       logger.info(`✅ OpenSea notification with image sent successfully to ${chatId}`);
 
-      // Clean up the temporary file after sending (but not default tracking image)
-      if (processedImagePath && !processedImagePath.includes('defaultTracking.jpg')) {
+      // Clean up the temporary file after sending (only for paid tokens with NFT metadata images)
+      if (hasImageFee && processedImagePath) {
         this.cleanupTempImage(processedImagePath);
       }
 
@@ -1536,44 +1566,58 @@ class WebhookHandlers {
   }
 
   /**
-   * Resize default tracking image to 300x300 for notifications
-   * @returns {string|null} Path to resized default image or null if failed
+   * Get path to pre-sized default tracking image (300x300)
+   * No resizing needed - uses pre-optimized image for better performance
+   * @returns {string} Path to pre-sized default image
    */
   async resizeDefaultTrackingImage() {
     try {
-      const sharp = require('sharp');
-      const path = require('path');
-
-      // Create unique filename for the resized default image
-      const timestamp = Date.now();
-      const tempDir = './temp_opensea_images';
       const fs = require('fs').promises;
 
-      // Ensure temp directory exists
+      // Use pre-sized 300x300 default tracking image (no resizing needed)
+      const path = require('path');
+      const presizedImagePath = path.join(__dirname, '../images/candyImage.jpg');
+
+      // Verify the pre-sized image exists
       try {
-        await fs.mkdir(tempDir, { recursive: true });
-      } catch (err) {
-        // Directory might already exist, ignore
+        await fs.access(presizedImagePath);
+        logger.debug(`📸 Using pre-sized default tracking image: ${presizedImagePath}`);
+        return presizedImagePath;
+      } catch (error) {
+        // If pre-sized image doesn't exist, fall back to original with dynamic resizing
+        logger.warn('⚠️  Pre-sized default image not found, falling back to dynamic resizing');
+
+        const sharp = require('sharp');
+        const path = require('path');
+        const timestamp = Date.now();
+        const tempDir = './temp_opensea_images';
+
+        // Ensure temp directory exists
+        try {
+          await fs.mkdir(tempDir, { recursive: true });
+        } catch (err) {
+          // Directory might already exist, ignore
+        }
+
+        const resizedPath = path.join(tempDir, `default_tracking_${timestamp}.jpg`);
+
+        // Resize default tracking image to 300x300 (fallback)
+        await sharp('./src/images/candyImage.jpg')
+          .resize(300, 300, {
+            fit: 'cover',
+            position: 'center'
+          })
+          .jpeg({
+            quality: 85,
+            progressive: true
+          })
+          .toFile(resizedPath);
+
+        logger.debug(`📸 Default tracking image resized to 300x300: ${resizedPath}`);
+        return resizedPath;
       }
-
-      const resizedPath = path.join(tempDir, `default_tracking_${timestamp}.jpg`);
-
-      // Resize default tracking image to 300x300
-      await sharp('./src/bot/defaultTracking.jpg')
-        .resize(300, 300, {
-          fit: 'cover',
-          position: 'center'
-        })
-        .jpeg({
-          quality: 85,
-          progressive: true
-        })
-        .toFile(resizedPath);
-
-      logger.debug(`📸 Default tracking image resized to 300x300: ${resizedPath}`);
-      return resizedPath;
     } catch (error) {
-      logger.error(`❌ Failed to resize default tracking image: ${error.message}`);
+      logger.error(`❌ Failed to get default tracking image: ${error.message}`);
       return null;
     }
   }

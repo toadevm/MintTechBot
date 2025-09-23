@@ -1,0 +1,71 @@
+[dotenv@17.2.2] injecting env (15) from .env -- tip: ⚙️  enable debug logging with { debug: true }
+[32minfo[39m: Starting MintTechBot initialization... {"service":"minttechbot","timestamp":"2025-09-21 16:40:28"}
+[32minfo[39m: Bot initialized: @testcandybot (testcandybot) {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Connected to SQLite database: ./database.sqlite {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Database tables created successfully {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Database initialized {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Alchemy SDK initialized with webhook support {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Alchemy SDK initialized for Ethereum mainnet {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Alchemy service initialized {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: OpenSea Stream service initialized and connected successfully {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 🌊 OpenSea streaming service initialized {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Simplified trending service initialized (database only) {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Trending service initialized {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Secure trending service initialized with contract: 0x4704eaF9d285a1388c0370Bc7d05334d313f92Be {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 🔒 Secure trending service initialized (no private keys) {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Added known mapping: 0xBd3531dA5CF5857e7CfAA92426877b022e612cf8 (ethereum) -> pudgy-penguins {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Added known mapping: 0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d (ethereum) -> boredapeyachtclub {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Added known mapping: 0x60e4d786628fea6478f785a6d7e704777c86a7c6 (ethereum) -> mutant-ape-yacht-club {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Added known mapping: 0xed5af388653567af2f388e6224dc7c4b3241c544 (ethereum) -> azuki {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Added known mapping: 0x23581767a106ae21c074b2276d25e5c3e136a68b (ethereum) -> proof-moonbirds {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Added known mapping: 0x8a90cab2b38dba80c64b7734e58ee1db38b8992e (ethereum) -> doodles-official {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Added known mapping: 0x49cf6f5d44e70224e2e23fdcdd2c053f30ada28b (ethereum) -> clonex {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Added known mapping: 0x4e1f41613c9084fdb9e34e11fae9412427480e56 (base) -> zorb {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Added known mapping: 0x9fb7d8b8c52154bb0b54bb0b57b08b84b2ed1b7b (polygon) -> polygon-ape-yacht-club {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Initialized 9 known collection mappings {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Loading 6 existing tracked tokens {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 🌊 Setting up OpenSea subscriptions for 3 existing collections... {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 🔗 Setting up OpenSea subscriptions for existing collections: gemesis, pudgy-penguins, guardians-of-imagination {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 🔗 Setting up OpenSea Stream subscription for: gemesis {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 📡 Subscribing to listed events for gemesis {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 📡 Subscribing to sold events for gemesis {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 📡 Subscribing to transferred events for gemesis {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 📡 Subscribing to metadata_updated events for gemesis {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 📡 Subscribing to cancelled events for gemesis {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 📡 Subscribing to received_bid events for gemesis {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 📡 Subscribing to received_offer events for gemesis {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: ✅ Successfully subscribed to 7 event types for collection: gemesis {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: Successfully subscribed to OpenSea collection: gemesis {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: ✅ OpenSea subscription active for existing collection: gemesis {"service":"minttechbot","timestamp":"2025-09-21 16:40:29"}
+[32minfo[39m: 🔗 Setting up OpenSea Stream subscription for: pudgy-penguins {"service":"minttechbot","timestamp":"2025-09-21 16:40:30"}
+[32minfo[39m: 📡 Subscribing to listed events for pudgy-penguins {"service":"minttechbot","timestamp":"2025-09-21 16:40:30"}
+[32minfo[39m: 📡 Subscribing to sold events for pudgy-penguins {"service":"minttechbot","timestamp":"2025-09-21 16:40:30"}
+[32minfo[39m: 📡 Subscribing to transferred events for pudgy-penguins {"service":"minttechbot","timestamp":"2025-09-21 16:40:30"}
+[32minfo[39m: 📡 Subscribing to metadata_updated events for pudgy-penguins {"service":"minttechbot","timestamp":"2025-09-21 16:40:30"}
+[32minfo[39m: 📡 Subscribing to cancelled events for pudgy-penguins {"service":"minttechbot","timestamp":"2025-09-21 16:40:30"}
+[32minfo[39m: 📡 Subscribing to received_bid events for pudgy-penguins {"service":"minttechbot","timestamp":"2025-09-21 16:40:30"}
+[32minfo[39m: 📡 Subscribing to received_offer events for pudgy-penguins {"service":"minttechbot","timestamp":"2025-09-21 16:40:30"}
+[32minfo[39m: ✅ Successfully subscribed to 7 event types for collection: pudgy-penguins {"service":"minttechbot","timestamp":"2025-09-21 16:40:30"}
+[32minfo[39m: Successfully subscribed to OpenSea collection: pudgy-penguins {"service":"minttechbot","timestamp":"2025-09-21 16:40:30"}
+[32minfo[39m: ✅ OpenSea subscription active for existing collection: pudgy-penguins {"service":"minttechbot","timestamp":"2025-09-21 16:40:30"}
+[32minfo[39m: 🔗 Setting up OpenSea Stream subscription for: guardians-of-imagination {"service":"minttechbot","timestamp":"2025-09-21 16:40:31"}
+[32minfo[39m: 📡 Subscribing to listed events for guardians-of-imagination {"service":"minttechbot","timestamp":"2025-09-21 16:40:31"}
+[32minfo[39m: 📡 Subscribing to sold events for guardians-of-imagination {"service":"minttechbot","timestamp":"2025-09-21 16:40:31"}
+[32minfo[39m: 📡 Subscribing to transferred events for guardians-of-imagination {"service":"minttechbot","timestamp":"2025-09-21 16:40:31"}
+[32minfo[39m: 📡 Subscribing to metadata_updated events for guardians-of-imagination {"service":"minttechbot","timestamp":"2025-09-21 16:40:31"}
+[32minfo[39m: 📡 Subscribing to cancelled events for guardians-of-imagination {"service":"minttechbot","timestamp":"2025-09-21 16:40:31"}
+[32minfo[39m: 📡 Subscribing to received_bid events for guardians-of-imagination {"service":"minttechbot","timestamp":"2025-09-21 16:40:31"}
+[32minfo[39m: 📡 Subscribing to received_offer events for guardians-of-imagination {"service":"minttechbot","timestamp":"2025-09-21 16:40:31"}
+[32minfo[39m: ✅ Successfully subscribed to 7 event types for collection: guardians-of-imagination {"service":"minttechbot","timestamp":"2025-09-21 16:40:31"}
+[32minfo[39m: Successfully subscribed to OpenSea collection: guardians-of-imagination {"service":"minttechbot","timestamp":"2025-09-21 16:40:31"}
+[32minfo[39m: ✅ OpenSea subscription active for existing collection: guardians-of-imagination {"service":"minttechbot","timestamp":"2025-09-21 16:40:31"}
+[32minfo[39m: 🌊 Completed OpenSea subscription setup for existing collections {"service":"minttechbot","timestamp":"2025-09-21 16:40:32"}
+[32minfo[39m: Existing tokens loaded and verified {"service":"minttechbot","timestamp":"2025-09-21 16:40:32"}
+[32minfo[39m: Token tracker initialized successfully {"service":"minttechbot","timestamp":"2025-09-21 16:40:32"}
+[32minfo[39m: Token tracker initialized with OpenSea support {"service":"minttechbot","timestamp":"2025-09-21 16:40:32"}
+[32minfo[39m: Channel service initialized {"service":"minttechbot","timestamp":"2025-09-21 16:40:32"}
+[32minfo[39m: Channel service initialized {"service":"minttechbot","timestamp":"2025-09-21 16:40:32"}
+[32minfo[39m: WebhookHandlers set for TokenTracker - OpenSea notifications enabled {"service":"minttechbot","timestamp":"2025-09-21 16:40:32"}
+[32minfo[39m: Bot commands setup completed {"service":"minttechbot","timestamp":"2025-09-21 16:40:32"}
+[32minfo[39m: Bot commands setup completed {"service":"minttechbot","timestamp":"2025-09-21 16:40:32"}
+[32minfo[39m: Server running on port 3000 {"service":"minttechbot","timestamp":"2025-09-21 16:40:32"}

@@ -121,7 +121,7 @@ async function completeDatabaseWipe() {
 
       console.log('\n💡 NEXT STEPS:');
       console.log('1. Bot will start with completely clean state');
-      console.log('2. Users must use /startcandy to register fresh');
+      console.log('2. Users must use /startminty to register fresh');
       console.log('3. All tokens must be re-added from scratch');
       console.log('4. All payments must be made fresh');
       console.log('5. OpenSea subscriptions will be created when tokens are added');

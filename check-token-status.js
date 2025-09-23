@@ -63,7 +63,7 @@ async function checkTokenStatus() {
     console.log(`   - Trending Payments: ${trendingPayments[0].count}`);
 
     console.log('\n🎯 NEXT STEPS FOR NEW USERS:');
-    console.log('1. Use /startcandy to register fresh');
+    console.log('1. Use /startminty to register fresh');
     console.log('2. Use /add_token to subscribe to existing collections');
     console.log('3. Pay for premium features (image display, trending, etc.)');
     console.log('4. Enjoy clean, fresh NFT tracking experience!');

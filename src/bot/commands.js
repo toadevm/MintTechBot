@@ -107,7 +107,7 @@ class BotCommands {
 
   async setupCommands(bot) {
 
-    bot.command('startcandy', async (ctx) => {
+    bot.command('startminty', async (ctx) => {
       const user = ctx.from;
 
       await this.db.createUser(user.id.toString(), user.username, user.first_name);
@@ -131,7 +131,7 @@ I help you track NFT collections and get real-time alerts for:
       logger.info(`New user started bot: ${user.id} (${user.username})`);
     });
 
-    // Add /start command that works the same as /startcandy but with parameter handling
+    // Add /start command that works the same as /startminty but with parameter handling
     bot.start(async (ctx) => {
       const user = ctx.from;
       await this.db.createUser(user.id.toString(), user.username, user.first_name);
@@ -187,7 +187,7 @@ I help you track NFT collections and get real-time alerts for:
 • /add_channel - Add bot to channel
 • /channel_settings - Configure channel alerts
 
-• /startcandy - Welcome message
+• /startminty - Welcome message
 • /help - Show this help
 
 Simple and focused - boost your NFTs easily! 🚀`;
@@ -202,7 +202,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
         
         if (args.length === 0) {
           await ctx.reply(
-            '❌ Please provide a transaction hash.\n\n' +
+            '⚠️ Please provide a transaction hash.\n\n' +
             'Usage: `/validate 0xabc123...`\n\n' +
             'After sending ETH for trending, use this command to validate your payment.',
             { parse_mode: 'Markdown' }
@@ -214,7 +214,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
         
         // Validate transaction hash format
         if (!txHash.startsWith('0x') || txHash.length !== 66) {
-          await ctx.reply('❌ Invalid transaction hash format. Must start with 0x and be 66 characters long.');
+          await ctx.reply('⚠️ Invalid transaction hash format. Must start with 0x and be 66 characters long.');
           return;
         }
 
@@ -267,12 +267,12 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
         const contractAddress = args[1].trim();
         if (!ethers.isAddress(contractAddress)) {
-          return ctx.reply('❌ Invalid NFT address format.');
+          return ctx.reply('⚠️ Invalid NFT address format.');
         }
 
         const user = await this.db.getUser(ctx.from.id.toString());
         if (!user) {
-          return ctx.reply('Please start the bot first with /startcandy');
+          return ctx.reply('Please start the bot first with /startminty');
         }
 
         // Check if image fee is already active
@@ -297,11 +297,11 @@ Simple and focused - boost your NFTs easily! 🚀`;
       } catch (error) {
         logger.error('Error in buy_image command:', error);
         if (error.message.includes('NFT not found')) {
-          const errorMessage = '❌ NFT address not found in tracked NFTs. Please add it first.';
+          const errorMessage = '⚠️ NFT address not found in tracked NFTs. Please add it first.';
           const keyboard = Markup.inlineKeyboard([[Markup.button.callback('➕ Add NFT', 'add_token_start')]]);
           ctx.replyWithHTML(errorMessage, keyboard);
         } else {
-          ctx.reply('❌ An error occurred. Please try again.');
+          ctx.reply('⚠️ An error occurred. Please try again.');
         }
       }
     });
@@ -327,16 +327,16 @@ Simple and focused - boost your NFTs easily! 🚀`;
         const txHash = args[2].trim();
 
         if (!ethers.isAddress(contractAddress)) {
-          return ctx.reply('❌ Invalid NFT address format.');
+          return ctx.reply('⚠️ Invalid NFT address format.');
         }
 
         if (!txHash.startsWith('0x') || txHash.length !== 66) {
-          return ctx.reply('❌ Invalid transaction hash format. Should be 0x followed by 64 characters.');
+          return ctx.reply('⚠️ Invalid transaction hash format. Should be 0x followed by 64 characters.');
         }
 
         const user = await this.db.getUser(ctx.from.id.toString());
         if (!user) {
-          return ctx.reply('Please start the bot first with /startcandy');
+          return ctx.reply('Please start the bot first with /startminty');
         }
 
         await ctx.reply('⏳ Validating your image fee transaction...');
@@ -384,7 +384,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
         const contractAddress = args[1];
         const user = await this.db.getUser(ctx.from.id.toString());
         if (!user) {
-          return ctx.reply('❌ Please register first using /start');
+          return ctx.reply('⚠️ Please register first using /start');
         }
 
         // Generate payment instructions
@@ -407,11 +407,11 @@ Simple and focused - boost your NFTs easily! 🚀`;
       } catch (error) {
         logger.error('Error in buy_footer command:', error);
         if (error.message.includes('NFT not found')) {
-          const errorMessage = '❌ NFT address not found in tracked NFTs. Please add it first.';
+          const errorMessage = '⚠️ NFT address not found in tracked NFTs. Please add it first.';
           const keyboard = Markup.inlineKeyboard([[Markup.button.callback('➕ Add NFT', 'add_token_start')]]);
           ctx.replyWithHTML(errorMessage, keyboard);
         } else {
-          ctx.reply('❌ An error occurred while generating payment instructions. Please try again.');
+          ctx.reply('⚠️ An error occurred while generating payment instructions. Please try again.');
         }
       }
     });
@@ -439,7 +439,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
         const user = await this.db.getUser(ctx.from.id.toString());
         if (!user) {
-          return ctx.reply('❌ Please register first using /start');
+          return ctx.reply('⚠️ Please register first using /start');
         }
 
         await ctx.reply('⏳ Validating your footer advertisement transaction...');
@@ -489,7 +489,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
       try {
         const user = await this.db.getUser(ctx.from.id.toString());
         if (!user) {
-          return ctx.reply('Please start the bot first with /startcandy');
+          return ctx.reply('Please start the bot first with /startminty');
         }
 
         // Debug logging for /my_tokens command
@@ -1005,7 +1005,7 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
           const session = this.getUserSession(ctx.from.id);
           if (!session || session.flow !== 'image_payment') {
-            return ctx.reply('❌ Session expired. Please start again.');
+            return ctx.reply('⚠️ Session expired. Please start again.');
           }
 
           // Set state to expect transaction hash
@@ -1019,7 +1019,7 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
           const session = this.getUserSession(ctx.from.id);
           if (!session || session.flow !== 'footer_payment') {
-            return ctx.reply('❌ Session expired. Please start again.');
+            return ctx.reply('⚠️ Session expired. Please start again.');
           }
 
           // Set state to expect transaction hash
@@ -1410,7 +1410,7 @@ Choose your trending boost option:`;
 • /add_channel - Add bot to channel
 • /channel_settings - Configure channel alerts
 
-• /startcandy - Welcome message
+• /startminty - Welcome message
 • /help - Show this help
 
 Simple and focused - boost your NFTs easily! 🚀`;
@@ -1440,7 +1440,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /startcandy');
+        return ctx.reply('Please start the bot first with /startminty');
       }
 
       // Get selected chain from user session data
@@ -1560,7 +1560,7 @@ You can try again with a different transaction hash or contact support.`;
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('❌ User not found. Please start the bot first with /startcandy');
+        return ctx.reply('❌ User not found. Please start the bot first with /startminty');
       }
 
       const chatId = this.normalizeChatContext(ctx);
@@ -1709,7 +1709,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /startcandy');
+        return ctx.reply('Please start the bot first with /startminty');
       }
 
       // Use the same database approach as working methods
@@ -1964,7 +1964,7 @@ Choose an option:`;
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /startcandy');
+        return ctx.reply('Please start the bot first with /startminty');
       }
 
       const chatId = this.normalizeChatContext(ctx);
@@ -2009,7 +2009,7 @@ Choose an option:`;
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /startcandy');
+        return ctx.reply('Please start the bot first with /startminty');
       }
 
       const chatId = this.normalizeChatContext(ctx);
@@ -2104,7 +2104,7 @@ Select trending duration:`;
 
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /startcandy');
+        return ctx.reply('Please start the bot first with /startminty');
       }
 
       // Check if user has too many pending operations
@@ -2167,7 +2167,7 @@ Select trending duration:`;
 
       // Validate transaction hash format
       if (!txHash.match(/^0x[a-fA-F0-9]{64}$/)) {
-        const errorMessage = '❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).';
+        const errorMessage = '⚠️ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).';
         const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]]);
         return ctx.replyWithHTML(errorMessage, keyboard);
       }
@@ -2339,7 +2339,7 @@ Select trending duration:`;
 
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /startcandy');
+        return ctx.reply('Please start the bot first with /startminty');
       }
 
       // Check if user has too many pending operations
@@ -2477,7 +2477,7 @@ Select trending duration:`;
 
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /startcandy');
+        return ctx.reply('Please start the bot first with /startminty');
       }
 
       // Check if contract is already tracked, if not validate and add it
@@ -2671,7 +2671,7 @@ Select trending duration:`;
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /startcandy');
+        return ctx.reply('Please start the bot first with /startminty');
       }
 
       const chatId = this.normalizeChatContext(ctx);
@@ -2736,7 +2736,7 @@ Select trending duration:`;
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /startcandy');
+        return ctx.reply('Please start the bot first with /startminty');
       }
 
       const chatId = this.normalizeChatContext(ctx);
@@ -2983,7 +2983,7 @@ Select trending duration:`;
 
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /startcandy');
+        return ctx.reply('Please start the bot first with /startminty');
       }
 
       // Validate and track contract if needed
@@ -3173,7 +3173,7 @@ Select trending duration:`;
 
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
-        return ctx.reply('Please start the bot first with /startcandy');
+        return ctx.reply('Please start the bot first with /startminty');
       }
 
       // Validate and track contract if needed

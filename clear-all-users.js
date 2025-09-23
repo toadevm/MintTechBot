@@ -102,10 +102,10 @@ async function clearAllUsersAndSubscriptions() {
     console.log('✅ All users, subscriptions, and payment records cleared');
     console.log('✅ Tracked tokens preserved and available');
     console.log('✅ Database ready for fresh user registrations');
-    console.log('✅ Users can now start from scratch with /startcandy');
+    console.log('✅ Users can now start from scratch with /startminty');
 
     console.log('\n💡 WHAT HAPPENS NEXT:');
-    console.log('• New users will register fresh when they use /startcandy');
+    console.log('• New users will register fresh when they use /startminty');
     console.log('• Existing tokens remain available for new subscriptions');
     console.log('• All payment records are reset - users need to pay again for features');
     console.log('• OpenSea subscriptions remain active for continued tracking');

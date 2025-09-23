@@ -211,7 +211,7 @@ class TokenTracker {
       logger.error(`Error adding token ${contractAddress}:`, error);
       return {
         success: false,
-        message: `❌ Error adding token: ${error.message}`
+        message: `⚠️ Error adding token: ${error.message}\n\nExample: 0x1234567890abcdef1234567890abcdef12345678`
       };
     }
   }

@@ -866,7 +866,7 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
           this.userStates.set(ctx.from.id.toString() + '_validation_type', 'trending');
-          return ctx.reply('🔍 <b>Validate Trending Payment</b>\n\nPlease send me your Ethereum transaction hash.\n\n<i>Example: 0xabc123456789def...</i>\n\nType "cancel" to abort.', {
+          return ctx.reply('🔍 <b>Validate Trending Payment</b>\n\nPlease send me your Ethereum transaction hash.\n\n<i>Example: 0xabc123456789def...</i>', {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
           });
@@ -875,7 +875,7 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_CONTRACT);
           this.userStates.set(ctx.from.id.toString() + '_validation_type', 'image');
-          return ctx.reply('🖼️ <b>Validate Image Payment</b>\n\nFirst, please send me the NFT NFT address.\n\n<i>Example: 0x1234567890abcdef...</i>\n\nType "cancel" to abort.', {
+          return ctx.reply('🖼️ <b>Validate Image Payment</b>\n\nFirst, please send me the NFT NFT address.\n\n<i>Example: 0x1234567890abcdef...</i>', {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
           });
@@ -884,7 +884,7 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_CONTRACT);
           this.userStates.set(ctx.from.id.toString() + '_validation_type', 'footer');
-          return ctx.reply('🔗 <b>Validate Footer Payment</b>\n\nFirst, please send me the NFT NFT address.\n\n<i>Example: 0x1234567890abcdef...</i>\n\nType "cancel" to abort.', {
+          return ctx.reply('🔗 <b>Validate Footer Payment</b>\n\nFirst, please send me the NFT NFT address.\n\n<i>Example: 0x1234567890abcdef...</i>', {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
           });
@@ -1009,7 +1009,7 @@ Choose your trending boost option:`;
 
           // Set state to expect transaction hash
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_IMAGE_TX_HASH);
-          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the image fee payment.\n\n<i>Example: 0xabc123456789def...</i>\n\nType "cancel" to abort.', {
+          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the image fee payment.\n\n<i>Example: 0xabc123456789def...</i>\n\n', {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_images')]])
           });
@@ -1024,7 +1024,7 @@ Choose your trending boost option:`;
 
           // Set state to expect transaction hash
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_TX_HASH);
-          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the footer payment.\n\n<i>Example: 0xabc123456789def...</i>\n\nType "cancel" to abort.', {
+          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the footer payment.\n\n<i>Example: 0xabc123456789def...</i>\n\n', {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
           });
@@ -1034,7 +1034,7 @@ Choose your trending boost option:`;
         if (data === 'submit_footer_tx') {
           await ctx.answerCbQuery();
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_TX_HASH);
-          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the footer payment.\n\n<i>Example: 0xabc123456789def...</i>\n\nType "cancel" to abort.', {
+          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the footer payment.\n\n<i>Example: 0xabc123456789def...</i>\n\n', {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
           });
@@ -1042,7 +1042,7 @@ Choose your trending boost option:`;
         if (data === 'submit_image_tx') {
           await ctx.answerCbQuery();
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_IMAGE_TX_HASH);
-          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the image fee payment.\n\n<i>Example: 0xabc123456789def...</i>\n\nType "cancel" to abort.', {
+          return ctx.reply('📝 <b>Submit Transaction Hash</b>\n\nPlease send me your Ethereum transaction hash for the image fee payment.\n\n<i>Example: 0xabc123456789def...</i>\n\n', {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_images')]])
           });
@@ -1149,9 +1149,11 @@ The transaction hash should:
 
 Example: \`0x1234567890abcdef...\`
 
-Type "cancel" to abort this process.`;
+`;
 
-          return ctx.replyWithMarkdown(message);
+          return ctx.replyWithMarkdown(message, {
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
+          });
         }
 
 
@@ -2142,7 +2144,9 @@ Select trending duration:`;
 
       // Validate transaction hash format
       if (!txHash.match(/^0x[a-fA-F0-9]{64}$/)) {
-        return ctx.reply('❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).\n\nType "cancel" to abort.');
+        return ctx.reply('❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).', {
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
+        });
       }
 
       const userId = ctx.from.id.toString();
@@ -2213,7 +2217,7 @@ Select trending duration:`;
           `🎨 Collection: <b>${session.tokenName}</b>\n` +
           `💰 Amount: ${amountText} ETH\n` +
           `📅 Duration: <b>${durationDays} days</b>\n\n` +
-          `🔗 <b>Custom Link</b>\n\nNow please send me the custom link you want to display in the footer ads.\n\n<i>Example: https://mytoken.com</i>\n\nType "cancel" to abort.`, {
+          `🔗 <b>Custom Link</b>\n\nNow please send me the custom link you want to display in the footer ads.\n\n<i>Example: https://mytoken.com</i>`, {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
         });
@@ -2223,7 +2227,7 @@ Select trending duration:`;
         this.userStates.set(userId + '_payment_validated', true);
         this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_LINK);
 
-        return ctx.reply('✅ <b>Payment Verified!</b>\n\n🔗 <b>Custom Link</b>\n\nNow please send me the custom link you want to display in the footer ads.\n\n<i>Example: https://mytoken.com</i>\n\nType "cancel" to abort.', {
+        return ctx.reply('✅ <b>Payment Verified!</b>\n\n🔗 <b>Custom Link</b>\n\nNow please send me the custom link you want to display in the footer ads.\n\n<i>Example: https://mytoken.com</i>\n\n', {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
         });
@@ -2270,7 +2274,9 @@ Select trending duration:`;
       try {
         new URL(customLink);
       } catch (e) {
-        return ctx.reply('❌ Invalid URL format. Please provide a valid URL (e.g., https://mytoken.com).\n\nType "cancel" to abort.');
+        return ctx.reply('❌ Invalid URL format. Please provide a valid URL (e.g., https://mytoken.com).', {
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
+        });
       }
 
       await ctx.reply('⏳ Creating your footer advertisement...');
@@ -2379,7 +2385,9 @@ Select trending duration:`;
 
       // Validate transaction hash format
       if (!txHash.match(/^0x[a-fA-F0-9]{64}$/)) {
-        return ctx.reply('❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).\n\nType "cancel" to abort.');
+        return ctx.reply('❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).', {
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_images')]])
+        });
       }
 
       const userId = ctx.from.id.toString();
@@ -2473,7 +2481,7 @@ Select trending duration:`;
       this.userStates.set(userId + '_validation_contract', contractAddress);
       this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
 
-      return ctx.reply(`📝 <b>Transaction Hash Required</b>\n\nNow please send me the transaction hash for your ${validationType} payment.\n\n<i>Example: 0xabc123456789def...</i>\n\nType "cancel" to abort.`, {
+      return ctx.reply(`📝 <b>Transaction Hash Required</b>\n\nNow please send me the transaction hash for your ${validationType} payment.\n\n<i>Example: 0xabc123456789def...</i>`, {
         parse_mode: 'HTML',
         reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
       });
@@ -2493,7 +2501,9 @@ Select trending duration:`;
 
       // Validate transaction hash format
       if (!txHash.match(/^0x[a-fA-F0-9]{64}$/)) {
-        return ctx.reply('❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).\n\nType "cancel" to abort.');
+        return ctx.reply('❌ Invalid transaction hash format. Please send a valid Ethereum transaction hash (starts with 0x and is 64 characters long).', {
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
+        });
       }
 
       const userId = ctx.from.id.toString();
@@ -2560,7 +2570,7 @@ Select trending duration:`;
         this.userStates.set(userId + '_validation_tx', txHash);
         this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_LINK);
 
-        return ctx.reply('🔗 <b>Custom Link Required</b>\n\nFinally, please send me the custom link for your footer advertisement.\n\n<i>Example: https://mytoken.com</i>\n\nType "cancel" to abort.', {
+        return ctx.reply('🔗 <b>Custom Link Required</b>\n\nFinally, please send me the custom link for your footer advertisement.\n\n<i>Example: https://mytoken.com</i>\n\n', {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_verify')]])
         });
@@ -2859,23 +2869,20 @@ Select trending duration:`;
         `💰 Amount: <b>${amountText}</b>\n\n` +
         `🔗 Select the blockchain network:`;
 
-      const keyboard = Markup.inlineKeyboard([
-        [
-          Markup.button.callback('🔗 Ethereum', `chain_${paymentType}_ethereum`)
-        ],
-        [
-          Markup.button.callback('🔺 Arbitrum', `chain_${paymentType}_arbitrum`)
-        ],
-        [
-          Markup.button.callback('🟪 Polygon', `chain_${paymentType}_polygon`)
-        ],
-        [
-          Markup.button.callback('🔵 Base', `chain_${paymentType}_base`)
-        ],
-        [
-          Markup.button.callback('◀️ Back to Duration Selection', paymentType === 'image' ? 'buy_image_menu' : 'buy_footer_menu')
-        ]
-      ]);
+      // Build chain options based on payment type
+      const chainOptions = [];
+
+      if (paymentType === 'footer') {
+        // Footer ads: Only Ethereum option
+        chainOptions.push([Markup.button.callback('🔗 Ethereum', `chain_${paymentType}_ethereum`)]);
+      } else {
+        // Image payments: Can add more chains here if needed later
+        chainOptions.push([Markup.button.callback('🔗 Ethereum', `chain_${paymentType}_ethereum`)]);
+      }
+
+      chainOptions.push([Markup.button.callback('◀️ Back to Duration Selection', paymentType === 'image' ? 'buy_image_menu' : 'buy_footer_menu')]);
+
+      const keyboard = Markup.inlineKeyboard(chainOptions);
 
       // Update state
       const stateKey = paymentType === 'image' ? this.STATE_IMAGE_CHAIN_SELECT : this.STATE_FOOTER_CHAIN_SELECT;
@@ -2906,15 +2913,13 @@ Select trending duration:`;
         `💰 Amount: <b>${amountText}</b>\n` +
         `🔗 Chain: <b>${chainText.charAt(0).toUpperCase() + chainText.slice(1)}</b>\n\n` +
         `📝 Please enter the NFT address:\n\n` +
-        `<i>Example: 0x1234567890abcdef...</i>\n\n` +
-        `Type "cancel" to abort.` :
+        `<i>Example: 0x1234567890abcdef...</i>` :
         `📢 <b>Footer Ad Payment - Enter Contract</b>\n\n` +
         `📅 Duration: <b>${durationText}</b>\n` +
         `💰 Amount: <b>${amountText}</b>\n` +
         `🔗 Chain: <b>${chainText.charAt(0).toUpperCase() + chainText.slice(1)}</b>\n\n` +
         `📝 Please enter the NFT address:\n\n` +
-        `<i>Example: 0x1234567890abcdef...</i>\n\n` +
-        `Type "cancel" to abort.`;
+        `<i>Example: 0x1234567890abcdef...</i>`;
 
       const keyboard = Markup.inlineKeyboard([
         [
@@ -3017,8 +3022,7 @@ Select trending duration:`;
     try {
       const message = `🔗 <b>Footer Advertisement - Custom Link</b>\n\n` +
         `Please send me the custom link you want users to visit when they click your footer ad.\n\n` +
-        `<i>Example: https://mytoken.com or https://twitter.com/myproject</i>\n\n` +
-        `Type "cancel" to abort.`;
+        `<i>Example: https://mytoken.com or https://twitter.com/myproject</i>`;
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('◀️ Back to Chain Selection', 'back_to_chain_footer')],
@@ -3038,8 +3042,7 @@ Select trending duration:`;
       const message = `💰 <b>Footer Advertisement - Ticker Symbol</b>\n\n` +
         `Please send me the ticker symbol you want to display in the footer.\n\n` +
         `<i>Examples: $CANDY, $PEPE, $MYTOKEN</i>\n\n` +
-        `⭐️ Your ticker will appear as: <b>⭐️$YOURTICKER</b>\n\n` +
-        `Type "cancel" to abort.`;
+        `⭐️ Your ticker will appear as: <b>⭐️$YOURTICKER</b>`;
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('◀️ Back to Link Input', 'back_to_link_footer')],
@@ -3066,7 +3069,9 @@ Select trending duration:`;
       try {
         new URL(customLink);
       } catch (e) {
-        return ctx.reply('❌ Invalid URL format. Please provide a valid URL starting with http:// or https://.\n\n<i>Example: https://mytoken.com</i>\n\nType "cancel" to abort.');
+        return ctx.reply('❌ Invalid URL format. Please provide a valid URL starting with http:// or https://.\n\n<i>Example: https://mytoken.com</i>', {
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
+        });
       }
 
       const session = this.getUserSession(ctx.from.id);
@@ -3103,7 +3108,9 @@ Select trending duration:`;
 
       // Validate ticker format
       if (!ticker.match(/^\$[A-Z0-9]{1,10}$/)) {
-        return ctx.reply('❌ Invalid ticker format. Please use only letters and numbers, max 10 characters.\n\n<i>Examples: $CANDY, $PEPE, $MYTOKEN</i>\n\nType "cancel" to abort.');
+        return ctx.reply('❌ Invalid ticker format. Please use only letters and numbers, max 10 characters.\n\n<i>Examples: $CANDY, $PEPE, $MYTOKEN</i>', {
+          reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
+        });
       }
 
       const session = this.getUserSession(ctx.from.id);

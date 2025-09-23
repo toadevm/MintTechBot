@@ -109,7 +109,7 @@ class BotCommands {
       const user = ctx.from;
 
       await this.db.createUser(user.id.toString(), user.username, user.first_name);
-      const welcomeMessage = `🚀 <b>Welcome to MintyRushBot!</b> 🚀
+      const welcomeMessage = `🚀 <b>Welcome to Minty Rush!</b> 🚀
 
 I help you track NFT collections and get real-time alerts for:
 • New mints and transfers
@@ -117,7 +117,7 @@ I help you track NFT collections and get real-time alerts for:
 • Trending collections
 • Custom NFT monitoring
 
-<b>Get started by choosing from the organized menu below:</b>`;
+<b>Get started by choosing from the menu below:</b>`;
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📊 Manage NFTs', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
         [Markup.button.callback('🖼️ Display NFT Image', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
@@ -143,7 +143,7 @@ I help you track NFT collections and get real-time alerts for:
       }
 
       // Default start behavior - show main menu
-      const welcomeMessage = `🚀 <b>Welcome to MintyRushBot!</b> 🚀
+      const welcomeMessage = `🚀 <b>Welcome to Minty Rush!</b> 🚀
 
 I help you track NFT collections and get real-time alerts for:
 • New mints and transfers
@@ -151,7 +151,7 @@ I help you track NFT collections and get real-time alerts for:
 • Trending collections
 • Custom NFT monitoring
 
-<b>Get started by choosing from the organized menu below:</b>`;
+<b>Get started by choosing from the menu below:</b>`;
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('📊 Manage NFTs', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
         [Markup.button.callback('🖼️ Display NFT Image', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
@@ -1767,7 +1767,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
       [Markup.button.callback('🚀 Boost Token', 'promote_token')]
     ];
 
-    const message = `🚀 *MintyRushBot Main Menu*
+    const message = `🚀 *Minty Rush Main Menu*
 
 Choose an option:`;
 
@@ -1823,7 +1823,7 @@ Choose an option:`;
 
   // Menu Navigation Functions
   async showMainMenu(ctx) {
-    const welcomeMessage = `🚀 <b>MintyRushBot Main Menu</b> 🚀
+    const welcomeMessage = `🚀 <b>Minty Rush Main Menu</b> 🚀
 
 <b>Choose a category to get started:</b>`;
     const keyboard = Markup.inlineKeyboard([

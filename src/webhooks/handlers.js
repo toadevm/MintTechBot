@@ -721,13 +721,17 @@ class WebhookHandlers {
   async sendNotificationWithImage(chatId, message, token, activityData) {
     const NFTMetadataService = require('../services/nftMetadataService');
     const metadataService = new NFTMetadataService();
-    
+
+    // Check if image fee is paid for this contract FIRST
+    const hasImageFee = this.secureTrending ? await this.secureTrending.isImageFeeActive(token.contract_address) : false;
+    logger.info(`🖼️ IMAGE FEE CHECK: ${token.contract_address} (${token.token_name}) - hasImageFee: ${hasImageFee}`);
+
     try {
       logger.info('Attempting to fetch NFT metadata with traits for notification');
-      
+
       let nftData;
       let imagePath = null;
-      
+
       // Check if this is our MongsInspired contract
       const mongsInspiredContract = process.env.MONGS_INSPIRED_CONTRACT_ADDRESS;
       if (token.contract_address.toLowerCase() === mongsInspiredContract?.toLowerCase()) {
@@ -748,45 +752,37 @@ class WebhookHandlers {
         // Fall back to MONGS mainnet for other tokens
         nftData = await metadataService.getRandomMongsToken();
       }
-      
-      // Check if image fee is paid for this contract
-      const hasImageFee = this.secureTrending ? await this.secureTrending.isImageFeeActive(token.contract_address) : false;
-      logger.info(`🖼️ IMAGE FEE CHECK: ${token.contract_address} (${token.token_name}) - hasImageFee: ${hasImageFee}`);
 
-      // Download and resize image if available and image fee is paid
+      // Handle image processing based on payment status
       let originalImagePath = null;
       if (hasImageFee && nftData.metadata.image) {
-        logger.info(`✅ IMAGE FEE PAID: Downloading actual NFT image for ${token.token_name}`);
-        originalImagePath = await metadataService.downloadImage(nftData.metadata.image, nftData.tokenId);
-        if (originalImagePath) {
-          imagePath = await metadataService.resizeImage(originalImagePath, 300, 300);
-          logger.info(`📸 Using actual NFT image: ${originalImagePath}`);
-        } else {
-          logger.warn(`⚠️ Failed to download NFT image, using default tracking image`);
-          imagePath = await metadataService.resizeImage('./src/bot/defaultTracking.jpg', 300, 300);
-        }
+        // For PAID tokens: Retry until successful, never fallback
+        logger.info(`✅ IMAGE FEE PAID: Processing actual NFT image for ${token.token_name} - WILL RETRY UNTIL SUCCESS`);
+        const result = await this.retryImageProcessingForPaidToken(metadataService, nftData.metadata.image, nftData.tokenId, token.token_name);
+        originalImagePath = result.originalPath;
+        imagePath = result.resizedPath;
       } else {
-        // Use default tracking image when image fee not paid OR no NFT image available
+        // For UNPAID tokens: Use default tracking image immediately
         logger.info(`🚫 IMAGE FEE NOT PAID: Using default tracking image for ${token.token_name}`);
         imagePath = await metadataService.resizeImage('./src/bot/defaultTracking.jpg', 300, 300);
       }
-      
+
       // Format the enhanced message with traits
       const nftMessage = metadataService.formatMetadataForTelegram(nftData);
-      
+
       // Extract NFT name from the formatted message
       const nftNameMatch = nftMessage.match(/🎨 \*\*(.*?)\*\*/);
       const nftName = nftNameMatch ? nftNameMatch[1] : '';
-      
+
       // Split the original message to insert NFT name after the activity title
       const messageParts = message.split('\n\n');
       const activityTitle = messageParts[0]; // "✨ MONGS Inspired Activity"
       const restOfMessage = messageParts.slice(1).join('\n\n');
-      
-      const enhancedMessage = nftName 
+
+      const enhancedMessage = nftName
         ? `${activityTitle}\n🎨 **${nftName}**\n\n${restOfMessage}\n\n${nftMessage.replace(/🎨 \*\*.*?\*\*\n\n/, '')}`
         : `${message}\n\n${nftMessage}`;
-      
+
       const boostButton = {
         inline_keyboard: [[
           {
@@ -796,27 +792,17 @@ class WebhookHandlers {
         ]]
       };
 
-      if (imagePath) {
-        await this.bot.telegram.sendPhoto(
-          chatId,
-          { source: imagePath },
-          {
-            caption: enhancedMessage,
-            parse_mode: 'Markdown',
-            reply_markup: boostButton
-          }
-        );
-      } else {
-        await this.bot.telegram.sendMessage(
-          chatId,
-          enhancedMessage,
-          {
-            parse_mode: 'Markdown',
-            reply_markup: boostButton
-          }
-        );
-      }
-      
+      // ALWAYS send as photo - image processing is guaranteed to succeed
+      await this.bot.telegram.sendPhoto(
+        chatId,
+        { source: imagePath },
+        {
+          caption: enhancedMessage,
+          parse_mode: 'Markdown',
+          reply_markup: boostButton
+        }
+      );
+
       // Cleanup downloaded images after a delay (but not the default image)
       const imagesToCleanup = [originalImagePath, imagePath]
         .filter(Boolean)
@@ -835,29 +821,87 @@ class WebhookHandlers {
       }
       logger.info(`Successfully sent notification with NFT metadata and traits`);
       return;
-      
+
     } catch (imageError) {
-      logger.warn(`Failed to fetch external NFT image, falling back to text: ${imageError.message}`);
+      // For PAID tokens: This should never happen due to retry logic
+      if (hasImageFee) {
+        logger.error(`🚨 CRITICAL: Paid token ${token.token_name} failed image processing after retries: ${imageError.message}`);
+        throw new Error(`Paid token image processing failed: ${imageError.message}`);
+      }
 
-      const boostButton = {
-        inline_keyboard: [[
+      // For UNPAID tokens: Fallback to default image with retry
+      logger.warn(`Unpaid token ${token.token_name} failed, retrying with default image: ${imageError.message}`);
+
+      try {
+        const defaultImagePath = await metadataService.resizeImage('./src/bot/defaultTracking.jpg', 300, 300);
+        const boostButton = {
+          inline_keyboard: [[
+            {
+              text: 'BOOST YOUR NFT🟢',
+              url: `https://t.me/testcandybot?start=buy_trending`
+            }
+          ]]
+        };
+
+        await this.bot.telegram.sendPhoto(
+          chatId,
+          { source: defaultImagePath },
           {
-            text: 'BOOST YOUR NFT🟢',
-            url: `https://t.me/testcandybot?start=buy_trending`
+            caption: message,
+            parse_mode: 'Markdown',
+            reply_markup: boostButton
           }
-        ]]
-      };
-
-      await this.bot.telegram.sendMessage(
-        chatId,
-        message,
-        {
-          parse_mode: 'Markdown',
-          disable_web_page_preview: true,
-          reply_markup: boostButton
-        }
-      );
+        );
+        logger.info(`Sent notification with default image for unpaid token ${token.token_name}`);
+      } catch (fallbackError) {
+        logger.error(`🚨 CRITICAL: Even default image failed for ${token.token_name}: ${fallbackError.message}`);
+        throw new Error(`Complete image processing failure: ${fallbackError.message}`);
+      }
     }
+  }
+
+  // Retry image processing for paid tokens - keeps trying until success
+  async retryImageProcessingForPaidToken(metadataService, imageUrl, tokenId, tokenName, maxRetries = 10) {
+    let attempt = 1;
+
+    // Add a unique processing key to prevent duplicate retries for the same notification
+    const processingKey = `${tokenName}:${tokenId}:${Date.now()}`;
+    logger.info(`🔒 STARTING PAID TOKEN PROCESSING: ${processingKey}`);
+
+    while (attempt <= maxRetries) {
+      try {
+        logger.info(`🔄 PAID TOKEN RETRY ${attempt}/${maxRetries}: Processing image for ${tokenName} (${processingKey})`);
+
+        const originalImagePath = await metadataService.downloadImage(imageUrl, tokenId);
+        if (originalImagePath) {
+          const resizedImagePath = await metadataService.resizeImage(originalImagePath, 300, 300);
+          if (resizedImagePath) {
+            logger.info(`✅ PAID TOKEN SUCCESS: Image processed on attempt ${attempt} for ${tokenName} (${processingKey})`);
+            return {
+              originalPath: originalImagePath,
+              resizedPath: resizedImagePath
+            };
+          }
+        }
+
+        logger.warn(`⚠️ PAID TOKEN ATTEMPT ${attempt} FAILED: Retrying in ${attempt * 2} seconds for ${tokenName} (${processingKey})`);
+        await new Promise(resolve => setTimeout(resolve, attempt * 2000)); // Exponential backoff
+        attempt++;
+
+      } catch (error) {
+        logger.error(`❌ PAID TOKEN ATTEMPT ${attempt} ERROR for ${tokenName} (${processingKey}): ${error.message}`);
+
+        if (attempt === maxRetries) {
+          logger.error(`🚨 PAID TOKEN FINAL FAILURE: All ${maxRetries} attempts failed for ${tokenName} (${processingKey})`);
+          throw new Error(`Paid token image processing failed after ${maxRetries} attempts: ${error.message}`);
+        }
+
+        await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+        attempt++;
+      }
+    }
+
+    throw new Error(`Paid token image processing exhausted all ${maxRetries} attempts`);
   }
 
   extractTokenIdFromTx(txHash) {
@@ -1319,100 +1363,24 @@ class WebhookHandlers {
   }
 
   async sendOpenSeaNotificationWithImage(chatId, message, eventData) {
+    // SECURITY: Check if image fee is paid for this contract before showing actual NFT image
+    const hasImageFee = this.secureTrending ? await this.secureTrending.isImageFeeActive(eventData.contractAddress) : false;
+    logger.info(`🖼️ OPENSEA IMAGE FEE CHECK: ${eventData.contractAddress} - hasImageFee: ${hasImageFee}`);
+
     try {
-      // SECURITY: Check if image fee is paid for this contract before showing actual NFT image
-      const hasImageFee = this.secureTrending ? await this.secureTrending.isImageFeeActive(eventData.contractAddress) : false;
-      logger.info(`🖼️ OPENSEA IMAGE FEE CHECK: ${eventData.contractAddress} - hasImageFee: ${hasImageFee}`);
+      let processedImagePath = null;
 
-      // Check if we have an NFT image from OpenSea metadata AND image fee is paid
+      // Handle image processing based on payment status
       if (hasImageFee && eventData.nftImageUrl && eventData.nftImageUrl.startsWith('http')) {
-        logger.info(`✅ IMAGE FEE PAID: Processing OpenSea image for 300x300 resize: ${eventData.nftImageUrl}`);
-
-        try {
-          // Download and resize the image to 300x300
-          const processedImagePath = await this.downloadAndResizeOpenSeaImage(eventData.nftImageUrl, eventData.tokenId || 'unknown');
-
-          if (processedImagePath) {
-            const boostButton = {
-              inline_keyboard: [[
-                {
-                  text: 'BOOST YOUR NFT🟢',
-                  url: `https://t.me/testcandybot?start=buy_trending`
-                }
-              ]]
-            };
-
-            // Send the resized local image file
-            await this.bot.telegram.sendPhoto(chatId, { source: processedImagePath }, {
-              caption: message,
-              parse_mode: 'Markdown',
-              reply_markup: boostButton
-            });
-            logger.info(`✅ OpenSea notification with resized image (300x300) sent successfully to ${chatId}`);
-
-            // Clean up the temporary file after sending
-            this.cleanupTempImage(processedImagePath);
-            return;
-          } else {
-            // If processing failed, fall back to default tracking image
-            logger.warn(`⚠️ OpenSea image processing failed, using default tracking image`);
-            const defaultImagePath = await this.resizeDefaultTrackingImage();
-            if (defaultImagePath) {
-              const boostButton = {
-                inline_keyboard: [
-                  [{
-                    text: 'BOOST YOUR NFT🟢',
-                    url: `https://t.me/testcandybot?start=buy_trending`
-                  }],
-                  [{
-                    text: '📋 Copy Full Address',
-                    callback_data: `copy_address_${eventData.contractAddress}`
-                  }]
-                ]
-              };
-
-              await this.bot.telegram.sendPhoto(chatId, { source: defaultImagePath }, {
-                caption: message,
-                parse_mode: 'Markdown',
-                reply_markup: boostButton
-              });
-              this.cleanupTempImage(defaultImagePath);
-              return;
-            }
-          }
-        } catch (error) {
-          logger.error(`❌ Error processing OpenSea image: ${error.message}`);
-        }
+        // For PAID tokens: Retry until successful, never fallback to default
+        logger.info(`✅ IMAGE FEE PAID: Processing OpenSea image for ${eventData.contractAddress} - WILL RETRY UNTIL SUCCESS`);
+        processedImagePath = await this.retryOpenSeaImageProcessingForPaidToken(eventData.nftImageUrl, eventData.tokenId || 'unknown', eventData.contractAddress);
       } else {
-        // Use default tracking image when image fee not paid
+        // For UNPAID tokens: Use default tracking image immediately
         logger.info(`🚫 IMAGE FEE NOT PAID: Using default tracking image for OpenSea notification`);
-        try {
-          const defaultImagePath = await this.resizeDefaultTrackingImage();
-          if (defaultImagePath) {
-            const boostButton = {
-              inline_keyboard: [[
-                {
-                  text: 'BOOST YOUR NFT🟢',
-                  url: `https://t.me/testcandybot?start=buy_trending`
-                }
-              ]]
-            };
-
-            await this.bot.telegram.sendPhoto(chatId, { source: defaultImagePath }, {
-              caption: message,
-              parse_mode: 'Markdown',
-              reply_markup: boostButton
-            });
-            logger.info(`✅ OpenSea notification with default tracking image sent successfully to ${chatId}`);
-            this.cleanupTempImage(defaultImagePath);
-            return;
-          }
-        } catch (error) {
-          logger.error(`❌ Error using default tracking image: ${error.message}`);
-        }
+        processedImagePath = await this.resizeDefaultTrackingImage();
       }
 
-      // Fallback to text-only message
       const boostButton = {
         inline_keyboard: [[
           {
@@ -1422,17 +1390,89 @@ class WebhookHandlers {
         ]]
       };
 
-      await this.bot.telegram.sendMessage(chatId, message, {
+      // ALWAYS send as photo - image processing is guaranteed to succeed
+      await this.bot.telegram.sendPhoto(chatId, { source: processedImagePath }, {
+        caption: message,
         parse_mode: 'Markdown',
-        disable_web_page_preview: false,
         reply_markup: boostButton
       });
-      logger.info(`✅ OpenSea text notification sent successfully to ${chatId}`);
+      logger.info(`✅ OpenSea notification with image sent successfully to ${chatId}`);
+
+      // Clean up the temporary file after sending (but not default tracking image)
+      if (processedImagePath && !processedImagePath.includes('defaultTracking.jpg')) {
+        this.cleanupTempImage(processedImagePath);
+      }
 
     } catch (error) {
-      logger.error(`❌ Failed to send OpenSea notification to ${chatId}:`, error);
-      throw error;
+      // For PAID tokens: This should never happen due to retry logic
+      if (hasImageFee) {
+        logger.error(`🚨 CRITICAL: Paid OpenSea token ${eventData.contractAddress} failed image processing after retries: ${error.message}`);
+        throw new Error(`Paid OpenSea token image processing failed: ${error.message}`);
+      }
+
+      // For UNPAID tokens: Emergency fallback to default image
+      logger.warn(`Unpaid OpenSea token ${eventData.contractAddress} failed, emergency fallback to default image: ${error.message}`);
+
+      try {
+        const emergencyImagePath = await this.resizeDefaultTrackingImage();
+        const boostButton = {
+          inline_keyboard: [[
+            {
+              text: 'BOOST YOUR NFT🟢',
+              url: `https://t.me/testcandybot?start=buy_trending`
+            }
+          ]]
+        };
+
+        await this.bot.telegram.sendPhoto(chatId, { source: emergencyImagePath }, {
+          caption: message,
+          parse_mode: 'Markdown',
+          reply_markup: boostButton
+        });
+        logger.info(`Sent OpenSea notification with emergency default image for unpaid token ${eventData.contractAddress}`);
+      } catch (emergencyError) {
+        logger.error(`🚨 CRITICAL: Even emergency default image failed for OpenSea ${eventData.contractAddress}: ${emergencyError.message}`);
+        throw new Error(`Complete OpenSea image processing failure: ${emergencyError.message}`);
+      }
     }
+  }
+
+  // Retry OpenSea image processing for paid tokens - keeps trying until success
+  async retryOpenSeaImageProcessingForPaidToken(imageUrl, tokenId, contractAddress, maxRetries = 10) {
+    let attempt = 1;
+
+    // Add a unique processing key to prevent duplicate retries for the same notification
+    const processingKey = `opensea:${contractAddress}:${tokenId}:${Date.now()}`;
+    logger.info(`🔒 STARTING PAID OPENSEA PROCESSING: ${processingKey}`);
+
+    while (attempt <= maxRetries) {
+      try {
+        logger.info(`🔄 PAID OPENSEA RETRY ${attempt}/${maxRetries}: Processing image for ${contractAddress} (${processingKey})`);
+
+        const processedImagePath = await this.downloadAndResizeOpenSeaImage(imageUrl, tokenId);
+        if (processedImagePath) {
+          logger.info(`✅ PAID OPENSEA SUCCESS: Image processed on attempt ${attempt} for ${contractAddress} (${processingKey})`);
+          return processedImagePath;
+        }
+
+        logger.warn(`⚠️ PAID OPENSEA ATTEMPT ${attempt} FAILED: Retrying in ${attempt * 2} seconds for ${contractAddress} (${processingKey})`);
+        await new Promise(resolve => setTimeout(resolve, attempt * 2000)); // Exponential backoff
+        attempt++;
+
+      } catch (error) {
+        logger.error(`❌ PAID OPENSEA ATTEMPT ${attempt} ERROR for ${contractAddress} (${processingKey}): ${error.message}`);
+
+        if (attempt === maxRetries) {
+          logger.error(`🚨 PAID OPENSEA FINAL FAILURE: All ${maxRetries} attempts failed for ${contractAddress} (${processingKey})`);
+          throw new Error(`Paid OpenSea token image processing failed after ${maxRetries} attempts: ${error.message}`);
+        }
+
+        await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+        attempt++;
+      }
+    }
+
+    throw new Error(`Paid OpenSea token image processing exhausted all ${maxRetries} attempts`);
   }
 
   /**

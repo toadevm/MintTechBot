@@ -31,6 +31,8 @@ class BotCommands {
     // New enhanced flow states
     this.STATE_FOOTER_DURATION_SELECT = 'footer_duration_select';
     this.STATE_FOOTER_CHAIN_SELECT = 'footer_chain_select';
+    this.STATE_FOOTER_LINK_INPUT = 'footer_link_input';
+    this.STATE_FOOTER_TICKER_INPUT = 'footer_ticker_input';
     this.STATE_FOOTER_CONTRACT_INPUT = 'footer_contract_input';
     this.STATE_IMAGE_DURATION_SELECT = 'image_duration_select';
     this.STATE_IMAGE_CHAIN_SELECT = 'image_chain_select';
@@ -953,11 +955,16 @@ Choose your trending boost option:`;
             return ctx.reply('❌ Session expired. Please try again.');
           }
 
-          // Store chain in session and proceed to contract input
+          // Store chain in session and proceed to next step
           session.chain = chainName;
           this.setUserSession(ctx.from.id, session);
 
-          return this.showContractInput(ctx, paymentType);
+          // For footer ads, ask for link first; for image fees, ask for contract
+          if (paymentType === 'footer') {
+            return this.showLinkInput(ctx);
+          } else {
+            return this.showContractInput(ctx, paymentType);
+          }
         }
 
         // Back button handlers for enhanced payment flow
@@ -969,6 +976,16 @@ Choose your trending boost option:`;
         if (data === 'back_to_chain_footer') {
           await ctx.answerCbQuery();
           return this.showChainSelection(ctx, 'footer');
+        }
+
+        if (data === 'back_to_link_footer') {
+          await ctx.answerCbQuery();
+          return this.showLinkInput(ctx);
+        }
+
+        if (data === 'back_to_ticker_footer') {
+          await ctx.answerCbQuery();
+          return this.showTickerInput(ctx);
         }
 
         // Back to contract input handlers
@@ -1245,6 +1262,12 @@ Type "cancel" to abort this process.`;
         return;
       } else if (userState === this.STATE_IMAGE_CONTRACT_INPUT) {
         await this.handleEnhancedImageContract(ctx, text);
+        return;
+      } else if (userState === this.STATE_FOOTER_LINK_INPUT) {
+        await this.handleFooterLinkInput(ctx, text);
+        return;
+      } else if (userState === this.STATE_FOOTER_TICKER_INPUT) {
+        await this.handleFooterTickerInput(ctx, text);
         return;
       } else if (userState === this.STATE_FOOTER_CONTRACT_INPUT) {
         await this.handleEnhancedFooterContract(ctx, text);
@@ -2048,9 +2071,9 @@ Select trending duration:`;
         return this.showFooterMenu(ctx);
       }
 
-      // Validate NFT address format
+      // Validate NFT address format - silently ignore invalid messages
       if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-        return ctx.reply('❌ Invalid NFT address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+        return; // Silently ignore invalid messages instead of showing error
       }
 
       const user = await this.db.getUser(ctx.from.id.toString());
@@ -2128,16 +2151,24 @@ Select trending duration:`;
       let contractAddress = this.userStates.get(userId + '_footer_contract'); // Old format
       let durationDays = 30; // Default duration for old format
       let isEnhancedFlow = false;
+      let isNewFlow = false; // New flow without contract address
 
       // Check new enhanced session format
       const session = this.getUserSession(ctx.from.id);
-      if (session && session.flow === 'footer_payment' && session.contractAddress) {
-        contractAddress = session.contractAddress;
-        durationDays = session.duration || 30;
-        isEnhancedFlow = true;
+      if (session && session.flow === 'footer_payment') {
+        if (session.contractAddress) {
+          // Old enhanced flow with contract address
+          contractAddress = session.contractAddress;
+          durationDays = session.duration || 30;
+          isEnhancedFlow = true;
+        } else if (session.customLink && session.tickerSymbol) {
+          // New flow without contract address requirement
+          durationDays = session.duration || 30;
+          isNewFlow = true;
+        }
       }
 
-      if (!contractAddress) {
+      if (!contractAddress && !isNewFlow) {
         this.clearUserState(ctx.from.id);
         this.clearUserSession(ctx.from.id);
         return ctx.reply('❌ Session expired. Please start again.');
@@ -2145,10 +2176,25 @@ Select trending duration:`;
 
       await ctx.reply('⏳ Validating your footer advertisement payment...');
 
-      // Validate the payment first before asking for URL
-      const paymentValidation = await this.secureTrending.validateFooterPayment(contractAddress, txHash, durationDays);
+      if (isNewFlow) {
+        // New flow: validate payment without contract requirement
+        const paymentValidation = await this.secureTrending.validateFooterTransactionWithoutContract(txHash, session.customLink, userId, durationDays, session.tickerSymbol);
 
-      if (!paymentValidation.success) {
+        if (!paymentValidation.success) {
+          this.clearUserState(ctx.from.id);
+          this.clearUserSession(ctx.from.id);
+          return ctx.reply(`❌ Payment validation failed: ${paymentValidation.error}\n\nPlease ensure you sent the correct amount to the payment contract.`);
+        }
+
+        // Footer ad created successfully
+        this.clearUserState(ctx.from.id);
+        this.clearUserSession(ctx.from.id);
+        return ctx.reply(`✅ ${paymentValidation.message}`);
+      } else {
+        // Old flow: validate payment with contract requirement
+        const paymentValidation = await this.secureTrending.validateFooterPayment(contractAddress, txHash, durationDays);
+
+        if (!paymentValidation.success) {
         this.clearUserState(ctx.from.id);
         this.clearUserSession(ctx.from.id);
         return ctx.reply(`❌ Payment validation failed: ${paymentValidation.error}\n\nPlease ensure you sent the correct amount to the payment contract.`);
@@ -2181,6 +2227,7 @@ Select trending duration:`;
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_footer')]])
         });
+        }
       }
     } catch (error) {
       logger.error('Error handling footer tx hash:', error);
@@ -2256,9 +2303,9 @@ Select trending duration:`;
         return this.showImagesMenu(ctx);
       }
 
-      // Validate NFT address format
+      // Validate NFT address format - silently ignore invalid messages
       if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-        return ctx.reply('❌ Invalid NFT address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+        return; // Silently ignore invalid messages instead of showing error
       }
 
       const user = await this.db.getUser(ctx.from.id.toString());
@@ -2393,9 +2440,9 @@ Select trending duration:`;
         return this.showVerifyMenu(ctx);
       }
 
-      // Validate NFT address format
+      // Validate NFT address format - silently ignore invalid messages
       if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-        return ctx.reply('❌ Invalid NFT address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+        return; // Silently ignore invalid messages instead of showing error
       }
 
       const user = await this.db.getUser(ctx.from.id.toString());
@@ -2897,9 +2944,9 @@ Select trending duration:`;
         return this.showImagesMenu(ctx);
       }
 
-      // Validate NFT address format
+      // Validate NFT address format - silently ignore invalid messages
       if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-        return ctx.reply('❌ Invalid NFT address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+        return; // Silently ignore invalid messages instead of showing error
       }
 
       const session = this.getUserSession(ctx.from.id);
@@ -2966,6 +3013,117 @@ Select trending duration:`;
     }
   }
 
+  async showLinkInput(ctx) {
+    try {
+      const message = `🔗 <b>Footer Advertisement - Custom Link</b>\n\n` +
+        `Please send me the custom link you want users to visit when they click your footer ad.\n\n` +
+        `<i>Example: https://mytoken.com or https://twitter.com/myproject</i>\n\n` +
+        `Type "cancel" to abort.`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('◀️ Back to Chain Selection', 'back_to_chain_footer')],
+        [Markup.button.callback('❌ Cancel', 'cancel_footer')]
+      ]);
+
+      this.setUserState(ctx.from.id, this.STATE_FOOTER_LINK_INPUT);
+      await ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error showing link input:', error);
+      ctx.reply('❌ Error showing link input. Please try again.');
+    }
+  }
+
+  async showTickerInput(ctx) {
+    try {
+      const message = `💰 <b>Footer Advertisement - Ticker Symbol</b>\n\n` +
+        `Please send me the ticker symbol you want to display in the footer.\n\n` +
+        `<i>Examples: $CANDY, $PEPE, $MYTOKEN</i>\n\n` +
+        `⭐️ Your ticker will appear as: <b>⭐️$YOURTICKER</b>\n\n` +
+        `Type "cancel" to abort.`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('◀️ Back to Link Input', 'back_to_link_footer')],
+        [Markup.button.callback('❌ Cancel', 'cancel_footer')]
+      ]);
+
+      this.setUserState(ctx.from.id, this.STATE_FOOTER_TICKER_INPUT);
+      await ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error showing ticker input:', error);
+      ctx.reply('❌ Error showing ticker input. Please try again.');
+    }
+  }
+
+  async handleFooterLinkInput(ctx, customLink) {
+    try {
+      if (customLink.toLowerCase() === 'cancel') {
+        this.clearUserState(ctx.from.id);
+        this.clearUserSession(ctx.from.id);
+        return this.showFooterMenu(ctx);
+      }
+
+      // Validate URL format
+      try {
+        new URL(customLink);
+      } catch (e) {
+        return ctx.reply('❌ Invalid URL format. Please provide a valid URL starting with http:// or https://.\n\n<i>Example: https://mytoken.com</i>\n\nType "cancel" to abort.');
+      }
+
+      const session = this.getUserSession(ctx.from.id);
+      if (!session || session.flow !== 'footer_payment') {
+        this.clearUserState(ctx.from.id);
+        return ctx.reply('❌ Session expired. Please start again.');
+      }
+
+      // Store link in session and proceed to ticker input
+      session.customLink = customLink;
+      this.setUserSession(ctx.from.id, session);
+
+      return this.showTickerInput(ctx);
+    } catch (error) {
+      logger.error('Error handling footer link input:', error);
+      this.clearUserState(ctx.from.id);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  async handleFooterTickerInput(ctx, tickerInput) {
+    try {
+      if (tickerInput.toLowerCase() === 'cancel') {
+        this.clearUserState(ctx.from.id);
+        this.clearUserSession(ctx.from.id);
+        return this.showFooterMenu(ctx);
+      }
+
+      // Clean up ticker input (remove extra $, spaces, etc.)
+      let ticker = tickerInput.trim().toUpperCase();
+      if (!ticker.startsWith('$')) {
+        ticker = '$' + ticker;
+      }
+
+      // Validate ticker format
+      if (!ticker.match(/^\$[A-Z0-9]{1,10}$/)) {
+        return ctx.reply('❌ Invalid ticker format. Please use only letters and numbers, max 10 characters.\n\n<i>Examples: $CANDY, $PEPE, $MYTOKEN</i>\n\nType "cancel" to abort.');
+      }
+
+      const session = this.getUserSession(ctx.from.id);
+      if (!session || session.flow !== 'footer_payment') {
+        this.clearUserState(ctx.from.id);
+        return ctx.reply('❌ Session expired. Please start again.');
+      }
+
+      // Store ticker in session and proceed directly to payment instructions
+      session.tickerSymbol = ticker;
+      this.setUserSession(ctx.from.id, session);
+
+      return this.showFooterPaymentInstructions(ctx);
+    } catch (error) {
+      logger.error('Error handling footer ticker input:', error);
+      this.clearUserState(ctx.from.id);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
   async handleEnhancedFooterContract(ctx, contractAddress) {
     try {
       if (contractAddress.toLowerCase() === 'cancel') {
@@ -2974,9 +3132,9 @@ Select trending duration:`;
         return this.showFooterMenu(ctx);
       }
 
-      // Validate NFT address format
+      // Validate NFT address format - silently ignore invalid messages
       if (!contractAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
-        return ctx.reply('❌ Invalid NFT address format. Please send a valid Ethereum address starting with 0x.\n\nType "cancel" to abort.');
+        return; // Silently ignore invalid messages instead of showing error
       }
 
       const session = this.getUserSession(ctx.from.id);
@@ -3019,6 +3177,8 @@ Select trending duration:`;
       const message = `📢 <b>Footer Advertisement Payment Instructions</b>\n\n` +
         `🎨 Collection: <b>${instructions.tokenName}</b>\n` +
         `📮 Contract: <code>${instructions.tokenAddress}</code>\n` +
+        `🔗 Custom Link: ${session.customLink}\n` +
+        `⭐️ Ticker: <b>${session.tickerSymbol}</b>\n` +
         `📅 Duration: <b>${durationText}</b>\n` +
         `💸 Fee: <b>${amountText} ETH</b>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
@@ -3039,6 +3199,60 @@ Select trending duration:`;
       await ctx.replyWithHTML(message, keyboard);
     } catch (error) {
       logger.error('Error handling enhanced footer contract:', error);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  async showFooterPaymentInstructions(ctx) {
+    try {
+      const session = this.getUserSession(ctx.from.id);
+      if (!session || session.flow !== 'footer_payment') {
+        this.clearUserState(ctx.from.id);
+        return ctx.reply('❌ Session expired. Please start again.');
+      }
+
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        this.clearUserState(ctx.from.id);
+        this.clearUserSession(ctx.from.id);
+        return ctx.reply('❌ Please register first using /start');
+      }
+
+      const { ethers } = require('ethers');
+      const durationText = `${session.duration} days`;
+      const amountText = ethers.formatEther(session.amount);
+
+      // Generate simple payment instructions without contract dependency
+      const paymentContract = this.secureTrending.simplePaymentContract;
+
+      const message = `📢 <b>Footer Advertisement Payment Instructions</b>\n\n` +
+        `🔗 Custom Link: ${session.customLink}\n` +
+        `⭐️ Ticker: <b>${session.tickerSymbol}</b>\n` +
+        `📅 Duration: <b>${durationText}</b>\n` +
+        `💸 Fee: <b>${amountText} ETH</b>\n\n` +
+        `🏦 <b>Payment Address:</b>\n<code>${paymentContract}</code>\n\n` +
+        `📋 <b>Payment Steps:</b>\n` +
+        `1. <b>SEND EXACTLY ${amountText} ETH</b> TO CONTRACT ADDRESS: ${paymentContract}\n` +
+        `2. Use any Ethereum wallet on mainnet\n` +
+        `3. No additional data or function calls required - just a simple ETH transfer\n` +
+        `4. Wait for transaction confirmation\n` +
+        `5. Submit your transaction hash below\n\n` +
+        `🔗 <a href="https://etherscan.io/address/${paymentContract}">View Contract on Etherscan</a>\n\n` +
+        `After making the payment, click the button below to submit your transaction hash.`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('📝 Submit Transaction Hash', 'submit_enhanced_footer_tx')
+        ],
+        [
+          Markup.button.callback('◀️ Back to Ticker Input', 'back_to_ticker_footer'),
+          Markup.button.callback('❌ Cancel', 'cancel_footer')
+        ]
+      ]);
+
+      await ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error showing footer payment instructions:', error);
       ctx.reply('❌ An error occurred. Please try again.');
     }
   }

@@ -153,7 +153,7 @@ Using the **exact OpenSea payload structure** from documentation:
 📮 **Collection:** `gemesis`
 [View on OpenSea](https://opensea.io/assets/ethereum/0xbe9371326f91345777b04394448c23e2bfeaa826/1234)
 
-Powered by [Candy Codex](https://t.me/testcandybot)
+Powered by [Candy Codex](https://t.me/MintTechBot)
 ```
 
 ## 🚀 **Ready for Production**

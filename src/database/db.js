@@ -178,7 +178,8 @@ class Database {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         contract_address TEXT NOT NULL,
-        token_symbol TEXT NOT NULL, -- Token symbol to display in footer
+        token_symbol TEXT NOT NULL, -- Custom ticker symbol to display in footer (e.g., $CANDY)
+        ticker_symbol TEXT, -- Custom ticker for display (will migrate to this)
         custom_link TEXT NOT NULL, -- URL to redirect to when clicked
         payment_amount TEXT NOT NULL, -- Amount in Wei (1.0 ETH)
         transaction_hash TEXT UNIQUE NOT NULL,
@@ -287,12 +288,20 @@ class Database {
       // Check if duration_days column exists in footer_ads
       const footerTableInfo = await this.all("PRAGMA table_info(footer_ads)");
       const hasFooterDuration = footerTableInfo.some(column => column.name === 'duration_days');
+      const hasTickerSymbol = footerTableInfo.some(column => column.name === 'ticker_symbol');
 
       if (!hasFooterDuration) {
         logger.info('Adding duration_days column to footer_ads table...');
         await this.run('ALTER TABLE footer_ads ADD COLUMN duration_days INTEGER DEFAULT 30');
         await this.run('UPDATE footer_ads SET duration_days = 30 WHERE duration_days IS NULL');
         logger.info('Successfully migrated footer_ads table for duration tracking');
+      }
+
+      if (!hasTickerSymbol) {
+        logger.info('Adding ticker_symbol column to footer_ads table...');
+        await this.run('ALTER TABLE footer_ads ADD COLUMN ticker_symbol TEXT');
+        await this.run('UPDATE footer_ads SET ticker_symbol = token_symbol WHERE ticker_symbol IS NULL');
+        logger.info('Successfully migrated footer_ads table for ticker symbol tracking');
       }
     } catch (error) {
       logger.error('Error during database migration:', error);
@@ -594,18 +603,19 @@ class Database {
     return await this.run(sql);
   }
 
-  async addFooterAd(userId, contractAddress, tokenSymbol, customLink, paymentAmount, transactionHash, payerAddress, durationDays = 30) {
+  async addFooterAd(userId, contractAddress, tokenSymbol, customLink, paymentAmount, transactionHash, payerAddress, durationDays = 30, tickerSymbol = null) {
     const endTime = new Date(Date.now() + (durationDays * 24 * 60 * 60 * 1000)).toISOString();
     const sql = `INSERT INTO footer_ads
-                 (user_id, contract_address, token_symbol, custom_link, payment_amount, transaction_hash, payer_address, end_time, duration_days, is_validated, validation_timestamp)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`;
-    return await this.run(sql, [userId, contractAddress, tokenSymbol, customLink, paymentAmount, transactionHash, payerAddress, endTime, durationDays]);
+                 (user_id, contract_address, token_symbol, ticker_symbol, custom_link, payment_amount, transaction_hash, payer_address, end_time, duration_days, is_validated, validation_timestamp)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`;
+    return await this.run(sql, [userId, contractAddress, tokenSymbol, tickerSymbol || tokenSymbol, customLink, paymentAmount, transactionHash, payerAddress, endTime, durationDays]);
   }
 
   async getActiveFooterAds() {
-    const sql = `SELECT token_symbol, custom_link FROM footer_ads 
+    const sql = `SELECT COALESCE(ticker_symbol, token_symbol) as ticker_symbol, custom_link FROM footer_ads
                  WHERE is_active = 1 AND end_time > datetime('now')
-                 ORDER BY created_at ASC`;
+                 ORDER BY created_at ASC
+                 LIMIT 3`;
     return await this.all(sql);
   }
 

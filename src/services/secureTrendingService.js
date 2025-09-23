@@ -819,7 +819,7 @@ class SecureTrendingService {
     }
   }
 
-  async validateFooterTransaction(contractAddress, txHash, customLink, userId, durationDays = null) {
+  async validateFooterTransaction(contractAddress, txHash, customLink, userId, durationDays = null, tickerSymbol = null) {
     try {
       // Get transaction data
       const txData = await this.validateTransactionHelper(txHash);
@@ -880,7 +880,7 @@ class SecureTrendingService {
         return { success: false, error: 'Footer advertisement already active for this contract' };
       }
 
-      // Add to database
+      // Add to database with ticker symbol
       const result = await this.db.addFooterAd(
         userId,
         contractAddress,
@@ -889,14 +889,15 @@ class SecureTrendingService {
         paymentAmount.toString(),
         txHash,
         payerAddress,
-        detectedDuration
+        detectedDuration,
+        tickerSymbol
       );
 
-      logger.info(`Footer ad payment validated: ${contractAddress} - ${ethers.formatEther(paymentAmount)} ETH, duration=${detectedDuration} days`);
+      logger.info(`Footer ad payment validated: ${contractAddress} - ${ethers.formatEther(paymentAmount)} ETH, duration=${detectedDuration} days, ticker=${tickerSymbol}`);
 
       return {
         success: true,
-        message: `Footer advertisement activated!\n🎨 Token: ${token.token_symbol || 'UNKNOWN'}\n💰 Fee: ${ethers.formatEther(paymentAmount)} ETH\n⏰ Duration: ${detectedDuration} days\n🔗 Link: ${customLink}`,
+        message: `Footer advertisement activated!\n🎨 Token: ${tickerSymbol || token.token_symbol || 'UNKNOWN'}\n💰 Fee: ${ethers.formatEther(paymentAmount)} ETH\n⏰ Duration: ${detectedDuration} days\n🔗 Link: ${customLink}`,
         paymentId: result.id
       };
 
@@ -962,7 +963,7 @@ class SecureTrendingService {
     }
   }
 
-  async finalizeFooterAd(contractAddress, txHash, customLink, userId) {
+  async finalizeFooterAd(contractAddress, txHash, customLink, userId, tickerSymbol = null) {
     try {
       // Get token info for symbol
       const token = await this.db.getTrackedToken(contractAddress);
@@ -1004,7 +1005,7 @@ class SecureTrendingService {
         };
       }
 
-      // Add to database
+      // Add to database with ticker symbol
       const result = await this.db.addFooterAd(
         userId,
         contractAddress,
@@ -1013,7 +1014,8 @@ class SecureTrendingService {
         paymentAmount.toString(),
         txHash,
         payerAddress,
-        detectedDuration
+        detectedDuration,
+        tickerSymbol
       );
 
       if (result.success) {
@@ -1027,11 +1029,11 @@ class SecureTrendingService {
           'footer_ad_payment'
         );
 
-        logger.info(`Footer ad finalized: ${contractAddress} - ${ethers.formatEther(paymentAmount)} ETH, duration=${detectedDuration} days`);
+        logger.info(`Footer ad finalized: ${contractAddress} - ${ethers.formatEther(paymentAmount)} ETH, duration=${detectedDuration} days, ticker=${tickerSymbol}`);
 
         return {
           success: true,
-          message: `Footer advertisement activated!\n\n🎨 Token: ${token.token_symbol || 'Unknown'}\n💰 Payment: ${ethers.formatEther(paymentAmount)} ETH\n🔗 Link: ${customLink}\n⏰ Duration: ${detectedDuration} days\n\nYour ad will now appear in all NFT notifications for this collection!`
+          message: `Footer advertisement activated!\n\n🎨 Token: ${tickerSymbol || token.token_symbol || 'Unknown'}\n💰 Payment: ${ethers.formatEther(paymentAmount)} ETH\n🔗 Link: ${customLink}\n⏰ Duration: ${detectedDuration} days\n\nYour ad will now appear in all NFT notifications for this collection!`
         };
       } else {
         return { success: false, error: result.error };
@@ -1051,6 +1053,93 @@ class SecureTrendingService {
     } catch (error) {
       logger.error('Error getting active footer ads:', error);
       return [];
+    }
+  }
+
+  // Validate footer transaction without contract requirement (new flow)
+  async validateFooterTransactionWithoutContract(txHash, customLink, userId, durationDays = null, tickerSymbol = null) {
+    try {
+      // Get transaction data
+      const txData = await this.validateTransactionHelper(txHash);
+      if (!txData.success) {
+        return txData;
+      }
+
+      const paymentAmount = BigInt(txData.transaction.value);
+      const payerAddress = txData.transaction.from;
+
+      // Auto-detect duration if not provided by checking payment amount
+      let detectedDuration = durationDays;
+      if (!detectedDuration) {
+        const durations = [30, 60, 90, 180, 365];
+        for (const duration of durations) {
+          if (paymentAmount.toString() === this.footerFees[duration].toString()) {
+            detectedDuration = duration;
+            break;
+          }
+        }
+      }
+
+      if (!detectedDuration) {
+        const validAmounts = Object.entries(this.footerFees).map(([days, amount]) =>
+          `${days} days: ${ethers.formatEther(amount)} ETH`
+        ).join(', ');
+        return {
+          success: false,
+          error: `Invalid payment amount. Valid amounts: ${validAmounts}\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+        };
+      }
+
+      // Verify correct amount for detected duration
+      const expectedAmount = this.calculateFooterFee(detectedDuration);
+      if (paymentAmount.toString() !== expectedAmount.toString()) {
+        return {
+          success: false,
+          error: `Incorrect payment amount for ${detectedDuration} days.\nExpected: ${ethers.formatEther(expectedAmount)} ETH\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+        };
+      }
+
+      // Validate URL format
+      try {
+        new URL(customLink);
+      } catch (e) {
+        return { success: false, error: 'Invalid URL format for custom link' };
+      }
+
+      // Add to database without contract address requirement
+      const result = await this.db.addFooterAd(
+        userId,
+        null, // No contract address required
+        tickerSymbol || 'PROMO', // Use ticker or fallback
+        customLink,
+        paymentAmount.toString(),
+        txHash,
+        payerAddress,
+        detectedDuration,
+        tickerSymbol
+      );
+
+      // Mark transaction as processed
+      await this.db.markTransactionProcessed(
+        txHash,
+        this.simplePaymentContract,
+        payerAddress,
+        paymentAmount.toString(),
+        txData.receipt.blockNumber,
+        'footer_ad_payment'
+      );
+
+      logger.info(`Footer ad payment validated without contract: ${ethers.formatEther(paymentAmount)} ETH, duration=${detectedDuration} days, ticker=${tickerSymbol}`);
+
+      return {
+        success: true,
+        message: `Footer advertisement activated!\n\n⭐️ Ticker: ${tickerSymbol}\n💰 Fee: ${ethers.formatEther(paymentAmount)} ETH\n⏰ Duration: ${detectedDuration} days\n🔗 Link: ${customLink}\n\nYour ad will now appear in all NFT notifications!`,
+        paymentId: result.id
+      };
+
+    } catch (error) {
+      logger.error(`Error validating footer transaction without contract: ${error.message}`);
+      return { success: false, error: 'Failed to validate transaction. Please try again.' };
     }
   }
 

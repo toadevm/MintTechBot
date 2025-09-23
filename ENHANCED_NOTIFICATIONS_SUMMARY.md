@@ -45,8 +45,8 @@ Each event type has customized formatting:
 [View on Etherscan](https://etherscan.io/tx/0xabc123...)
 [View on OpenSea](https://opensea.io/assets/ethereum/0xbe93.../1234)
 
-Powered by [Candy Codex](https://t.me/testcandybot)
-[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)
+Powered by [Candy Codex](https://t.me/MintTechBot)
+[Buy Ad spot](https://t.me/MintTechBot?start=buy_footer)
 ```
 
 ## 🔧 Technical Implementation

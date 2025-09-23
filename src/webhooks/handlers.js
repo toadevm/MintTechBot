@@ -568,24 +568,33 @@ class WebhookHandlers {
       message += '\n';
     }
 
-    message += ` \nPowered by [Candy Codex](https://t.me/testcandybot)`;
+    message += ` \nPowered by [Candy Codex](https://t.me/MintTechBot)`;
 
     // Add footer advertisements if available
     if (this.secureTrending) {
       try {
         const footerAds = await this.secureTrending.getActiveFooterAds();
         if (footerAds && footerAds.length > 0) {
-          const adLinks = footerAds.map(ad => `[${ad.token_symbol}](${ad.custom_link})`).join(' 🎨');
-          message += `\n🎨 ${adLinks}`;
+          const adLinks = footerAds.map(ad => {
+            const ticker = ad.ticker_symbol || ad.token_symbol || 'TOKEN';
+            return `[⭐️${ticker}](${ad.custom_link})`;
+          });
+
+          // Add "BuyAdspot" if less than 3 slots are filled
+          if (adLinks.length < 3) {
+            adLinks.push('[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)');
+          }
+
+          message += `\n${adLinks.join(' ')}`;
         } else {
-          message += `\n[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)`;
+          message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
         }
       } catch (error) {
         // If footer ads fail, just show buy ad spot
-        message += `\n[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)`;
+        message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
       }
     } else {
-      message += `\n[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)`;
+      message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
     }
 
     return message;
@@ -789,7 +798,7 @@ class WebhookHandlers {
         inline_keyboard: [[
           {
             text: 'BOOST YOUR NFT🟢',
-            url: `https://t.me/testcandybot?start=buy_trending`
+            url: `https://t.me/MintTechBot?start=buy_trending`
           }
         ]]
       };
@@ -840,7 +849,7 @@ class WebhookHandlers {
           inline_keyboard: [[
             {
               text: 'BOOST YOUR NFT🟢',
-              url: `https://t.me/testcandybot?start=buy_trending`
+              url: `https://t.me/MintTechBot?start=buy_trending`
             }
           ]]
         };
@@ -1287,23 +1296,32 @@ class WebhookHandlers {
       message += `[View Collection](https://opensea.io/collection/${eventData.collectionSlug})\n`;
     }
 
-    message += ` \nPowered by [Candy Codex](https://t.me/testcandybot)`;
+    message += ` \nPowered by [Candy Codex](https://t.me/MintTechBot)`;
 
     // Add footer advertisements if available
     if (this.secureTrending) {
       try {
         const footerAds = await this.secureTrending.getActiveFooterAds();
         if (footerAds && footerAds.length > 0) {
-          const adLinks = footerAds.map(ad => `[${ad.token_symbol}](${ad.custom_link})`).join(' 🎨');
-          message += `\n🎨 ${adLinks}`;
+          const adLinks = footerAds.map(ad => {
+            const ticker = ad.ticker_symbol || ad.token_symbol || 'TOKEN';
+            return `[⭐️${ticker}](${ad.custom_link})`;
+          });
+
+          // Add "BuyAdspot" if less than 3 slots are filled
+          if (adLinks.length < 3) {
+            adLinks.push('[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)');
+          }
+
+          message += `\n${adLinks.join(' ')}`;
         } else {
-          message += `\n[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)`;
+          message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
         }
       } catch (error) {
-        message += `\n[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)`;
+        message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
       }
     } else {
-      message += `\n[Buy Ad spot](https://t.me/testcandybot?start=buy_footer)`;
+      message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
     }
 
     return message;
@@ -1415,7 +1433,7 @@ class WebhookHandlers {
         inline_keyboard: [[
           {
             text: 'BOOST YOUR NFT🟢',
-            url: `https://t.me/testcandybot?start=buy_trending`
+            url: `https://t.me/MintTechBot?start=buy_trending`
           }
         ]]
       };
@@ -1449,7 +1467,7 @@ class WebhookHandlers {
           inline_keyboard: [[
             {
               text: 'BOOST YOUR NFT🟢',
-              url: `https://t.me/testcandybot?start=buy_trending`
+              url: `https://t.me/MintTechBot?start=buy_trending`
             }
           ]]
         };

@@ -110,6 +110,16 @@ class TokenTracker {
         throw new Error(`Invalid NFT contract: ${validation.reason}`);
       }
 
+      logger.info(`🔍 RECEIVED VALIDATION RESULT: collectionSlug="${validation.collectionSlug}" for ${contractAddress} on ${chainName}`);
+
+      // Check if validation contains collection slug
+      if (validation.collectionSlug) {
+        collectionSlug = validation.collectionSlug;
+        logger.info(`✅ USING COLLECTION SLUG FROM VALIDATION: "${collectionSlug}" for ${contractAddress} on ${chainName}`);
+      } else {
+        logger.warn(`⚠️ NO COLLECTION SLUG IN VALIDATION RESULT for ${contractAddress} on ${chainName}`);
+      }
+
       // Set up OpenSea stream subscription
       let openSeaSubscriptionId = null;
 

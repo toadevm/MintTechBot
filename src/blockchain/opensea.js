@@ -381,8 +381,12 @@ class OpenSeaService {
         'ethereum': 'ethereum',
         'arbitrum': 'arbitrum',
         'optimism': 'optimism',
+        'avalanche': 'avalanche',
+        'moonbeam': 'moonbeam',
         'bsc': 'bsc',
-        'hyperblast': 'ethereum' // HyperEVM not supported by OpenSea, fallback to ethereum for validation
+        'hyperblast': 'hyperevm',
+        'berachain': 'bera_chain'
+        // zkSync Era not yet supported by OpenSea API v2
       };
 
       const openSeaChain = chainMapping[chainName] || 'ethereum';
@@ -425,6 +429,9 @@ class OpenSeaService {
         // Collection slug is the collection string field
         if (typeof firstNft.collection === 'string') {
           collectionSlug = firstNft.collection;
+          logger.info(`🎯 COLLECTION SLUG EXTRACTED: "${collectionSlug}" for ${contractAddress} on ${chainName}`);
+        } else {
+          logger.warn(`⚠️ COLLECTION FIELD NOT STRING: type=${typeof firstNft.collection}, value=${JSON.stringify(firstNft.collection)} for ${contractAddress} on ${chainName}`);
         }
 
         // Enhanced symbol extraction with smart generation
@@ -443,8 +450,9 @@ class OpenSeaService {
 
         logger.info(`Extracted metadata for ${contractAddress} on ${chainName}: name="${collectionName}", symbol="${collectionSymbol}", type="${tokenType}"`);
         logger.info(`Valid NFT contract: ${contractAddress} on ${chainName} (${collectionName})`);
+        logger.info(`🔍 FINAL VALIDATION RESULT: collectionSlug="${collectionSlug}" for ${contractAddress} on ${chainName}`);
 
-        return {
+        const result = {
           isValid: true,
           valid: true,
           tokenType: tokenType,
@@ -457,6 +465,9 @@ class OpenSeaService {
           floorPrice: null,
           currency: null
         };
+
+        logger.info(`📋 RETURNING VALIDATION OBJECT: ${JSON.stringify(result, null, 2)}`);
+        return result;
       } else {
         logger.warn(`Contract ${contractAddress} has no NFTs or is not an NFT contract`);
         return { isValid: false, reason: 'Contract has no NFTs or is not an NFT contract' };

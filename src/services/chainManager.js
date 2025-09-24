@@ -21,7 +21,7 @@ class ChainManager {
 
   async loadChainConfigurations() {
     try {
-      // Hardcoded chain configurations for OpenSea supported networks
+      // Hardcoded chain configurations with multichain payment support
       const chainConfigs = [
         {
           name: 'ethereum',
@@ -32,7 +32,9 @@ class ChainManager {
           isTestnet: false,
           isActive: true,
           openSeaSupported: true,
-          openSeaName: 'ethereum'
+          openSeaName: 'ethereum',
+          rpcUrl: 'https://eth-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          paymentContract: '0x4704eaF9d285a1388c0370Bc7d05334d313f92Be'
         },
         {
           name: 'arbitrum',
@@ -43,7 +45,9 @@ class ChainManager {
           isTestnet: false,
           isActive: true,
           openSeaSupported: true,
-          openSeaName: 'arbitrum'
+          openSeaName: 'arbitrum',
+          rpcUrl: 'https://arb-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         },
         {
           name: 'optimism',
@@ -54,7 +58,35 @@ class ChainManager {
           isTestnet: false,
           isActive: true,
           openSeaSupported: true,
-          openSeaName: 'optimism'
+          openSeaName: 'optimism',
+          rpcUrl: 'https://opt-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
+        },
+        {
+          name: 'avalanche',
+          chainId: 43114,
+          displayName: 'Avalanche',
+          currencySymbol: 'AVAX',
+          emoji: '🏔️',
+          isTestnet: false,
+          isActive: true,
+          openSeaSupported: true,
+          openSeaName: 'avalanche',
+          rpcUrl: 'https://avax-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
+        },
+        {
+          name: 'moonbeam',
+          chainId: 1284,
+          displayName: 'Moonbeam',
+          currencySymbol: 'GLMR',
+          emoji: '🌙',
+          isTestnet: false,
+          isActive: true,
+          openSeaSupported: true,
+          openSeaName: 'moonbeam',
+          rpcUrl: 'https://moonbeam-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         },
         {
           name: 'bsc',
@@ -77,8 +109,37 @@ class ChainManager {
           emoji: '⚡',
           isTestnet: false,
           isActive: true,
+          openSeaSupported: true,
+          openSeaName: 'hyperevm',
+          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
+        },
+        {
+          name: 'zksync',
+          chainId: 324,
+          displayName: 'zkSync Era',
+          currencySymbol: 'ETH',
+          emoji: '🚀',
+          isTestnet: false,
+          isActive: true,
           openSeaSupported: false,
-          openSeaName: null
+          openSeaName: null,
+          externalMarketplace: true,
+          marketplaceName: 'External (zkSync not yet supported by OpenSea)',
+          rpcUrl: 'https://zksync-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
+        },
+        {
+          name: 'berachain',
+          chainId: 80084,
+          displayName: 'Berachain',
+          currencySymbol: 'BERA',
+          emoji: '🐻',
+          isTestnet: false,
+          isActive: true,
+          openSeaSupported: true,
+          openSeaName: 'bera_chain',
+          rpcUrl: 'https://berachain-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         }
       ];
 
@@ -282,6 +343,36 @@ class ChainManager {
       'sepolia': '🧪'
     };
     return emojiMap[chainName] || '🔗';
+  }
+
+  // Payment contract helper methods
+  getPaymentContract(chainName) {
+    const chain = this.getChain(chainName);
+    return chain ? chain.paymentContract : null;
+  }
+
+  getRpcUrl(chainName) {
+    const chain = this.getChain(chainName);
+    return chain ? chain.rpcUrl : null;
+  }
+
+
+  getCurrencySymbol(chainName) {
+    const chain = this.getChain(chainName);
+    return chain ? chain.currencySymbol : 'ETH';
+  }
+
+  // Chain selection helpers for different contexts
+  getChainsForPayments() {
+    // Return all active chains that have payment contracts
+    return Array.from(this.chains.values()).filter(chain =>
+      chain.isActive && chain.paymentContract
+    );
+  }
+
+  getChainsForTokenTracking() {
+    // Return all active chains
+    return Array.from(this.chains.values()).filter(chain => chain.isActive);
   }
 
   async getStats() {

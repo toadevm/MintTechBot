@@ -47,8 +47,9 @@ const SIMPLE_PAYMENT_RECEIVER_ABI = [
 ];
 
 class SecureTrendingService {
-  constructor(database) {
+  constructor(database, chainManager = null) {
     this.db = database;
+    this.chainManager = chainManager;
     this.simplePaymentContract = process.env.SIMPLE_PAYMENT_CONTRACT_ADDRESS || '0x4704eaF9d285a1388c0370Bc7d05334d313f92Be';
     this.contract = null;
     this.provider = null;
@@ -331,7 +332,7 @@ class SecureTrendingService {
   }
 
   // Generate payment instructions (no private keys needed)
-  async generatePaymentInstructions(tokenId, durationHours, userId, isPremium = false) {
+  async generatePaymentInstructions(tokenId, durationHours, userId, isPremium = false, chain = 'ethereum') {
     try {
       const token = await this.db.get(
         'SELECT * FROM tracked_tokens WHERE id = ?',
@@ -342,6 +343,13 @@ class SecureTrendingService {
         throw new Error('Token not found');
       }
 
+      // Get chain-specific configuration
+      const chainConfig = this.chainManager ? this.chainManager.getChain(chain) : null;
+      const paymentContract = chainConfig ? chainConfig.paymentContract : this.simplePaymentContract;
+      const currencySymbol = chainConfig ? chainConfig.currencySymbol : 'ETH';
+      const chainDisplay = chainConfig ? chainConfig.displayName : 'Ethereum';
+      const blockExplorer = this.getBlockExplorerUrl(chain, chainConfig);
+
       const fee = this.calculateTrendingFee(durationHours, isPremium);
       const feeEth = ethers.formatEther(fee);
 
@@ -349,21 +357,22 @@ class SecureTrendingService {
       await this.db.createPendingPayment(userId, tokenId, fee.toString(), durationHours);
 
       const instructions = {
-        contractAddress: this.simplePaymentContract,
+        contractAddress: paymentContract,
         tokenAddress: token.contract_address,
         tokenName: token.token_name || 'Unknown Collection',
         duration: durationHours,
         fee: fee.toString(),
         feeEth: feeEth,
         isPremium: isPremium,
+        chain: chain,
         instructions: [
-          `1. <b>SEND EXACTLY ${feeEth.toUpperCase()} ETH</b> TO CONTRACT ADDRESS: ${this.simplePaymentContract}`,
-          '2. Use any Ethereum wallet on mainnet',
-          '3. No additional data or function calls required - just a simple ETH transfer',
+          `1. <b>SEND EXACTLY ${feeEth.toUpperCase()} ${currencySymbol}</b> TO CONTRACT ADDRESS: ${paymentContract}`,
+          `2. Use any ${chainDisplay} wallet on ${chainDisplay.toLowerCase()} network`,
+          `3. No additional data or function calls required - just a simple ${currencySymbol} transfer`,
           '4. Wait for transaction confirmation',
           '5. Copy transaction hash and submit below'
         ],
-        etherscanUrl: `https://etherscan.io/address/${this.simplePaymentContract}`
+        etherscanUrl: `${blockExplorer}/address/${paymentContract}`
       };
 
       return instructions;
@@ -371,6 +380,22 @@ class SecureTrendingService {
       logger.error('Error generating payment instructions:', error);
       throw error;
     }
+  }
+
+  getBlockExplorerUrl(chain, chainConfig) {
+    if (chainConfig?.blockExplorerUrl) {
+      return chainConfig.blockExplorerUrl;
+    }
+    // Fallback block explorer URLs
+    const explorers = {
+      'ethereum': 'https://etherscan.io',
+      'arbitrum': 'https://arbiscan.io',
+      'optimism': 'https://optimistic.etherscan.io',
+      'avalanche': 'https://snowtrace.io',
+      'bsc': 'https://bscscan.com',
+      'moonbeam': 'https://moonscan.io'
+    };
+    return explorers[chain] || 'https://etherscan.io';
   }
 
   // Manual transaction validation for /validate command

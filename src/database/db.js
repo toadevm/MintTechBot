@@ -620,11 +620,19 @@ class Database {
   }
 
   async getFooterAd(contractAddress) {
-    const sql = `SELECT * FROM footer_ads 
-                 WHERE LOWER(contract_address) = LOWER(?) 
+    const sql = `SELECT * FROM footer_ads
+                 WHERE LOWER(contract_address) = LOWER(?)
                  AND is_active = 1 AND end_time > datetime('now')
                  ORDER BY created_at DESC LIMIT 1`;
     return await this.get(sql, [contractAddress]);
+  }
+
+  async getUserFooterAds(userId) {
+    const sql = `SELECT * FROM footer_ads
+                 WHERE user_id = ?
+                 AND is_active = 1 AND end_time > datetime('now')
+                 ORDER BY created_at DESC`;
+    return await this.all(sql, [userId]);
   }
 
   async expireFooterAds() {

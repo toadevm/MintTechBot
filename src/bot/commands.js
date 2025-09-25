@@ -2182,6 +2182,13 @@ Choose an option:`;
       [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')]
     ]);
 
+    // Check if this is called from a start command (deep link) or callback query
+    // If it's from start command, there's no message to edit, so use reply directly
+    if (ctx.startPayload || !ctx.callbackQuery) {
+      return ctx.replyWithHTML(welcomeMessage, keyboard);
+    }
+
+    // Otherwise, try to edit the existing message
     try {
       return ctx.editMessageText(welcomeMessage, {
         parse_mode: 'HTML',
@@ -2466,6 +2473,13 @@ Choose an option:`;
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
+    // Check if this is called from a start command (deep link) or callback query
+    // If it's from start command, there's no message to edit, so use reply directly
+    if (ctx.startPayload || !ctx.callbackQuery) {
+      return ctx.replyWithHTML(message, keyboard);
+    }
+
+    // Otherwise, try to edit the existing message
     try {
       return ctx.editMessageText(message, {
         parse_mode: 'HTML',

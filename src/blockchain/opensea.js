@@ -65,12 +65,10 @@ class OpenSeaService {
 
       const unsubscribeFunctions = [];
 
-      // Subscribe to all available event types for the collection (excluding cancelled events)
+      // Subscribe to trading-focused event types for the collection (excluding cancelled, transferred, and metadata_updated events)
       const eventTypes = [
         { type: 'listed', method: 'onItemListed' },
         { type: 'sold', method: 'onItemSold' },
-        { type: 'transferred', method: 'onItemTransferred' },
-        { type: 'metadata_updated', method: 'onItemMetadataUpdated' },
         { type: 'received_bid', method: 'onItemReceivedBid' },
         { type: 'received_offer', method: 'onItemReceivedOffer' }
       ];
@@ -382,11 +380,12 @@ class OpenSeaService {
         'arbitrum': 'arbitrum',
         'optimism': 'optimism',
         'avalanche': 'avalanche',
-        'moonbeam': 'moonbeam',
-        'bsc': 'bsc',
         'hyperblast': 'hyperevm',
-        'berachain': 'bera_chain'
-        // zkSync Era not yet supported by OpenSea API v2
+        'berachain': 'bera_chain',
+        'apechain': 'ape_chain',
+        'abstract': 'abstract',
+        'base': 'base',
+        'ronin': 'ronin'
       };
 
       const openSeaChain = chainMapping[chainName] || 'ethereum';

@@ -66,14 +66,6 @@ async function setupOpenSeaSubscriptions() {
             console.log(`💰 Sold event for ${collectionSlug}`);
             return webhookHandlers.handleOpenSeaEvent('sold', eventData, rawEvent);
           },
-          transferred: (eventData, rawEvent) => {
-            console.log(`🔄 Transfer event for ${collectionSlug}`);
-            return webhookHandlers.handleOpenSeaEvent('transferred', eventData, rawEvent);
-          },
-          metadata_updated: (eventData, rawEvent) => {
-            console.log(`📊 Metadata update for ${collectionSlug}`);
-            return webhookHandlers.handleOpenSeaEvent('metadata_updated', eventData, rawEvent);
-          },
           cancelled: (eventData, rawEvent) => {
             console.log(`❌ Cancelled event for ${collectionSlug}`);
             return webhookHandlers.handleOpenSeaEvent('cancelled', eventData, rawEvent);

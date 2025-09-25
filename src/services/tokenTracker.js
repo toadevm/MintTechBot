@@ -492,12 +492,10 @@ class TokenTracker {
       // Import the webhook handlers
       const WebhookHandlers = require('../webhooks/handlers');
 
-      // Create event handlers for this collection (excluding cancelled events)
+      // Create event handlers for this collection (trading-focused events only)
       const eventHandlers = {
         listed: (eventData, rawEvent) => this.handleOpenSeaEvent('listed', eventData, rawEvent),
         sold: (eventData, rawEvent) => this.handleOpenSeaEvent('sold', eventData, rawEvent),
-        transferred: (eventData, rawEvent) => this.handleOpenSeaEvent('transferred', eventData, rawEvent),
-        metadata_updated: (eventData, rawEvent) => this.handleOpenSeaEvent('metadata_updated', eventData, rawEvent),
         received_bid: (eventData, rawEvent) => this.handleOpenSeaEvent('received_bid', eventData, rawEvent),
         received_offer: (eventData, rawEvent) => this.handleOpenSeaEvent('received_offer', eventData, rawEvent),
         default: (eventType, eventData, rawEvent) => this.handleOpenSeaEvent(eventType, eventData, rawEvent)

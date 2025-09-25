@@ -1080,8 +1080,6 @@ class WebhookHandlers {
       const eventHandlers = {
         listed: (eventData, rawEvent) => this.handleOpenSeaEvent('listed', eventData, rawEvent),
         sold: (eventData, rawEvent) => this.handleOpenSeaEvent('sold', eventData, rawEvent),
-        transferred: (eventData, rawEvent) => this.handleOpenSeaEvent('transferred', eventData, rawEvent),
-        metadata_updated: (eventData, rawEvent) => this.handleOpenSeaEvent('metadata_updated', eventData, rawEvent),
         cancelled: (eventData, rawEvent) => this.handleOpenSeaEvent('cancelled', eventData, rawEvent),
         received_bid: (eventData, rawEvent) => this.handleOpenSeaEvent('received_bid', eventData, rawEvent),
         received_offer: (eventData, rawEvent) => this.handleOpenSeaEvent('received_offer', eventData, rawEvent),

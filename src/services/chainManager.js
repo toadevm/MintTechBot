@@ -76,32 +76,6 @@ class ChainManager {
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         },
         {
-          name: 'moonbeam',
-          chainId: 1284,
-          displayName: 'Moonbeam',
-          currencySymbol: 'GLMR',
-          emoji: '🌙',
-          isTestnet: false,
-          isActive: true,
-          openSeaSupported: true,
-          openSeaName: 'moonbeam',
-          rpcUrl: 'https://moonbeam-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
-          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
-        },
-        {
-          name: 'bsc',
-          chainId: 56,
-          displayName: 'BNB Smart Chain',
-          currencySymbol: 'BNB',
-          emoji: '🟡',
-          isTestnet: false,
-          isActive: true,
-          openSeaSupported: false,
-          openSeaName: null,
-          externalMarketplace: true,
-          marketplaceName: 'External (BSC not supported by OpenSea)'
-        },
-        {
           name: 'hyperblast',
           chainId: 1891,
           displayName: 'HyperEVM',
@@ -111,21 +85,6 @@ class ChainManager {
           isActive: true,
           openSeaSupported: true,
           openSeaName: 'hyperevm',
-          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
-        },
-        {
-          name: 'zksync',
-          chainId: 324,
-          displayName: 'zkSync Era',
-          currencySymbol: 'ETH',
-          emoji: '🚀',
-          isTestnet: false,
-          isActive: true,
-          openSeaSupported: false,
-          openSeaName: null,
-          externalMarketplace: true,
-          marketplaceName: 'External (zkSync not yet supported by OpenSea)',
-          rpcUrl: 'https://zksync-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         },
         {
@@ -139,6 +98,58 @@ class ChainManager {
           openSeaSupported: true,
           openSeaName: 'bera_chain',
           rpcUrl: 'https://berachain-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
+        },
+        {
+          name: 'apechain',
+          chainId: 33139,
+          displayName: 'APE Chain',
+          currencySymbol: 'APE',
+          emoji: '🐵',
+          isTestnet: false,
+          isActive: true,
+          openSeaSupported: true,
+          openSeaName: 'apechain',
+          rpcUrl: 'https://apechain-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
+        },
+        {
+          name: 'abstract',
+          chainId: 2741,
+          displayName: 'Abstract',
+          currencySymbol: 'ETH',
+          emoji: '🟫',
+          isTestnet: false,
+          isActive: true,
+          openSeaSupported: true,
+          openSeaName: 'abstract',
+          rpcUrl: 'https://abstract-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
+        },
+        {
+          name: 'base',
+          chainId: 8453,
+          displayName: 'Base',
+          currencySymbol: 'ETH',
+          emoji: '🔵',
+          isTestnet: false,
+          isActive: true,
+          openSeaSupported: true,
+          openSeaName: 'base',
+          rpcUrl: 'https://base-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
+        },
+        {
+          name: 'ronin',
+          chainId: 2020,
+          displayName: 'Ronin',
+          currencySymbol: 'RON',
+          emoji: '⚔️',
+          isTestnet: false,
+          isActive: true,
+          openSeaSupported: true,
+          openSeaName: 'ronin',
+          rpcUrl: 'https://ronin-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         }
       ];

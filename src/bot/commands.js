@@ -474,6 +474,11 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
       // Show chain selection first
       const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
+      // Add back button to NFT Management
+      chainKeyboard.push([{
+        text: '◀️ Back to NFT Management',
+        callback_data: 'menu_tokens'
+      }]);
       this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
 
       await ctx.reply(
@@ -519,6 +524,11 @@ Simple and focused - boost your NFTs easily! 🚀`;
         chainKeyboard.push([{
           text: '🌐 All Chains',
           callback_data: 'chain_select_all'
+        }]);
+        // Add back button to NFT Management
+        chainKeyboard.push([{
+          text: '◀️ Back to NFT Management',
+          callback_data: 'menu_tokens'
         }]);
 
         this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_VIEW);
@@ -678,20 +688,39 @@ Choose your trending boost option:`;
               [Markup.button.callback('🔍 Search by Name', 'search_token')],
               [Markup.button.callback('📝 Enter Contract Address', 'enter_contract')]
             ]);
-            return await ctx.reply('How would you like to add a token?', keyboard);
+            try {
+              return await ctx.editMessageText('How would you like to add a token?', keyboard);
+            } catch (error) {
+              return await ctx.reply('How would you like to add a token?', keyboard);
+            }
           }
 
           // Show chain selection first
           const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
+          // Add back button to NFT Management
+          chainKeyboard.push([{
+            text: '◀️ Back to NFT Management',
+            callback_data: 'menu_tokens'
+          }]);
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
 
-          await ctx.reply(
-            '🔗 <b>Select Blockchain Network</b>\n\nChoose the blockchain where your NFT collection exists:',
-            {
-              parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: chainKeyboard }
-            }
-          );
+          try {
+            await ctx.editMessageText(
+              '🔗 <b>Select Blockchain Network</b>\n\nChoose the blockchain where your NFT collection exists:',
+              {
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: chainKeyboard }
+              }
+            );
+          } catch (error) {
+            await ctx.reply(
+              '🔗 <b>Select Blockchain Network</b>\n\nChoose the blockchain where your NFT collection exists:',
+              {
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: chainKeyboard }
+              }
+            );
+          }
           return;
         }
         if (data === 'boost_trending') {
@@ -717,7 +746,11 @@ Choose your trending boost option:`;
             [Markup.button.callback('⭐ Buy Trending Premium', 'buy_trending_premium')],
             [Markup.button.callback('🔥 View Current Trending', 'view_trending')]
           ]);
-          return ctx.replyWithMarkdown(message, keyboard);
+          try {
+            return ctx.editMessageText(message, { parse_mode: 'Markdown', reply_markup: keyboard.reply_markup });
+          } catch (error) {
+            return ctx.replyWithMarkdown(message, keyboard);
+          }
         }
 
         // Main menu navigation handlers
@@ -759,12 +792,20 @@ Choose your trending boost option:`;
           if (userState === this.STATE_EXPECTING_CHAIN_FOR_CONTRACT) {
             // User selected chain for adding a contract
             if (chainName === 'all') {
-              return ctx.reply('❌ Please select a specific blockchain network for adding tokens.');
+              try {
+                return ctx.editMessageText('❌ Please select a specific blockchain network for adding tokens.');
+              } catch (error) {
+                return ctx.reply('❌ Please select a specific blockchain network for adding tokens.');
+              }
             }
 
             const chainConfig = this.chainManager.getChain(chainName);
             if (!chainConfig) {
-              return ctx.reply('❌ Invalid blockchain network selected.');
+              try {
+                return ctx.editMessageText('❌ Invalid blockchain network selected.');
+              } catch (error) {
+                return ctx.reply('❌ Invalid blockchain network selected.');
+              }
             }
 
 
@@ -777,7 +818,11 @@ Choose your trending boost option:`;
               [Markup.button.callback('◀️ Back to Chain Selection', 'back_to_chain_selection')]
             ]);
 
-            return ctx.replyWithHTML(message, keyboard);
+            try {
+              return ctx.editMessageText(message, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
+            } catch (error) {
+              return ctx.replyWithHTML(message, keyboard);
+            }
 
           } else if (userState === this.STATE_EXPECTING_CHAIN_FOR_VIEW) {
             // User selected chain for viewing tokens
@@ -788,14 +833,22 @@ Choose your trending boost option:`;
 
             const chainConfig = this.chainManager.getChain(chainName);
             if (!chainConfig) {
-              return ctx.reply('❌ Invalid blockchain network selected.');
+              try {
+                return ctx.editMessageText('❌ Invalid blockchain network selected.');
+              } catch (error) {
+                return ctx.reply('❌ Invalid blockchain network selected.');
+              }
             }
 
             this.clearUserState(ctx.from.id);
             return this.showTokensForChain(ctx, chainName, chainConfig);
 
           } else {
-            return ctx.reply('❌ No active chain selection process found.');
+            try {
+              return ctx.editMessageText('❌ No active chain selection process found.');
+            } catch (error) {
+              return ctx.reply('❌ No active chain selection process found.');
+            }
           }
         }
 
@@ -832,14 +885,29 @@ Choose your trending boost option:`;
           this.userStates.delete(ctx.from.id.toString() + '_selected_chain');
 
           const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
+          // Add back button to NFT Management
+          chainKeyboard.push([{
+            text: '◀️ Back to NFT Management',
+            callback_data: 'menu_tokens'
+          }]);
 
-          return ctx.reply(
-            '🔗 <b>Select Blockchain Network</b>\n\nChoose which blockchain to add your NFT on:',
-            {
-              parse_mode: 'HTML',
-              reply_markup: { inline_keyboard: chainKeyboard }
-            }
-          );
+          try {
+            return ctx.editMessageText(
+              '🔗 <b>Select Blockchain Network</b>\n\nChoose which blockchain to add your NFT on:',
+              {
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: chainKeyboard }
+              }
+            );
+          } catch (error) {
+            return ctx.reply(
+              '🔗 <b>Select Blockchain Network</b>\n\nChoose which blockchain to add your NFT on:',
+              {
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: chainKeyboard }
+              }
+            );
+          }
         }
 
         // Submenu handlers
@@ -862,10 +930,17 @@ Choose your trending boost option:`;
         }
         if (data === 'channel_add') {
           await ctx.answerCbQuery();
-          return ctx.reply('💡 <b>Add Bot to Channel</b>\n\n1. Add this bot to your channel as an admin\n2. Use the command: <code>/add_channel</code> in the channel\n3. Configure notifications with <code>/channel_settings</code>', {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Channels Menu', 'menu_channels')]])
-          });
+          try {
+            return ctx.editMessageText('💡 <b>Add Bot to Channel</b>\n\n1. Add this bot to your channel as an admin\n2. Use the command: <code>/add_channel</code> in the channel\n3. Configure notifications with <code>/channel_settings</code>', {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Channels Menu', 'menu_channels')]])
+            });
+          } catch (error) {
+            return ctx.reply('💡 <b>Add Bot to Channel</b>\n\n1. Add this bot to your channel as an admin\n2. Use the command: <code>/add_channel</code> in the channel\n3. Configure notifications with <code>/channel_settings</code>', {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Channels Menu', 'menu_channels')]])
+            });
+          }
         }
         if (data === 'get_chat_id') {
           await ctx.answerCbQuery();
@@ -873,7 +948,14 @@ Choose your trending boost option:`;
           const chatType = ctx.chat.type;
           const chatTitle = ctx.chat.title || ctx.chat.first_name || 'Unknown';
           const message = `🆔 <b>Chat Information</b>\n\n<b>Chat ID:</b> <code>${chatId}</code>\n<b>Type:</b> ${chatType}\n<b>Title:</b> ${chatTitle}\n\n<i>Use this chat ID to configure notifications in your bot settings.</i>`;
-          return ctx.replyWithHTML(message, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Channels Menu', 'menu_channels')]]));
+          try {
+            return ctx.editMessageText(message, {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Channels Menu', 'menu_channels')]])
+            });
+          } catch (error) {
+            return ctx.replyWithHTML(message, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Channels Menu', 'menu_channels')]]));
+          }
         }
         if (data === 'verify_trending') {
           await ctx.answerCbQuery();
@@ -894,7 +976,11 @@ Choose your trending boost option:`;
           const duration = parseInt(data.replace('image_duration_', ''));
           const session = this.getUserSession(ctx.from.id);
           if (!session || session.flow !== 'image_payment') {
-            return ctx.reply('❌ Session expired. Please try again.');
+            try {
+              return ctx.editMessageText('❌ Session expired. Please try again.');
+            } catch (error) {
+              return ctx.reply('❌ Session expired. Please try again.');
+            }
           }
 
           // Store duration in session and proceed to chain selection
@@ -911,7 +997,11 @@ Choose your trending boost option:`;
           const duration = parseInt(data.replace('token_image_duration_', ''));
           const session = this.getUserSession(ctx.from.id);
           if (!session || session.flow !== 'image_payment' || !session.contractAddress) {
-            return ctx.reply('❌ Session expired. Please start again.');
+            try {
+              return ctx.editMessageText('❌ Session expired. Please start again.');
+            } catch (error) {
+              return ctx.reply('❌ Session expired. Please start again.');
+            }
           }
 
           // Store duration in session and proceed directly to payment (skip chain selection)
@@ -927,7 +1017,11 @@ Choose your trending boost option:`;
           const duration = parseInt(data.replace('footer_duration_', ''));
           const session = this.getUserSession(ctx.from.id);
           if (!session || session.flow !== 'footer_payment') {
-            return ctx.reply('❌ Session expired. Please try again.');
+            try {
+              return ctx.editMessageText('❌ Session expired. Please try again.');
+            } catch (error) {
+              return ctx.reply('❌ Session expired. Please try again.');
+            }
           }
 
           // Store duration in session and proceed to chain selection
@@ -1005,7 +1099,11 @@ Choose your trending boost option:`;
 
           const session = this.getUserSession(ctx.from.id);
           if (!session || session.flow !== `${paymentType}_payment`) {
-            return ctx.reply('❌ Session expired. Please try again.');
+            try {
+              return ctx.editMessageText('❌ Session expired. Please try again.');
+            } catch (error) {
+              return ctx.reply('❌ Session expired. Please try again.');
+            }
           }
 
           // Store chain in session and proceed to next step
@@ -1082,7 +1180,11 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
           const session = this.getUserSession(ctx.from.id);
           if (!session || session.flow !== 'image_payment') {
-            return ctx.reply('⚠️ Session expired. Please start again.');
+            try {
+              return ctx.editMessageText('⚠️ Session expired. Please start again.');
+            } catch (error) {
+              return ctx.reply('⚠️ Session expired. Please start again.');
+            }
           }
 
           // Set state to expect transaction hash
@@ -1093,7 +1195,14 @@ Choose your trending boost option:`;
 
           const message = `📝 <b>Submit Transaction Hash</b>\n\nPlease send me your ${chainDisplay} transaction hash for the image fee payment.\n\n<i>Example: 0xabc123456789def...</i>\n\n`;
           const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_images')]]);
-          return ctx.replyWithHTML(message, keyboard);
+          try {
+            return ctx.editMessageText(message, {
+              parse_mode: 'HTML',
+              reply_markup: keyboard.reply_markup
+            });
+          } catch (error) {
+            return ctx.replyWithHTML(message, keyboard);
+          }
         }
 
         // Token-based image transaction submission handler
@@ -1101,7 +1210,11 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
           const session = this.getUserSession(ctx.from.id);
           if (!session || session.flow !== 'image_payment' || !session.contractAddress) {
-            return ctx.reply('⚠️ Session expired. Please start again.');
+            try {
+              return ctx.editMessageText('⚠️ Session expired. Please start again.');
+            } catch (error) {
+              return ctx.reply('⚠️ Session expired. Please start again.');
+            }
           }
 
           // Set state to expect transaction hash
@@ -1117,14 +1230,25 @@ Choose your trending boost option:`;
             `<i>Example: 0xabc123456789def...</i>\n\n`;
 
           const keyboard = Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'cancel_images')]]);
-          return ctx.replyWithHTML(message, keyboard);
+          try {
+            return ctx.editMessageText(message, {
+              parse_mode: 'HTML',
+              reply_markup: keyboard.reply_markup
+            });
+          } catch (error) {
+            return ctx.replyWithHTML(message, keyboard);
+          }
         }
 
         if (data === 'submit_enhanced_footer_tx') {
           await ctx.answerCbQuery();
           const session = this.getUserSession(ctx.from.id);
           if (!session || session.flow !== 'footer_payment') {
-            return ctx.reply('⚠️ Session expired. Please start again.');
+            try {
+              return ctx.editMessageText('⚠️ Session expired. Please start again.');
+            } catch (error) {
+              return ctx.reply('⚠️ Session expired. Please start again.');
+            }
           }
 
           // Set state to expect transaction hash
@@ -1885,15 +2009,23 @@ You will no longer receive notifications for this NFT in this chat context.`;
       });
 
       keyboard.push([{
-        text: '◀️ Back to Menu',
-        callback_data: 'main_menu'
+        text: '◀️ Back to Trending & Boost',
+        callback_data: 'menu_trending'
       }]);
 
-      return ctx.reply(message, {
-        reply_markup: {
-          inline_keyboard: keyboard
-        }
-      });
+      try {
+        return ctx.editMessageText(message, {
+          reply_markup: {
+            inline_keyboard: keyboard
+          }
+        });
+      } catch (error) {
+        return ctx.reply(message, {
+          reply_markup: {
+            inline_keyboard: keyboard
+          }
+        });
+      }
 
     } catch (error) {
       logger.error('Error showing promote token menu:', error);
@@ -1928,7 +2060,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
       let message = `🚀 <b>${trendingType} Trending Boost</b>\n\n`;
       message += `${trendingIcon} <b>${token.token_name || 'Unknown Collection'}</b>\n`;
       message += `📮 <code>${token.contract_address}</code>\n`;
-      message += `🔗 Chain: <b>${chainDisplay}</b> <i></i>\n\n`;
+      message += `🔗 Chain: <b>${chainDisplay}</b> <i>(auto-detected)</i>\n\n`;
       message += `<b>Select ${trendingType.toLowerCase()} boost duration:</b>`;
 
       const buttons = [];
@@ -1950,11 +2082,17 @@ You will no longer receive notifications for this NFT in this chat context.`;
       const keyboard = Markup.inlineKeyboard(buttons);
 
       try {
-        return await ctx.replyWithHTML(message, keyboard);
-      } catch (replyError) {
-        logger.error('Error sending duration menu message:', replyError);
-
-        return await ctx.reply(`🚀 Boost: ${token.token_name || 'Unknown Collection'}\n\nSelect boost duration:`, keyboard);
+        return await ctx.editMessageText(message, {
+          parse_mode: 'HTML',
+          reply_markup: keyboard.reply_markup
+        });
+      } catch (error) {
+        try {
+          return await ctx.replyWithHTML(message, keyboard);
+        } catch (replyError) {
+          logger.error('Error sending duration menu message:', replyError);
+          return await ctx.reply(`🚀 Boost: ${token.token_name || 'Unknown Collection'}\n\nSelect boost duration:`, keyboard);
+        }
       }
 
     } catch (error) {
@@ -2057,7 +2195,14 @@ Choose an option:`;
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
-    return ctx.replyWithHTML(message, keyboard);
+    try {
+      return ctx.editMessageText(message, {
+        parse_mode: 'HTML',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (error) {
+      return ctx.replyWithHTML(message, keyboard);
+    }
   }
 
   async showTrendingMenu(ctx) {
@@ -2065,7 +2210,6 @@ Choose an option:`;
 
 <b>Promote your NFT collections:</b>`;
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('📈 View Trending NFTs', 'view_trending')],
       [Markup.button.callback('💰 Buy Normal', 'promote_token'), Markup.button.callback('⭐ Buy Premium', 'promote_token_premium')],
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
@@ -2570,10 +2714,20 @@ Choose an option:`;
           [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')],
           [Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]
         ]);
-        return ctx.replyWithHTML(
-          '🔍 You haven\'t added any tokens yet!\n\nUse the button below to start tracking NFT collections.',
-          keyboard
-        );
+        try {
+          return ctx.editMessageText(
+            '🔍 You haven\'t added any tokens yet!\n\nUse the button below to start tracking NFT collections.',
+            {
+              parse_mode: 'HTML',
+              reply_markup: keyboard.reply_markup
+            }
+          );
+        } catch (error) {
+          return ctx.replyWithHTML(
+            '🔍 You haven\'t added any tokens yet!\n\nUse the button below to start tracking NFT collections.',
+            keyboard
+          );
+        }
       }
 
       let message = `🎯 <b>Your Tracked NFTs</b> (${tokens.length})\n\n`;
@@ -2593,7 +2747,14 @@ Choose an option:`;
 
       keyboard.push([Markup.button.callback('➕ Add More NFTs', 'add_token_start'), Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]);
 
-      await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+      try {
+        await ctx.editMessageText(message, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
+        });
+      } catch (error) {
+        await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+      }
     } catch (error) {
       logger.error('Error in showMyTokens:', error);
       ctx.reply('❌ Error retrieving your NFTs. Please try again.');
@@ -2700,7 +2861,7 @@ Select an NFT collection to boost:`;
 
       const message = `🚀 <b>${trendingType} Trending - ${token.token_name || 'Unknown Collection'}</b>
 
-🔗 Chain: <b>${chainDisplay}</b> <i></i>
+🔗 Chain: <b>${chainDisplay}</b> <i>(auto-detected)</i>
 
 Select trending duration:`;
 

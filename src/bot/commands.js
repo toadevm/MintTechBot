@@ -2182,7 +2182,14 @@ Choose an option:`;
       [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')]
     ]);
 
-    return ctx.replyWithHTML(welcomeMessage, keyboard);
+    try {
+      return ctx.editMessageText(welcomeMessage, {
+        parse_mode: 'HTML',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (error) {
+      return ctx.replyWithHTML(welcomeMessage, keyboard);
+    }
   }
 
   async showTokensMenu(ctx) {
@@ -2226,7 +2233,14 @@ Choose an option:`;
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
-    return ctx.replyWithHTML(message, keyboard);
+    try {
+      return ctx.editMessageText(message, {
+        parse_mode: 'HTML',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (error) {
+      return ctx.replyWithHTML(message, keyboard);
+    }
   }
 
   async showImageTokenSelection(ctx) {
@@ -2249,7 +2263,14 @@ Choose an option:`;
           [Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]
         ]);
 
-        return ctx.replyWithHTML(message, keyboard);
+        try {
+          return ctx.editMessageText(message, {
+            parse_mode: 'HTML',
+            reply_markup: keyboard.reply_markup
+          });
+        } catch (error) {
+          return ctx.replyWithHTML(message, keyboard);
+        }
       }
 
       const message = `🖼️ <b>Select NFT for Image Display</b>\n\n` +
@@ -2282,7 +2303,14 @@ Choose an option:`;
         Markup.button.callback('🏠 Main Menu', 'main_menu')
       ]);
 
-      return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+      try {
+        return ctx.editMessageText(message, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
+        });
+      } catch (error) {
+        return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+      }
     } catch (error) {
       logger.error('Error showing image token selection:', error);
       ctx.reply('❌ Error loading your NFTs. Please try again.');
@@ -2438,7 +2466,14 @@ Choose an option:`;
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
-    return ctx.replyWithHTML(message, keyboard);
+    try {
+      return ctx.editMessageText(message, {
+        parse_mode: 'HTML',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (error) {
+      return ctx.replyWithHTML(message, keyboard);
+    }
   }
 
   async showChannelsMenu(ctx) {
@@ -2451,7 +2486,14 @@ Choose an option:`;
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
-    return ctx.replyWithHTML(message, keyboard);
+    try {
+      return ctx.editMessageText(message, {
+        parse_mode: 'HTML',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (error) {
+      return ctx.replyWithHTML(message, keyboard);
+    }
   }
 
   async showVerifyMenu(ctx) {
@@ -2474,7 +2516,14 @@ Choose an option:`;
         [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
       ];
 
-      return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+      try {
+        return ctx.editMessageText(message, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
+        });
+      } catch (error) {
+        return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+      }
     } catch (error) {
       logger.error('Error in showVerifyMenu:', error);
       ctx.reply('❌ Error loading verification options. Please try again.');
@@ -2502,7 +2551,14 @@ Choose an option:`;
           [Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]
         ]);
 
-        return ctx.replyWithHTML(message, keyboard);
+        try {
+          return ctx.editMessageText(message, {
+            parse_mode: 'HTML',
+            reply_markup: keyboard.reply_markup
+          });
+        } catch (error) {
+          return ctx.replyWithHTML(message, keyboard);
+        }
       }
 
       const verifyTypeText = verificationType === 'image' ? 'Image Fee' : 'Trending';
@@ -2537,7 +2593,14 @@ Choose an option:`;
         Markup.button.callback('🏠 Main Menu', 'main_menu')
       ]);
 
-      return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+      try {
+        return ctx.editMessageText(message, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
+        });
+      } catch (error) {
+        return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+      }
     } catch (error) {
       logger.error(`Error showing verify token selection for ${verificationType}:`, error);
       ctx.reply('❌ Error loading your NFTs. Please try again.');
@@ -2673,7 +2736,14 @@ Choose an option:`;
           [Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]
         ];
 
-        return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+        try {
+          return ctx.editMessageText(message, {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
+          });
+        } catch (error) {
+          return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+        }
       }
 
       const message = `🔗 <b>Verify Footer Payments</b>\n\n` +
@@ -2692,7 +2762,14 @@ Choose an option:`;
       // Add navigation buttons
       keyboard.push([Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]);
 
-      return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+      try {
+        return ctx.editMessageText(message, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
+        });
+      } catch (error) {
+        return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+      }
     } catch (error) {
       logger.error('Error showing footer ticker selection:', error);
       ctx.reply('❌ Error loading footer advertisements. Please try again.');
@@ -3689,7 +3766,14 @@ Select trending duration:`;
       this.setUserState(ctx.from.id, this.STATE_IMAGE_DURATION_SELECT);
       this.setUserSession(ctx.from.id, { flow: 'image_payment' });
 
-      await ctx.replyWithHTML(message, keyboard);
+      try {
+        await ctx.editMessageText(message, {
+          parse_mode: 'HTML',
+          reply_markup: keyboard.reply_markup
+        });
+      } catch (error) {
+        await ctx.replyWithHTML(message, keyboard);
+      }
     } catch (error) {
       logger.error('Error showing image duration selection:', error);
       ctx.reply('❌ Error showing duration options. Please try again.');
@@ -3728,7 +3812,14 @@ Select trending duration:`;
       this.setUserState(ctx.from.id, this.STATE_FOOTER_DURATION_SELECT);
       this.setUserSession(ctx.from.id, { flow: 'footer_payment' });
 
-      await ctx.replyWithHTML(message, keyboard);
+      try {
+        await ctx.editMessageText(message, {
+          parse_mode: 'HTML',
+          reply_markup: keyboard.reply_markup
+        });
+      } catch (error) {
+        await ctx.replyWithHTML(message, keyboard);
+      }
     } catch (error) {
       logger.error('Error showing footer duration selection:', error);
       ctx.reply('❌ Error showing duration options. Please try again.');

@@ -86,7 +86,7 @@ Use /channel_settings to configure alerts.`;
   async removeChannel(telegramChatId, removedByUserId) {
     try {
       const result = await this.db.run(
-        'UPDATE channels SET is_active = 0 WHERE telegram_chat_id = ?',
+        'UPDATE channels SET is_active = false WHERE telegram_chat_id = $1',
         [telegramChatId]
       );
 
@@ -129,7 +129,7 @@ Use /channel_settings to configure alerts.`;
         UPDATE channels 
         SET show_trending = COALESCE(?, show_trending),
             show_all_activities = COALESCE(?, show_all_activities)
-        WHERE telegram_chat_id = ? AND is_active = 1
+        WHERE telegram_chat_id = $1 AND is_active = true
       `, [show_trending, show_all_activities, telegramChatId]);
 
       if (result.changes > 0) {
@@ -156,7 +156,7 @@ Use /channel_settings to configure alerts.`;
   async getChannelSettings(telegramChatId) {
     try {
       const channel = await this.db.get(
-        'SELECT * FROM channels WHERE telegram_chat_id = ? AND is_active = 1',
+        'SELECT * FROM channels WHERE telegram_chat_id = $1 AND is_active = true',
         [telegramChatId]
       );
 
@@ -224,7 +224,7 @@ Use /channel_settings to configure alerts.`;
 
           if (error.response?.error_code === 403) {
             await this.db.run(
-              'UPDATE channels SET is_active = 0 WHERE telegram_chat_id = ?',
+              'UPDATE channels SET is_active = false WHERE telegram_chat_id = $1',
               [channel.telegram_chat_id]
             );
             logger.info(`Deactivated channel ${channel.telegram_chat_id} - bot removed`);

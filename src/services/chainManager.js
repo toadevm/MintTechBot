@@ -205,7 +205,7 @@ class ChainManager {
       const preference = await this.db.get(`
         SELECT selected_chain, selected_chain_id
         FROM user_chain_preferences
-        WHERE user_id = ?
+        WHERE user_id = $1
       `, [userId]);
 
       if (preference) {
@@ -395,7 +395,7 @@ class ChainManager {
         const tokenCount = await this.db.get(`
           SELECT COUNT(*) as count
           FROM tracked_tokens
-          WHERE blockchain_network = ? AND is_active = 1
+          WHERE blockchain_network = $1 AND is_active = true
         `, [chainName]);
 
         stats[chainName] = {

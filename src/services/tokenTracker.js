@@ -80,7 +80,7 @@ class TokenTracker {
         // Reactivate token if it was previously deactivated
         if (!existingToken.is_active) {
           await this.db.run(
-            'UPDATE tracked_tokens SET is_active = 1 WHERE id = ?',
+            'UPDATE tracked_tokens SET is_active = true WHERE id = $1',
             [existingToken.id]
           );
           logger.info(`Reactivated previously inactive token ${contractAddress}`);
@@ -241,14 +241,14 @@ class TokenTracker {
 
 
       const otherSubscriptions = await this.db.all(
-        'SELECT COUNT(*) as count FROM user_subscriptions WHERE token_id = ?',
+        'SELECT COUNT(*) as count FROM user_subscriptions WHERE token_id = $1',
         [token.id]
       );
 
       if (otherSubscriptions[0].count === 0) {
 
         await this.db.run(
-          'UPDATE tracked_tokens SET is_active = 0 WHERE id = ?',
+          'UPDATE tracked_tokens SET is_active = false WHERE id = $1',
           [token.id]
         );
 
@@ -306,7 +306,7 @@ class TokenTracker {
 
       if (floorPrice) {
         await this.db.run(
-          'UPDATE tracked_tokens SET floor_price = ?, updated_at = CURRENT_TIMESTAMP WHERE contract_address = ?',
+          'UPDATE tracked_tokens SET floor_price = $1, updated_at = NOW() WHERE contract_address = $2',
           [floorPrice, contractAddress]
         );
         logger.debug(`Updated floor price for ${contractAddress}: ${floorPrice} ETH`);
@@ -370,7 +370,7 @@ class TokenTracker {
 
       const activityCount = await this.db.get(
         `SELECT COUNT(*) as count FROM nft_activities 
-         WHERE contract_address = ? AND created_at > datetime('now', '-1 day')`,
+         WHERE contract_address = $1 AND created_at > NOW() - INTERVAL '1 day'`,
         [contractAddress]
       );
 
@@ -425,13 +425,13 @@ class TokenTracker {
 
         sql = `UPDATE user_subscriptions 
                SET notification_enabled = NOT notification_enabled 
-               WHERE user_id = ? AND token_id = ?`;
+               WHERE user_id = $1 AND token_id = $2`;
         params = [userId, tokenId];
       } else {
 
         sql = `UPDATE user_subscriptions 
                SET notification_enabled = ? 
-               WHERE user_id = ? AND token_id = ?`;
+               WHERE user_id = $1 AND token_id = $2`;
         params = [enabled, userId, tokenId];
       }
 

@@ -313,7 +313,7 @@ class WebhookHandlers {
         SELECT u.telegram_id, u.username, us.notification_enabled, us.chat_id
         FROM users u
         JOIN user_subscriptions us ON u.id = us.user_id
-        WHERE us.token_id = ? AND us.notification_enabled = 1 AND u.is_active = 1
+        WHERE us.token_id = $1 AND us.notification_enabled = true AND u.is_active = true
       `, [token.id]);
 
       if (!subscriptions || subscriptions.length === 0) {
@@ -348,7 +348,7 @@ class WebhookHandlers {
 
           if (error.response?.error_code === 403 || error.response?.error_code === 400) {
             await this.db.run(
-              'UPDATE users SET is_active = 0 WHERE telegram_id = ?',
+              'UPDATE users SET is_active = false WHERE telegram_id = $1',
               [subscription.telegram_id]
             );
             logger.info(`Deactivated user ${subscription.telegram_id} due to delivery failure`);
@@ -426,7 +426,7 @@ class WebhookHandlers {
       // Get all active channels
       const allChannels = await this.db.all(`
         SELECT * FROM channels
-        WHERE is_active = 1 AND (show_trending = 1 OR show_all_activities = 1)
+        WHERE is_active = true AND (show_trending = true OR show_all_activities = true)
       `);
 
       if (allChannels.length === 0) {
@@ -490,7 +490,7 @@ class WebhookHandlers {
       if (!channels) {
         channels = await this.db.all(`
           SELECT * FROM channels
-          WHERE is_active = 1 AND show_trending = 1
+          WHERE is_active = true AND show_trending = true
         `);
       }
 
@@ -514,7 +514,7 @@ class WebhookHandlers {
 
           if (error.response?.error_code === 403) {
             await this.db.run(
-              'UPDATE channels SET is_active = 0 WHERE telegram_chat_id = ?',
+              'UPDATE channels SET is_active = false WHERE telegram_chat_id = $1',
               [channel.telegram_chat_id]
             );
           }
@@ -983,14 +983,14 @@ class WebhookHandlers {
   async processOpenSeaEventForToken(eventType, eventData, token, rawEvent) {
     try {
       // SAFEGUARD: Verify token still exists in database before processing
-      const tokenExists = await this.db.get('SELECT id FROM tracked_tokens WHERE id = ? AND is_active = 1', [token.id]);
+      const tokenExists = await this.db.get('SELECT id FROM tracked_tokens WHERE id = $1 AND is_active = true', [token.id]);
       if (!tokenExists) {
         logger.warn(`🚫 Skipping OpenSea event processing - token ${token.contract_address} no longer exists in database`);
         return;
       }
 
       // SAFEGUARD: Check if any users exist in database at all
-      const userCount = await this.db.get('SELECT COUNT(*) as count FROM users WHERE is_active = 1');
+      const userCount = await this.db.get('SELECT COUNT(*) as count FROM users WHERE is_active = true');
       if (!userCount || userCount.count === 0) {
         logger.warn(`🚫 Skipping OpenSea event processing - no active users in database`);
         return;
@@ -1099,14 +1099,14 @@ class WebhookHandlers {
   async notifyUsersOpenSea(token, eventType, eventData, activityData) {
     try {
       // SAFEGUARD: Verify token still exists in database
-      const tokenExists = await this.db.get('SELECT id FROM tracked_tokens WHERE id = ? AND is_active = 1', [token.id]);
+      const tokenExists = await this.db.get('SELECT id FROM tracked_tokens WHERE id = $1 AND is_active = true', [token.id]);
       if (!tokenExists) {
         logger.warn(`🚫 Skipping notification - token ${token.contract_address} no longer exists in database`);
         return false;
       }
 
       // SAFEGUARD: Check if any users exist in database at all
-      const userCount = await this.db.get('SELECT COUNT(*) as count FROM users WHERE is_active = 1');
+      const userCount = await this.db.get('SELECT COUNT(*) as count FROM users WHERE is_active = true');
       if (!userCount || userCount.count === 0) {
         logger.warn(`🚫 Skipping notification - no active users in database`);
         return false;
@@ -1117,7 +1117,7 @@ class WebhookHandlers {
         SELECT u.telegram_id, u.username, us.notification_enabled, us.chat_id
         FROM users u
         JOIN user_subscriptions us ON u.id = us.user_id
-        WHERE us.token_id = ? AND us.notification_enabled = 1 AND u.is_active = 1
+        WHERE us.token_id = $1 AND us.notification_enabled = true AND u.is_active = true
       `, [token.id]);
 
       if (!subscriptions || subscriptions.length === 0) {
@@ -1191,7 +1191,7 @@ class WebhookHandlers {
           // Handle bot removal from channel (same as original)
           if (error.response?.error_code === 403) {
             await this.db.run(
-              'UPDATE channels SET is_active = 0 WHERE telegram_chat_id = ?',
+              'UPDATE channels SET is_active = false WHERE telegram_chat_id = $1',
               [channel.telegram_chat_id]
             );
             logger.info(`Deactivated channel ${channel.telegram_chat_id} due to bot removal`);

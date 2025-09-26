@@ -1040,7 +1040,7 @@ Choose your trending boost option:`;
           const tokenId = parts[2];
 
           // Auto-detect chain from selected token (like image payment flow)
-          const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = ?', [tokenId]);
+          const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = $1', [tokenId]);
           if (!token) {
             return ctx.reply('❌ NFT collection not found.');
           }
@@ -1840,14 +1840,14 @@ You can try again with a different transaction hash or contact support.`;
       const chatId = this.normalizeChatContext(ctx);
 
       // Get token info for the success message
-      const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = ?', [tokenId]);
+      const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = $1', [tokenId]);
       if (!token) {
         return ctx.reply('❌ NFT not found.');
       }
 
       // Check if user has subscription in this chat context
       const subscription = await this.db.get(
-        'SELECT * FROM user_subscriptions WHERE user_id = ? AND token_id = ? AND chat_id = ?',
+        'SELECT * FROM user_subscriptions WHERE user_id = $1 AND token_id = $2 AND chat_id = $3',
         [user.id, tokenId, chatId]
       );
 
@@ -1855,13 +1855,13 @@ You can try again with a different transaction hash or contact support.`;
         // Token exists but no subscription - this can happen due to data inconsistency
         // Let's clean up by removing the token if user has no subscriptions at all
         const anySubscription = await this.db.get(
-          'SELECT * FROM user_subscriptions WHERE user_id = ? AND token_id = ?',
+          'SELECT * FROM user_subscriptions WHERE user_id = $1 AND token_id = $2',
           [user.id, tokenId]
         );
 
         if (!anySubscription) {
           // User has no subscriptions for this token anywhere, so we can remove the token entirely
-          await this.db.run('UPDATE tracked_tokens SET is_active = 0 WHERE id = ?', [tokenId]);
+          await this.db.run('UPDATE tracked_tokens SET is_active = false WHERE id = $1', [tokenId]);
           logger.info(`Token ${token.contract_address} deactivated - no user subscriptions found`);
 
           const contextName = chatId === 'private' ? 'private messages' : `group chat (${chatId})`;
@@ -1884,7 +1884,7 @@ Note: This token had no active subscriptions and has been fully deactivated.`;
 
       // Check if there are any remaining subscriptions for this NFT
       const remainingSubscriptions = await this.db.all(
-        'SELECT COUNT(*) as count FROM user_subscriptions WHERE token_id = ?',
+        'SELECT COUNT(*) as count FROM user_subscriptions WHERE token_id = $1',
         [tokenId]
       );
 
@@ -2036,7 +2036,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
   async showPromoteDurationMenu(ctx, tokenId, isPremium = false) {
     try {
       const token = await this.db.get(
-        'SELECT * FROM tracked_tokens WHERE id = ?',
+        'SELECT * FROM tracked_tokens WHERE id = $1',
         [tokenId]
       );
 
@@ -2902,7 +2902,7 @@ Select an NFT collection to boost:`;
 
   async showTrendingChainSelection(ctx, tokenId, isPremium = false) {
     try {
-      const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = ?', [tokenId]);
+      const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = $1', [tokenId]);
       if (!token) {
         return ctx.reply('❌ NFT collection not found.');
       }
@@ -2941,7 +2941,7 @@ Select an NFT collection to boost:`;
 
   async showTrendingDurationSelection(ctx, tokenId, isPremium = false, chain = 'ethereum') {
     try {
-      const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = ?', [tokenId]);
+      const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = $1', [tokenId]);
       if (!token) {
         return ctx.reply('❌ NFT collection not found.');
       }
@@ -3612,7 +3612,7 @@ Select trending duration:`;
 
       // Also check database for pending payments
       const pendingPayments = await this.db.get(
-        'SELECT COUNT(*) as count FROM pending_payments WHERE user_id = ? AND is_matched = 0 AND expires_at > datetime("now")',
+        'SELECT COUNT(*) as count FROM pending_payments WHERE user_id = $1 AND is_matched = false AND expires_at > NOW()',
         [userId]
       );
 

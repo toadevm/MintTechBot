@@ -335,7 +335,7 @@ class SecureTrendingService {
   async generatePaymentInstructions(tokenId, durationHours, userId, isPremium = false, chain = 'ethereum') {
     try {
       const token = await this.db.get(
-        'SELECT * FROM tracked_tokens WHERE id = ?',
+        'SELECT * FROM tracked_tokens WHERE id = $1',
         [tokenId]
       );
 
@@ -438,7 +438,7 @@ class SecureTrendingService {
         `SELECT pp.*, tt.token_name, tt.contract_address 
          FROM pending_payments pp
          JOIN tracked_tokens tt ON pp.token_id = tt.id
-         WHERE pp.user_id = ? AND pp.expected_amount = ? AND pp.is_matched = 0 AND pp.expires_at > datetime('now')
+         WHERE pp.user_id = $1 AND pp.expected_amount = $2 AND pp.is_matched = false AND pp.expires_at > NOW()
          ORDER BY pp.created_at ASC`,
         [userId, paymentAmount.toString()]
       );
@@ -595,7 +595,7 @@ class SecureTrendingService {
   async generateImagePaymentInstructions(contractAddress, userId, durationDays = 30) {
     try {
       const token = await this.db.get(
-        'SELECT * FROM tracked_tokens WHERE LOWER(contract_address) = LOWER(?)',
+        'SELECT * FROM tracked_tokens WHERE LOWER(contract_address) = LOWER($1)',
         [contractAddress]
       );
 
@@ -695,7 +695,7 @@ class SecureTrendingService {
 
       // Check if token exists
       const token = await this.db.get(
-        'SELECT * FROM tracked_tokens WHERE LOWER(contract_address) = LOWER(?)',
+        'SELECT * FROM tracked_tokens WHERE LOWER(contract_address) = LOWER($1)',
         [contractAddress]
       );
 
@@ -766,7 +766,7 @@ class SecureTrendingService {
 
       const imageFeePayment = await this.db.get(
         `SELECT * FROM image_fee_payments
-         WHERE LOWER(contract_address) = LOWER(?)
+         WHERE LOWER(contract_address) = LOWER($1)
          AND is_active = 1
          AND end_time > datetime('now')
          ORDER BY created_at DESC

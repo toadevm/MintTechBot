@@ -1852,35 +1852,12 @@ You can try again with a different transaction hash or contact support.`;
       );
 
       if (!subscription) {
-        // Token exists but no subscription - this can happen due to data inconsistency
-        // Let's clean up by removing the token if user has no subscriptions at all
-        const anySubscription = await this.db.get(
-          'SELECT * FROM user_subscriptions WHERE user_id = $1 AND token_id = $2',
-          [user.id, tokenId]
-        );
-
-        if (!anySubscription) {
-          // User has no subscriptions for this token anywhere, so we can remove the token entirely
-          await this.db.run('UPDATE tracked_tokens SET is_active = false WHERE id = $1', [tokenId]);
-          logger.info(`Token ${token.contract_address} deactivated - no user subscriptions found`);
-
-          const contextName = chatId === 'private' ? 'private messages' : `group chat (${chatId})`;
-          const successMessage = `✅ <b>Token Removed Successfully</b>
-
-🗑️ <b>${token.token_name || 'Unknown Collection'}</b> has been removed from tracking.
-
-📮 Contract: <code>${token.contract_address}</code>
-
-Note: This token had no active subscriptions and has been fully deactivated.`;
-
-          return ctx.replyWithHTML(successMessage);
-        } else {
-          return ctx.reply('❌ You are not subscribed to this NFT in this chat context.');
-        }
+        return ctx.reply('❌ You are not subscribed to this NFT in this chat context.');
       }
 
       // Remove subscription from this specific chat context
-      await this.db.unsubscribeUserFromToken(user.id, tokenId, chatId);
+      const unsubscribeResult = await this.db.unsubscribeUserFromToken(user.id, tokenId, chatId);
+      logger.info(`🔄 REMOVE_TOKEN DEBUG: Unsubscribed user ${user.id} from token ${tokenId} in chat ${chatId}, removed ${unsubscribeResult.changes} subscription(s)`);
 
       // Check if there are any remaining subscriptions for this NFT
       const remainingSubscriptions = await this.db.all(
@@ -1888,10 +1865,40 @@ Note: This token had no active subscriptions and has been fully deactivated.`;
         [tokenId]
       );
 
-      // If no subscriptions remain, deactivate the token globally
-      if (remainingSubscriptions[0].count === 0) {
-        await this.db.run('UPDATE tracked_tokens SET is_active = 0 WHERE id = ?', [tokenId]);
-        logger.info(`Token ${token.contract_address} deactivated - no remaining subscriptions`);
+      logger.info(`🔍 REMOVE_TOKEN DEBUG: Subscription count query result:`, remainingSubscriptions);
+      logger.info(`🔍 REMOVE_TOKEN DEBUG: remainingSubscriptions.length = ${remainingSubscriptions.length}`);
+      logger.info(`🔍 REMOVE_TOKEN DEBUG: remainingSubscriptions[0].count = ${remainingSubscriptions[0].count}`);
+      // Convert count to number to handle string vs number comparison
+      const subscriptionCount = parseInt(remainingSubscriptions[0].count) || 0;
+      logger.info(`🔍 REMOVE_TOKEN DEBUG: subscriptionCount (parsed) = ${subscriptionCount}`);
+      logger.info(`🔍 REMOVE_TOKEN DEBUG: Will call tokenTracker.removeToken()? ${remainingSubscriptions.length > 0 && subscriptionCount === 0}`);
+
+      // If no subscriptions remain, use proper tokenTracker.removeToken() logic
+      if (remainingSubscriptions.length > 0 && subscriptionCount === 0) {
+        logger.info(`🔄 No remaining subscriptions for token ${token.contract_address}, delegating to tokenTracker.removeToken()`);
+
+        // Use the enhanced removal logic that handles premium features and OpenSea unsubscription
+        const removalResult = await this.tokenTracker.removeToken(token.contract_address, user.id);
+
+        if (!removalResult.success) {
+          logger.error(`Failed to remove token via tokenTracker: ${removalResult.message}`);
+          return ctx.reply('❌ Error completing token removal. Please try again.');
+        }
+
+        const contextName = chatId === 'private' ? 'private messages' : `group chat (${chatId})`;
+        const successMessage = `✅ <b>Token Removed Successfully</b>
+
+🗑️ <b>${token.token_name || 'Unknown Collection'}</b> has been completely removed from tracking.
+
+📮 Contract: <code>${token.contract_address}</code>
+
+This token has been properly cleaned up with all associated data and OpenSea subscriptions.`;
+
+        await ctx.replyWithHTML(successMessage);
+        logger.info(`Token completely removed via tokenTracker: ${token.contract_address} by user ${user.id}`);
+        return;
+      } else {
+        logger.info(`🔄 REMOVE_TOKEN DEBUG: NOT calling tokenTracker.removeToken() - token still has ${subscriptionCount} remaining subscriptions`);
       }
 
       const contextName = chatId === 'private' ? 'private messages' : `group chat (${chatId})`;

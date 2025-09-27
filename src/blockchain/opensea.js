@@ -138,15 +138,28 @@ class OpenSeaService {
       const eventData = await this.extractEventData(eventType, event);
       logger.info('📊 Extracted event data:', JSON.stringify(eventData, null, 2));
 
-      // Call the appropriate handler if provided
+      // Call the appropriate handler if provided and respect return value
+      let shouldContinueProcessing = true;
+
       if (eventHandlers && typeof eventHandlers[eventType] === 'function') {
         logger.info(`🎯 Calling specific handler for ${eventType}`);
-        eventHandlers[eventType](eventData, event);
+        const result = await eventHandlers[eventType](eventData, event);
+        shouldContinueProcessing = result !== false;
       } else if (eventHandlers && typeof eventHandlers.default === 'function') {
         logger.info(`🎯 Calling default handler for ${eventType}`);
-        eventHandlers.default(eventType, eventData, event);
+        const result = await eventHandlers.default(eventType, eventData, event);
+        shouldContinueProcessing = result !== false;
       } else {
         logger.warn(`⚠️ No handler found for event type: ${eventType}`);
+        shouldContinueProcessing = false;
+      }
+
+      // Log the processing decision
+      if (!shouldContinueProcessing) {
+        logger.info(`🛑 OPENSEA EVENT HANDLER: Stopping event processing for ${eventType} on collection ${eventData.collectionSlug} due to handler returning false`);
+        return false;
+      } else {
+        logger.info(`✅ OPENSEA EVENT HANDLER: Continuing event processing for ${eventType} on collection ${eventData.collectionSlug}`);
       }
     } catch (error) {
       logger.error(`❌ Error handling ${eventType} event:`, error);

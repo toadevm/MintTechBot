@@ -941,25 +941,57 @@ class WebhookHandlers {
   // OpenSea Event Handling Methods
   async handleOpenSeaEvent(eventType, eventData, rawEvent) {
     try {
-      logger.info(`Processing OpenSea ${eventType} event:`, JSON.stringify(eventData, null, 2));
+      logger.info(`🌊 OPENSEA EVENT PROCESSING - ${eventType} for collection: ${eventData.collectionSlug}`);
 
       // Create unique key for deduplication
       const eventKey = this.createOpenSeaEventKey(eventType, eventData);
 
       if (this.isOpenSeaEventProcessed(eventKey)) {
-        logger.info(`OpenSea event ${eventKey} already processed, skipping`);
+        logger.info(`   ⏭️ Event ${eventKey} already processed, skipping`);
         return false;
       }
 
       // Mark as being processed
       this.markOpenSeaEventProcessed(eventKey);
 
-      // Check if we have tracked tokens for this collection
+      // CRITICAL: Check if we have tracked tokens for this collection
       const tokens = await this.db.getTokensForCollectionSlug(eventData.collectionSlug);
+      logger.info(`   📊 Collection ${eventData.collectionSlug} analysis:`);
+      logger.info(`      - Tokens returned by query: ${tokens?.length || 0}`);
+
       if (!tokens || tokens.length === 0) {
-        logger.debug(`No tracked tokens found for collection: ${eventData.collectionSlug}`);
+        logger.info(`   🛑 STOPPING EVENT PROCESSING - No tracked tokens found for collection: ${eventData.collectionSlug}`);
+        logger.info(`      - This collection should not receive events anymore`);
         return false;
       }
+
+      // Log details about returned tokens
+      logger.info(`      - Active tokens in collection:`, tokens.map(t => ({
+        contract: t.contract_address,
+        name: t.token_name,
+        is_active: t.is_active,
+        has_subscriptions: 'checking...'
+      })));
+
+      // Additional safety check: verify at least one token has active subscriptions
+      let hasAnyActiveSubscriptions = false;
+      for (const token of tokens) {
+        const tokenHasSubscriptions = await this.db.hasAnyActiveSubscriptions(token.id);
+        if (tokenHasSubscriptions) {
+          hasAnyActiveSubscriptions = true;
+          logger.info(`      - Token ${token.contract_address} has active subscriptions: YES`);
+        } else {
+          logger.info(`      - Token ${token.contract_address} has active subscriptions: NO`);
+        }
+      }
+
+      if (!hasAnyActiveSubscriptions) {
+        logger.info(`   🛑 STOPPING EVENT PROCESSING - Collection ${eventData.collectionSlug} has no tokens with active subscriptions`);
+        logger.info(`      - This indicates a database inconsistency or recent unsubscription`);
+        return false;
+      }
+
+      logger.info(`   ✅ Proceeding with event processing for ${tokens.length} tokens`);
 
       // Process each tracked token in this collection
       let processedCount = 0;
@@ -993,6 +1025,15 @@ class WebhookHandlers {
       const userCount = await this.db.get('SELECT COUNT(*) as count FROM users WHERE is_active = true');
       if (!userCount || userCount.count === 0) {
         logger.warn(`🚫 Skipping OpenSea event processing - no active users in database`);
+        return;
+      }
+
+      // OPTIMIZATION: Skip processing if token has no active subscriptions and no premium features
+      const hasActiveSubscriptions = await this.db.hasAnyActiveSubscriptions(token.id);
+      const hasActivePremiumFeatures = await this.db.hasActivePremiumFeatures(token.contract_address);
+
+      if (!hasActiveSubscriptions && !hasActivePremiumFeatures) {
+        logger.debug(`⏭️ Skipping OpenSea event processing - token ${token.contract_address} has no active subscriptions or premium features`);
         return;
       }
 
@@ -1109,6 +1150,13 @@ class WebhookHandlers {
       const userCount = await this.db.get('SELECT COUNT(*) as count FROM users WHERE is_active = true');
       if (!userCount || userCount.count === 0) {
         logger.warn(`🚫 Skipping notification - no active users in database`);
+        return false;
+      }
+
+      // OPTIMIZATION: Skip if no active subscriptions (avoids unnecessary query)
+      const hasActiveSubscriptions = await this.db.hasAnyActiveSubscriptions(token.id);
+      if (!hasActiveSubscriptions) {
+        logger.debug(`⏭️ Skipping OpenSea notification - token ${token.contract_address} has no active subscriptions`);
         return false;
       }
 
@@ -1343,9 +1391,9 @@ class WebhookHandlers {
   getOpenSeaEventInfo(eventType) {
     const eventMap = {
       'sold': {
-        emoji: '💰',
-        action: 'Sale',
-        priceLabel: 'Sale Price'
+        emoji: '💰🟢',
+        action: '<b>Buy</b>',
+        priceLabel: 'Buy Price'
       },
       'listed': {
         emoji: '📝',

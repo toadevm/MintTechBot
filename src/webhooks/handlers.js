@@ -976,12 +976,16 @@ class WebhookHandlers {
       // Additional safety check: verify at least one token has active subscriptions
       let hasAnyActiveSubscriptions = false;
       for (const token of tokens) {
-        const tokenHasSubscriptions = await this.db.hasAnyActiveSubscriptions(token.id);
-        if (tokenHasSubscriptions) {
-          hasAnyActiveSubscriptions = true;
-          logger.info(`      - Token ${token.contract_address} has active subscriptions: YES`);
+        if (typeof this.db.hasAnyActiveSubscriptions === 'function') {
+          const tokenHasSubscriptions = await this.db.hasAnyActiveSubscriptions(token.id);
+          if (tokenHasSubscriptions) {
+            hasAnyActiveSubscriptions = true;
+            logger.info(`      - Token ${token.contract_address} has active subscriptions: YES`);
+          } else {
+            logger.info(`      - Token ${token.contract_address} has active subscriptions: NO`);
+          }
         } else {
-          logger.info(`      - Token ${token.contract_address} has active subscriptions: NO`);
+          logger.info(`      - Token ${token.contract_address} subscription check skipped (method not available)`);
         }
       }
 
@@ -1029,7 +1033,9 @@ class WebhookHandlers {
       }
 
       // OPTIMIZATION: Skip processing if token has no active subscriptions and no premium features
-      const hasActiveSubscriptions = await this.db.hasAnyActiveSubscriptions(token.id);
+      const hasActiveSubscriptions = typeof this.db.hasAnyActiveSubscriptions === 'function'
+        ? await this.db.hasAnyActiveSubscriptions(token.id)
+        : false;
       const hasActivePremiumFeatures = await this.db.hasActivePremiumFeatures(token.contract_address);
 
       if (!hasActiveSubscriptions && !hasActivePremiumFeatures) {
@@ -1154,7 +1160,9 @@ class WebhookHandlers {
       }
 
       // OPTIMIZATION: Skip if no active subscriptions (avoids unnecessary query)
-      const hasActiveSubscriptions = await this.db.hasAnyActiveSubscriptions(token.id);
+      const hasActiveSubscriptions = typeof this.db.hasAnyActiveSubscriptions === 'function'
+        ? await this.db.hasAnyActiveSubscriptions(token.id)
+        : false;
       if (!hasActiveSubscriptions) {
         logger.debug(`⏭️ Skipping OpenSea notification - token ${token.contract_address} has no active subscriptions`);
         return false;

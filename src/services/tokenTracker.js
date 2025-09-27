@@ -49,7 +49,9 @@ class TokenTracker {
         // Validate if active tokens should actually be active
         if (token.is_active) {
           // Check if token has active subscriptions
-          const hasActiveSubscriptions = await this.db.hasAnyActiveSubscriptions(token.id);
+          const hasActiveSubscriptions = typeof this.db.hasAnyActiveSubscriptions === 'function'
+            ? await this.db.hasAnyActiveSubscriptions(token.id)
+            : false;
 
           // Check if token has premium features
           const hasPremiumFeatures = await this.db.hasActivePremiumFeatures(token.contract_address);
@@ -250,7 +252,9 @@ class TokenTracker {
       }
 
       // Use comprehensive verification to check for any active subscriptions
-      const hasActiveSubscriptions = await this.db.hasAnyActiveSubscriptions(token.id);
+      const hasActiveSubscriptions = typeof this.db.hasAnyActiveSubscriptions === 'function'
+        ? await this.db.hasAnyActiveSubscriptions(token.id)
+        : false;
       logger.info(`🔍 COLLECTION UNSUBSCRIPTION DEBUG - Token ${contractAddress}:`);
       logger.info(`   - Token ID: ${token.id}`);
       logger.info(`   - Collection Slug: ${token.collection_slug}`);
@@ -917,7 +921,9 @@ class TokenTracker {
       // Check subscriptions for each token
       const tokenDetails = [];
       for (const token of allTokens) {
-        const hasSubscriptions = await this.db.hasAnyActiveSubscriptions(token.id);
+        const hasSubscriptions = typeof this.db.hasAnyActiveSubscriptions === 'function'
+          ? await this.db.hasAnyActiveSubscriptions(token.id)
+          : false;
         const hasPremiumFeatures = await this.db.hasActivePremiumFeatures(token.contract_address);
 
         tokenDetails.push({

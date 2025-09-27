@@ -101,29 +101,39 @@ class TokenTracker {
       logger.info('🧹 Checking for orphaned OpenSea subscriptions...');
       await this.cleanupOrphanedOpenSeaSubscriptions();
 
-      // Run database consistency check after token loading
-      logger.info('🔍 Running database consistency check...');
-      const consistencyResult = await this.db.checkDatabaseConsistency();
+      // Run database consistency check after token loading (if available)
+      if (typeof this.db.checkDatabaseConsistency === 'function') {
+        logger.info('🔍 Running database consistency check...');
+        try {
+          const consistencyResult = await this.db.checkDatabaseConsistency();
 
-      if (consistencyResult.isConsistent) {
-        logger.info('✅ Database consistency check passed - no issues found');
-      } else {
-        logger.warn(`⚠️ Database consistency check found ${consistencyResult.totalIssues} types of issues`);
+          if (consistencyResult.isConsistent) {
+            logger.info('✅ Database consistency check passed - no issues found');
+          } else {
+            logger.warn(`⚠️ Database consistency check found ${consistencyResult.totalIssues} types of issues`);
 
-        // Auto-fix critical issues that could cause event processing problems
-        for (const issue of consistencyResult.issues) {
-          if (issue.type === 'orphaned_subscriptions') {
-            logger.info(`🔧 Auto-fixing ${issue.count} orphaned subscriptions...`);
-            await this.db.fixOrphanedSubscriptions();
-          } else if (issue.type === 'orphaned_tokens') {
-            logger.info(`🔧 Auto-fixing ${issue.count} orphaned tokens...`);
-            await this.db.fixOrphanedTokens();
-          } else if (issue.type === 'inconsistent_active_tokens') {
-            logger.warn(`⚠️ Found ${issue.count} inconsistent active tokens - these were cleaned up during startup validation`);
+            // Auto-fix critical issues that could cause event processing problems
+            for (const issue of consistencyResult.issues) {
+              if (issue.type === 'orphaned_subscriptions') {
+                logger.info(`🔧 Auto-fixing ${issue.count} orphaned subscriptions...`);
+                if (typeof this.db.fixOrphanedSubscriptions === 'function') {
+                  await this.db.fixOrphanedSubscriptions();
+                }
+              } else if (issue.type === 'orphaned_tokens') {
+                logger.info(`🔧 Auto-fixing ${issue.count} orphaned tokens...`);
+                if (typeof this.db.fixOrphanedTokens === 'function') {
+                  await this.db.fixOrphanedTokens();
+                }
+              } else if (issue.type === 'inconsistent_active_tokens') {
+                logger.warn(`⚠️ Found ${issue.count} inconsistent active tokens - these were cleaned up during startup validation`);
+              }
+            }
           }
+        } catch (error) {
+          logger.warn('⚠️ Database consistency check failed:', error.message);
         }
-
-        logger.info('✅ Database consistency issues auto-fixed during startup');
+      } else {
+        logger.info('ℹ️ Database consistency check method not available - skipping');
       }
 
       logger.info('Existing tokens loaded and verified');

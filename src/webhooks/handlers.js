@@ -1392,7 +1392,7 @@ class WebhookHandlers {
     const eventMap = {
       'sold': {
         emoji: '💰🟢',
-        action: '<b>Buy</b>',
+        action: '**Buy**',
         priceLabel: 'Buy Price'
       },
       'listed': {

@@ -568,7 +568,7 @@ class WebhookHandlers {
       message += '\n';
     }
 
-    message += ` \nPowered by [Candy Codex](https://t.me/MintTechBot)`;
+    message += ` \nPowered by [Candy Codex](https://buy.candycodex.com/)`;
 
     // Add footer advertisements if available
     if (this.secureTrending) {
@@ -1342,7 +1342,7 @@ class WebhookHandlers {
       message += `[View Collection](https://opensea.io/collection/${eventData.collectionSlug})\n`;
     }
 
-    message += ` \nPowered by [Candy Codex](https://t.me/MintTechBot)`;
+    message += ` \nPowered by [Candy Codex](https://buy.candycodex.com/)`;
 
     // Add footer advertisements if available
     if (this.secureTrending) {

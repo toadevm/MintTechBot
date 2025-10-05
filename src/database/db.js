@@ -292,7 +292,10 @@ class Database {
   async createUser(telegramId, username, firstName) {
     const sql = `INSERT INTO users (telegram_id, username, first_name)
                  VALUES ($1, $2, $3)
-                 ON CONFLICT (telegram_id) DO NOTHING
+                 ON CONFLICT (telegram_id) DO UPDATE SET
+                   username = EXCLUDED.username,
+                   first_name = EXCLUDED.first_name,
+                   updated_at = NOW()
                  RETURNING id`;
     const result = await this.query(sql, [telegramId, username, firstName]);
     return { id: result.rows[0]?.id || null };
@@ -351,7 +354,29 @@ class Database {
   }
 
   async getTokensForCollectionSlug(collectionSlug) {
-    const sql = 'SELECT * FROM tracked_tokens WHERE collection_slug = $1 AND is_active = true';
+    // Return tokens that are either active OR have premium features
+    const sql = `
+      SELECT DISTINCT tt.*
+      FROM tracked_tokens tt
+      WHERE tt.collection_slug = $1
+      AND (
+        tt.is_active = true
+        OR EXISTS (
+          SELECT 1 FROM trending_payments tp
+          WHERE tp.token_id = tt.id AND tp.is_active = true AND tp.end_time > NOW()
+        )
+        OR EXISTS (
+          SELECT 1 FROM image_fee_payments ifp
+          WHERE LOWER(ifp.contract_address) = LOWER(tt.contract_address)
+          AND ifp.is_active = true AND ifp.end_time > NOW()
+        )
+        OR EXISTS (
+          SELECT 1 FROM footer_ads fa
+          WHERE LOWER(fa.contract_address) = LOWER(tt.contract_address)
+          AND fa.is_active = true AND fa.end_time > NOW()
+        )
+      )
+    `;
     return await this.all(sql, [collectionSlug]);
   }
 
@@ -403,6 +428,258 @@ class Database {
     const sql = 'DELETE FROM user_subscriptions WHERE user_id = $1 AND token_id = $2 AND chat_id = $3';
     const result = await this.query(sql, [userId, tokenId, chatId]);
     return { changes: result.rowCount };
+  }
+
+  async unsubscribeUserFromAllChats(userId, tokenId) {
+    const sql = 'DELETE FROM user_subscriptions WHERE user_id = $1 AND token_id = $2';
+    const result = await this.query(sql, [userId, tokenId]);
+    return { changes: result.rowCount };
+  }
+
+  // Database consistency checks
+  async checkDatabaseConsistency() {
+    const issues = [];
+    const logger = require('../services/logger');
+
+    try {
+      logger.info('🔍 Starting database consistency check...');
+
+      // 1. Check for orphaned user subscriptions (pointing to non-existent tokens)
+      const orphanedSubscriptions = await this.query(`
+        SELECT us.id, us.user_id, us.token_id, us.chat_id, u.telegram_id
+        FROM user_subscriptions us
+        JOIN users u ON us.user_id = u.id
+        LEFT JOIN tracked_tokens tt ON us.token_id = tt.id
+        WHERE tt.id IS NULL
+      `);
+
+      if (orphanedSubscriptions.rows.length > 0) {
+        issues.push({
+          type: 'orphaned_subscriptions',
+          count: orphanedSubscriptions.rows.length,
+          description: 'User subscriptions pointing to non-existent tokens',
+          records: orphanedSubscriptions.rows
+        });
+      }
+
+      // 2. Check for orphaned tokens (inactive tokens without premium features that should be deleted)
+      const orphanedTokens = await this.query(`
+        SELECT tt.id, tt.contract_address, tt.token_name, tt.is_active,
+               (SELECT COUNT(*) FROM user_subscriptions us WHERE us.token_id = tt.id) as subscription_count,
+               (
+                 SELECT COUNT(*)
+                 FROM trending_payments tp
+                 WHERE tp.token_id = tt.id AND tp.is_active = true AND tp.end_time > NOW()
+               ) +
+               (
+                 SELECT COUNT(*)
+                 FROM image_fee_payments ifp
+                 WHERE LOWER(ifp.contract_address) = LOWER(tt.contract_address)
+                 AND ifp.is_active = true AND ifp.end_time > NOW()
+               ) +
+               (
+                 SELECT COUNT(*)
+                 FROM footer_ads fa
+                 WHERE LOWER(fa.contract_address) = LOWER(tt.contract_address)
+                 AND fa.is_active = true AND fa.end_time > NOW()
+               ) as premium_count
+        FROM tracked_tokens tt
+        WHERE tt.is_active = false AND (
+          SELECT COUNT(*)
+          FROM trending_payments tp
+          WHERE tp.token_id = tt.id AND tp.is_active = true AND tp.end_time > NOW()
+        ) = 0 AND (
+          SELECT COUNT(*)
+          FROM image_fee_payments ifp
+          WHERE LOWER(ifp.contract_address) = LOWER(tt.contract_address)
+          AND ifp.is_active = true AND ifp.end_time > NOW()
+        ) = 0 AND (
+          SELECT COUNT(*)
+          FROM footer_ads fa
+          WHERE LOWER(fa.contract_address) = LOWER(tt.contract_address)
+          AND fa.is_active = true AND fa.end_time > NOW()
+        ) = 0
+      `);
+
+      if (orphanedTokens.rows.length > 0) {
+        issues.push({
+          type: 'orphaned_tokens',
+          count: orphanedTokens.rows.length,
+          description: 'Inactive tokens without premium features that should be deleted',
+          records: orphanedTokens.rows
+        });
+      }
+
+      // 3. Check for inconsistent token states (active tokens with no subscriptions and no premium features)
+      const inconsistentTokens = await this.query(`
+        SELECT tt.id, tt.contract_address, tt.token_name, tt.is_active,
+               (SELECT COUNT(*) FROM user_subscriptions us WHERE us.token_id = tt.id) as subscription_count,
+               (
+                 SELECT COUNT(*)
+                 FROM trending_payments tp
+                 WHERE tp.token_id = tt.id AND tp.is_active = true AND tp.end_time > NOW()
+               ) +
+               (
+                 SELECT COUNT(*)
+                 FROM image_fee_payments ifp
+                 WHERE LOWER(ifp.contract_address) = LOWER(tt.contract_address)
+                 AND ifp.is_active = true AND ifp.end_time > NOW()
+               ) +
+               (
+                 SELECT COUNT(*)
+                 FROM footer_ads fa
+                 WHERE LOWER(fa.contract_address) = LOWER(tt.contract_address)
+                 AND fa.is_active = true AND fa.end_time > NOW()
+               ) as premium_count
+        FROM tracked_tokens tt
+        WHERE tt.is_active = true AND (
+          SELECT COUNT(*) FROM user_subscriptions us WHERE us.token_id = tt.id
+        ) = 0 AND (
+          SELECT COUNT(*)
+          FROM trending_payments tp
+          WHERE tp.token_id = tt.id AND tp.is_active = true AND tp.end_time > NOW()
+        ) = 0 AND (
+          SELECT COUNT(*)
+          FROM image_fee_payments ifp
+          WHERE LOWER(ifp.contract_address) = LOWER(tt.contract_address)
+          AND ifp.is_active = true AND ifp.end_time > NOW()
+        ) = 0 AND (
+          SELECT COUNT(*)
+          FROM footer_ads fa
+          WHERE LOWER(fa.contract_address) = LOWER(tt.contract_address)
+          AND fa.is_active = true AND fa.end_time > NOW()
+        ) = 0
+      `);
+
+      if (inconsistentTokens.rows.length > 0) {
+        issues.push({
+          type: 'inconsistent_active_tokens',
+          count: inconsistentTokens.rows.length,
+          description: 'Active tokens with no subscriptions and no premium features',
+          records: inconsistentTokens.rows
+        });
+      }
+
+      // 4. Check for duplicate tokens (same contract address on same chain)
+      const duplicateTokens = await this.query(`
+        SELECT LOWER(contract_address) as contract_address, chain_name, COUNT(*) as count
+        FROM tracked_tokens
+        GROUP BY LOWER(contract_address), chain_name
+        HAVING COUNT(*) > 1
+      `);
+
+      if (duplicateTokens.rows.length > 0) {
+        issues.push({
+          type: 'duplicate_tokens',
+          count: duplicateTokens.rows.length,
+          description: 'Duplicate tokens with same contract address on same chain',
+          records: duplicateTokens.rows
+        });
+      }
+
+      logger.info(`✅ Database consistency check completed. Found ${issues.length} issue types.`);
+      return {
+        isConsistent: issues.length === 0,
+        totalIssues: issues.length,
+        issues: issues
+      };
+
+    } catch (error) {
+      logger.error('❌ Error during database consistency check:', error);
+      return {
+        isConsistent: false,
+        error: error.message,
+        issues: []
+      };
+    }
+  }
+
+  async fixOrphanedSubscriptions() {
+    const logger = require('../services/logger');
+    try {
+      const result = await this.query(`
+        DELETE FROM user_subscriptions
+        WHERE token_id NOT IN (SELECT id FROM tracked_tokens)
+      `);
+      logger.info(`🔧 Fixed ${result.rowCount} orphaned subscriptions`);
+      return { fixed: result.rowCount };
+    } catch (error) {
+      logger.error('❌ Error fixing orphaned subscriptions:', error);
+      throw error;
+    }
+  }
+
+  async fixOrphanedTokens() {
+    const logger = require('../services/logger');
+    try {
+      const result = await this.query(`
+        DELETE FROM tracked_tokens
+        WHERE is_active = false AND id NOT IN (
+          SELECT DISTINCT tp.token_id
+          FROM trending_payments tp
+          WHERE tp.is_active = true AND tp.end_time > NOW()
+        ) AND contract_address NOT IN (
+          SELECT DISTINCT contract_address
+          FROM image_fee_payments
+          WHERE is_active = true AND end_time > NOW()
+        ) AND contract_address NOT IN (
+          SELECT DISTINCT contract_address
+          FROM footer_ads
+          WHERE is_active = true AND end_time > NOW()
+        )
+      `);
+      logger.info(`🔧 Fixed ${result.rowCount} orphaned tokens`);
+      return { fixed: result.rowCount };
+    } catch (error) {
+      logger.error('❌ Error fixing orphaned tokens:', error);
+      throw error;
+    }
+  }
+
+  async hasAnyActiveSubscriptions(tokenId) {
+    const sql = `SELECT COUNT(*) as count
+                 FROM user_subscriptions us
+                 JOIN users u ON us.user_id = u.id
+                 WHERE us.token_id = $1 AND u.is_active = true`;
+    const result = await this.get(sql, [tokenId]);
+    return result && result.count > 0;
+  }
+
+  async hasActivePremiumFeatures(contractAddress) {
+    // Check for active trending payments
+    const trendingResult = await this.get(`
+      SELECT COUNT(*) as count
+      FROM trending_payments tp
+      JOIN tracked_tokens tt ON tp.token_id = tt.id
+      WHERE LOWER(tt.contract_address) = LOWER($1)
+      AND tp.is_active = true AND tp.end_time > NOW()
+    `, [contractAddress]);
+
+    if (trendingResult && trendingResult.count > 0) {
+      return true;
+    }
+
+    // Check for active image fee payments
+    const imageResult = await this.get(`
+      SELECT COUNT(*) as count
+      FROM image_fee_payments
+      WHERE LOWER(contract_address) = LOWER($1)
+      AND is_active = true AND end_time > NOW()
+    `, [contractAddress]);
+
+    if (imageResult && imageResult.count > 0) {
+      return true;
+    }
+
+    // Check for active footer ads
+    const footerResult = await this.get(`
+      SELECT COUNT(*) as count
+      FROM footer_ads
+      WHERE LOWER(contract_address) = LOWER($1)
+      AND is_active = true AND end_time > NOW()
+    `, [contractAddress]);
+
+    return footerResult && footerResult.count > 0;
   }
 
   async createPendingPayment(userId, tokenId, expectedAmount, durationHours) {
@@ -615,6 +892,66 @@ class Database {
                  WHERE is_active = true AND end_time <= NOW()`;
     const result = await this.query(sql);
     return { changes: result.rowCount };
+  }
+
+  async cleanupOrphanedTokens() {
+    try {
+      logger.info('🧹 Starting cleanup of orphaned inactive tokens...');
+
+      // Find inactive tokens without premium features or active subscriptions
+      const orphanedTokens = await this.all(`
+        SELECT tt.id, tt.contract_address, tt.token_name, tt.collection_slug
+        FROM tracked_tokens tt
+        WHERE tt.is_active = false
+          AND NOT EXISTS (
+            SELECT 1 FROM user_subscriptions us
+            JOIN users u ON us.user_id = u.id
+            WHERE us.token_id = tt.id AND u.is_active = true
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM trending_payments tp
+            WHERE tp.token_id = tt.id
+              AND tp.is_active = true AND tp.end_time > NOW()
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM footer_ads fa
+            WHERE LOWER(fa.contract_address) = LOWER(tt.contract_address)
+              AND fa.is_active = true AND fa.end_time > NOW()
+          )
+      `);
+
+      logger.info(`Found ${orphanedTokens.length} orphaned inactive tokens to cleanup`);
+
+      if (orphanedTokens.length === 0) {
+        logger.info('✅ No orphaned tokens found - database is clean');
+        return { cleaned: 0, tokens: [] };
+      }
+
+      // Delete orphaned tokens
+      const cleanedTokens = [];
+      for (const token of orphanedTokens) {
+        logger.info(`🗑️ Deleting orphaned token: ${token.contract_address} (${token.token_name})`);
+
+        // Delete any remaining subscriptions (should be none, but cleanup)
+        await this.run('DELETE FROM user_subscriptions WHERE token_id = $1', [token.id]);
+
+        // Delete the token record
+        await this.run('DELETE FROM tracked_tokens WHERE id = $1', [token.id]);
+
+        cleanedTokens.push({
+          contract_address: token.contract_address,
+          token_name: token.token_name,
+          collection_slug: token.collection_slug
+        });
+      }
+
+      logger.info(`✅ Cleaned up ${cleanedTokens.length} orphaned tokens`);
+      return { cleaned: cleanedTokens.length, tokens: cleanedTokens };
+
+    } catch (error) {
+      logger.error('❌ Error during orphaned token cleanup:', error);
+      throw error;
+    }
   }
 
   async close() {

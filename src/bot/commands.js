@@ -198,9 +198,9 @@ Simple and focused - boost your NFTs easily! 🚀`;
     // Manual transaction validation command
     bot.command('validate', async (ctx) => {
       try {
-        const userId = ctx.from.id;
+        const telegramId = ctx.from.id.toString();
         const args = ctx.message.text.split(' ').slice(1);
-        
+
         if (args.length === 0) {
           await ctx.reply(
             '⚠️ Please provide a transaction hash.\n\n' +
@@ -212,7 +212,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
         }
 
         const txHash = args[0];
-        
+
         // Validate transaction hash format
         if (!txHash.startsWith('0x') || txHash.length !== 66) {
           await ctx.reply('⚠️ Invalid transaction hash format. Must start with 0x and be 66 characters long.');
@@ -227,7 +227,14 @@ Simple and focused - boost your NFTs easily! 🚀`;
           return;
         }
 
-        const result = await this.secureTrending.validateUserTransaction(userId, txHash);
+        // Get database user ID
+        const user = await this.db.getUser(telegramId);
+        if (!user) {
+          await ctx.reply('❌ User not found. Please use /start first.');
+          return;
+        }
+
+        const result = await this.secureTrending.validateUserTransaction(user.id, txHash);
         
         if (result.success) {
           const successMessage = `✅ **Payment Validated Successfully!**\n\n` +
@@ -2128,7 +2135,15 @@ Choose an option:`;
 
   async showPaymentInstructions(ctx, tokenId, duration, isPremium = false, chain = 'ethereum') {
     try {
-      const userId = ctx.from.id.toString();
+      const telegramId = ctx.from.id.toString();
+
+      // Ensure user exists in database and get the database ID
+      const userResult = await this.db.createUser(telegramId, ctx.from.username, ctx.from.first_name);
+      const userId = userResult.id;
+
+      if (!userId) {
+        throw new Error('Failed to create or retrieve user');
+      }
 
       // Get chain configuration
       const chainConfig = this.chainManager ? this.chainManager.getChain(chain) : null;
@@ -2156,7 +2171,7 @@ Choose an option:`;
       message += `⏰ Payment expires in 30 minutes\n\n`;
       message += `After successful transaction, submit your transaction hash below:`;
 
-      this.pendingPayments.set(userId, {
+      this.pendingPayments.set(telegramId, {
         tokenId: tokenId,
         duration: duration,
         isPremium: isPremium,
@@ -3428,22 +3443,29 @@ Select trending duration:`;
         });
       }
 
-      const userId = ctx.from.id.toString();
-      const validationType = this.userStates.get(userId + '_validation_type');
-      const contractAddress = this.userStates.get(userId + '_validation_contract');
-      const validationChain = this.userStates.get(userId + '_validation_chain') || 'ethereum';
-      const tokenId = this.userStates.get(userId + '_validation_token_id');
+      const telegramId = ctx.from.id.toString();
+      const validationType = this.userStates.get(telegramId + '_validation_type');
+      const contractAddress = this.userStates.get(telegramId + '_validation_contract');
+      const validationChain = this.userStates.get(telegramId + '_validation_chain') || 'ethereum';
+      const tokenId = this.userStates.get(telegramId + '_validation_token_id');
 
       if (validationType === 'trending') {
         // For trending, we can validate immediately with chain information
         await ctx.reply('🔍 Validating your transaction... Please wait.');
 
-        const result = await this.secureTrending.validateUserTransaction(userId, txHash, validationChain, tokenId);
+        // Get database user ID
+        const user = await this.db.getUser(telegramId);
+        if (!user) {
+          await ctx.reply('❌ User not found. Please use /start first.');
+          return;
+        }
+
+        const result = await this.secureTrending.validateUserTransaction(user.id, txHash, validationChain, tokenId);
 
         this.clearUserState(ctx.from.id);
-        this.userStates.delete(userId + '_validation_type');
-        this.userStates.delete(userId + '_validation_chain');
-        this.userStates.delete(userId + '_validation_token_id');
+        this.userStates.delete(telegramId + '_validation_type');
+        this.userStates.delete(telegramId + '_validation_chain');
+        this.userStates.delete(telegramId + '_validation_token_id');
 
         if (result.success) {
           const successMessage = `✅ **Payment Validated Successfully!**\n\n` +

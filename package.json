@@ -36,6 +36,7 @@
     "@nomicfoundation/hardhat-verify": "^2.1.1",
     "@typechain/ethers-v6": "^0.5.1",
     "@typechain/hardhat": "^9.1.0",
-    "hardhat": "^2.26.3"
+    "hardhat": "^2.26.3",
+    "hardhat-deploy": "^1.0.4"
   }
 }

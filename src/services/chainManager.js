@@ -21,6 +21,9 @@ class ChainManager {
 
   async loadChainConfigurations() {
     try {
+      // Get Alchemy API key from environment
+      const alchemyApiKey = process.env.ALCHEMY_API_KEY;
+
       // Hardcoded chain configurations with multichain payment support
       const chainConfigs = [
         {
@@ -33,7 +36,7 @@ class ChainManager {
           isActive: true,
           openSeaSupported: true,
           openSeaName: 'ethereum',
-          rpcUrl: 'https://eth-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          rpcUrl: `https://eth-mainnet.g.alchemy.com/v2/${alchemyApiKey}`,
           paymentContract: '0x4704eaF9d285a1388c0370Bc7d05334d313f92Be'
         },
         {
@@ -46,7 +49,7 @@ class ChainManager {
           isActive: true,
           openSeaSupported: true,
           openSeaName: 'arbitrum',
-          rpcUrl: 'https://arb-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          rpcUrl: `https://arb-mainnet.g.alchemy.com/v2/${alchemyApiKey}`,
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         },
         {
@@ -59,7 +62,7 @@ class ChainManager {
           isActive: true,
           openSeaSupported: true,
           openSeaName: 'optimism',
-          rpcUrl: 'https://opt-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          rpcUrl: `https://opt-mainnet.g.alchemy.com/v2/${alchemyApiKey}`,
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         },
         {
@@ -72,7 +75,7 @@ class ChainManager {
           isActive: true,
           openSeaSupported: true,
           openSeaName: 'avalanche',
-          rpcUrl: 'https://avax-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          rpcUrl: `https://avax-mainnet.g.alchemy.com/v2/${alchemyApiKey}`,
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         },
         {
@@ -97,7 +100,7 @@ class ChainManager {
           isActive: true,
           openSeaSupported: true,
           openSeaName: 'bera_chain',
-          rpcUrl: 'https://berachain-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          rpcUrl: `https://berachain-mainnet.g.alchemy.com/v2/${alchemyApiKey}`,
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         },
         {
@@ -110,7 +113,7 @@ class ChainManager {
           isActive: true,
           openSeaSupported: true,
           openSeaName: 'apechain',
-          rpcUrl: 'https://apechain-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          rpcUrl: `https://apechain-mainnet.g.alchemy.com/v2/${alchemyApiKey}`,
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         },
         {
@@ -123,7 +126,7 @@ class ChainManager {
           isActive: true,
           openSeaSupported: true,
           openSeaName: 'abstract',
-          rpcUrl: 'https://abstract-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          rpcUrl: `https://abstract-mainnet.g.alchemy.com/v2/${alchemyApiKey}`,
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         },
         {
@@ -136,7 +139,7 @@ class ChainManager {
           isActive: true,
           openSeaSupported: true,
           openSeaName: 'base',
-          rpcUrl: 'https://base-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          rpcUrl: `https://base-mainnet.g.alchemy.com/v2/${alchemyApiKey}`,
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         },
         {
@@ -149,7 +152,7 @@ class ChainManager {
           isActive: true,
           openSeaSupported: true,
           openSeaName: 'ronin',
-          rpcUrl: 'https://ronin-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs',
+          rpcUrl: `https://ronin-mainnet.g.alchemy.com/v2/${alchemyApiKey}`,
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         }
       ];

@@ -1,19 +1,23 @@
 const logger = require('../services/logger');
 
 class WebhookHandlers {
-  constructor(database, bot, trendingService = null, secureTrendingService = null, openSeaService = null, chainManager = null) {
+  constructor(database, bot, trendingService = null, secureTrendingService = null, openSeaService = null, chainManager = null, magicEdenService = null, heliusService = null) {
     this.db = database;
     this.bot = bot;
     this.trending = trendingService;
     this.secureTrending = secureTrendingService;
     this.openSea = openSeaService;
     this.chainManager = chainManager;
+    this.magicEden = magicEdenService;
+    this.helius = heliusService;
     this.processedTransactions = new Map();
     this.processedOpenSeaEvents = new Map(); // Track OpenSea events to prevent duplicates
+    this.processedHeliusEvents = new Map(); // Track Helius events to prevent duplicates
     this.CACHE_EXPIRY_MS = 10 * 60 * 1000;
     setInterval(() => {
       this.cleanupExpiredTransactions();
       this.cleanupExpiredOpenSeaEvents();
+      this.cleanupExpiredHeliusEvents();
     }, 5 * 60 * 1000);
   }
 
@@ -106,6 +110,20 @@ class WebhookHandlers {
     }
     if (removedCount > 0) {
       logger.debug(`Cleaned up ${removedCount} expired OpenSea event cache entries`);
+    }
+  }
+
+  cleanupExpiredHeliusEvents() {
+    const now = Date.now();
+    let removedCount = 0;
+    for (const [eventKey, timestamp] of this.processedHeliusEvents.entries()) {
+      if (now - timestamp > this.CACHE_EXPIRY_MS) {
+        this.processedHeliusEvents.delete(eventKey);
+        removedCount++;
+      }
+    }
+    if (removedCount > 0) {
+      logger.debug(`Cleaned up ${removedCount} expired Helius event cache entries`);
     }
   }
 
@@ -1705,6 +1723,463 @@ class WebhookHandlers {
       logger.debug(`🗑️ Cleaned up temp image: ${imagePath}`);
     } catch (error) {
       logger.debug(`⚠️ Failed to cleanup temp image: ${error.message}`);
+    }
+  }
+
+  // ==================== HELIUS WEBHOOK HANDLERS (SOLANA / MAGIC EDEN) ====================
+
+  /**
+   * Handle Helius webhook for Solana NFT sales on Magic Eden
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   */
+  async handleHeliusWebhook(req, res) {
+    try {
+      // Verify auth header
+      const authHeader = req.headers.authorization;
+      if (!this.helius || !this.helius.verifyWebhookAuth(authHeader)) {
+        logger.warn('⚠️ Unauthorized Helius webhook request');
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const transactions = req.body;
+      logger.info(`🌟 Received Helius webhook with ${transactions.length} transactions`);
+
+      await this.db.logWebhook('helius', transactions, false);
+      let processedCount = 0;
+
+      for (const transaction of transactions) {
+        try {
+          if (transaction.type === 'NFT_SALE') {
+            logger.info(`💰 Processing Helius NFT_SALE event: ${transaction.signature}`);
+            const processed = await this.handleHeliusNFTSale(transaction);
+            if (processed) processedCount++;
+          }
+        } catch (error) {
+          logger.error(`Error processing Helius transaction ${transaction.signature}:`, error);
+        }
+      }
+
+      await this.db.logWebhook('helius', transactions, processedCount > 0);
+      logger.info(`✅ Helius webhook processed: ${processedCount}/${transactions.length} events`);
+
+      res.status(200).json({
+        success: true,
+        processed: processedCount,
+        message: 'Webhook processed successfully'
+      });
+    } catch (error) {
+      logger.error('Error handling Helius webhook:', error);
+      if (req.body) {
+        await this.db.logWebhook('helius', req.body, false, error.message);
+      }
+      res.status(500).json({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  }
+
+  /**
+   * Handle a single NFT sale event from Helius
+   * @param {Object} transaction - The transaction object from Helius
+   * @returns {Promise<boolean>} True if processed successfully
+   */
+  async handleHeliusNFTSale(transaction) {
+    try {
+      if (!this.helius) {
+        logger.warn('Helius service not available');
+        return false;
+      }
+
+      // Parse the NFT sale event
+      const saleData = this.helius.parseNFTSaleEvent(transaction);
+      if (!saleData) {
+        logger.warn('Failed to parse Helius NFT sale event');
+        return false;
+      }
+
+      // Create deduplication key
+      const eventKey = `helius:${saleData.signature}:${saleData.mintAddress}`;
+      if (this.isHeliusEventProcessed(eventKey)) {
+        logger.info(`⏭️ Helius event ${eventKey} already processed, skipping`);
+        return false;
+      }
+
+      // Mark as being processed
+      this.markHeliusEventProcessed(eventKey);
+
+      logger.info(`🌟 HELIUS NFT SALE - Mint: ${saleData.mintAddress}, Price: ${saleData.amountSol} SOL`);
+
+      // Find tracked tokens for this mint address
+      const token = await this.db.getTrackedToken(saleData.mintAddress, 'solana');
+      if (!token || !token.is_active) {
+        logger.debug(`Token ${saleData.mintAddress} not tracked or inactive, skipping`);
+        return false;
+      }
+
+      logger.info(`📊 Found tracked Solana NFT: ${token.token_name}`);
+
+      // Log activity to database
+      const activityData = {
+        contractAddress: saleData.mintAddress,
+        tokenId: null, // Solana uses mint addresses
+        activityType: 'buy',
+        fromAddress: saleData.seller,
+        toAddress: saleData.buyer,
+        transactionHash: saleData.signature,
+        blockNumber: saleData.slot,
+        price: saleData.amount.toString(), // Store lamports
+        marketplace: 'Magic Eden'
+      };
+
+      await this.db.logNFTActivity(activityData);
+
+      // Notify subscribed users
+      await this.notifyUsersMagicEden(token, saleData, activityData);
+
+      // Check if token should notify channels
+      const shouldNotifyChannels = await this.shouldNotifyChannelsForToken(token.contract_address);
+      if (shouldNotifyChannels.notify) {
+        logger.info(`📢 Notifying channels for ${token.token_name} via Magic Eden sale (${shouldNotifyChannels.reason})`);
+        await this.notifyChannelsMagicEden(token, saleData, activityData, shouldNotifyChannels.channels, shouldNotifyChannels.isTrending);
+      }
+
+      logger.info(`✅ Successfully processed Helius NFT sale for ${token.token_name}`);
+      return true;
+
+    } catch (error) {
+      logger.error('Error handling Helius NFT sale:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Check if Helius event has been processed
+   * @param {string} eventKey - Unique event key
+   * @returns {boolean} True if already processed
+   */
+  isHeliusEventProcessed(eventKey) {
+    const timestamp = this.processedHeliusEvents.get(eventKey);
+    if (!timestamp) return false;
+
+    const isValid = (Date.now() - timestamp) <= this.CACHE_EXPIRY_MS;
+    if (!isValid) {
+      this.processedHeliusEvents.delete(eventKey);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Mark Helius event as processed
+   * @param {string} eventKey - Unique event key
+   */
+  markHeliusEventProcessed(eventKey) {
+    this.processedHeliusEvents.set(eventKey, Date.now());
+  }
+
+  /**
+   * Notify users about Magic Eden sale
+   * @param {Object} token - Token data from database
+   * @param {Object} saleData - Parsed sale data from Helius
+   * @param {Object} activityData - Activity data for database
+   * @returns {Promise<boolean>} True if notifications sent successfully
+   */
+  async notifyUsersMagicEden(token, saleData, activityData) {
+    try {
+      // Get users with their subscription context (chat_id)
+      const subscriptions = await this.db.all(`
+        SELECT u.telegram_id, u.username, us.notification_enabled, us.chat_id
+        FROM users u
+        JOIN user_subscriptions us ON u.id = us.user_id
+        WHERE us.token_id = $1 AND us.notification_enabled = true AND u.is_active = true
+      `, [token.id]);
+
+      if (!subscriptions || subscriptions.length === 0) {
+        logger.debug(`No users subscribed to Solana token: ${token.contract_address}`);
+        return false;
+      }
+
+      const message = await this.formatMagicEdenSaleMessage(token, saleData);
+      logger.info(`📤 Sending Magic Eden sale notification to ${subscriptions.length} subscription(s) for ${token.token_name}`);
+
+      let successCount = 0;
+
+      for (const subscription of subscriptions) {
+        try {
+          let targetChatId;
+          if (subscription.chat_id === 'private') {
+            targetChatId = subscription.telegram_id;
+          } else {
+            targetChatId = subscription.chat_id;
+          }
+
+          await this.sendMagicEdenNotificationWithImage(targetChatId, message, saleData, token);
+          successCount++;
+          logger.info(`✅ Magic Eden notification sent to ${subscription.chat_id === 'private' ? 'private chat' : 'group'} ${targetChatId}`);
+        } catch (error) {
+          logger.error(`❌ Failed to send Magic Eden notification to ${subscription.chat_id}:`, error);
+
+          if (error.response?.error_code === 403 || error.response?.error_code === 400) {
+            await this.db.run(
+              'UPDATE users SET is_active = false WHERE telegram_id = $1',
+              [subscription.telegram_id]
+            );
+            logger.info(`Deactivated user ${subscription.telegram_id} due to delivery failure`);
+          }
+        }
+      }
+
+      logger.info(`📊 Magic Eden notification summary: ${successCount}/${subscriptions.length} notifications sent`);
+      return successCount > 0;
+    } catch (error) {
+      logger.error('Error notifying users for Magic Eden sale:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Notify channels about Magic Eden sale
+   * @param {Object} token - Token data
+   * @param {Object} saleData - Sale data
+   * @param {Object} activityData - Activity data
+   * @param {Array} channels - Channels to notify
+   * @param {boolean} isTrending - Whether token is trending
+   * @returns {Promise<boolean>} True if notifications sent
+   */
+  async notifyChannelsMagicEden(token, saleData, activityData, channels, isTrending = false) {
+    try {
+      // Security check
+      const verification = await this.verifyChannelNotificationPermission(token.contract_address, token.token_name);
+      if (!verification.authorized) {
+        logger.warn(`🔒 BLOCKED MAGIC EDEN CHANNEL NOTIFICATION: ${token.token_name} - ${verification.reason}`);
+        return false;
+      }
+
+      if (!channels || channels.length === 0) {
+        return false;
+      }
+
+      const message = isTrending
+        ? await this.formatTrendingMagicEdenMessage(token, saleData)
+        : await this.formatMagicEdenSaleMessage(token, saleData);
+
+      let notifiedCount = 0;
+      for (const channel of channels) {
+        try {
+          logger.info(`📤 SENDING Magic Eden to channel ${channel.channel_title}: ${token.token_name}`);
+          await this.sendMagicEdenNotificationWithImage(channel.telegram_chat_id, message, saleData, token);
+          notifiedCount++;
+          logger.info(`✅ Magic Eden notification sent to channel: ${channel.channel_title}`);
+        } catch (error) {
+          logger.error(`❌ Failed to send Magic Eden notification to channel ${channel.channel_title}:`, error);
+
+          if (error.response?.error_code === 403) {
+            await this.db.run(
+              'UPDATE channels SET is_active = false WHERE telegram_chat_id = $1',
+              [channel.telegram_chat_id]
+            );
+          }
+        }
+      }
+
+      logger.info(`📢 Notified ${notifiedCount}/${channels.length} channels for Magic Eden sale`);
+      return notifiedCount > 0;
+    } catch (error) {
+      logger.error('Error notifying channels for Magic Eden sale:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Format Magic Eden sale message for Telegram
+   * @param {Object} token - Token data
+   * @param {Object} saleData - Sale data from Helius
+   * @returns {Promise<string>} Formatted message
+   */
+  async formatMagicEdenSaleMessage(token, saleData) {
+    const nftName = token.token_name || 'Solana NFT';
+
+    let message = `💰🟢 **${nftName}** Sale on Magic Eden\n\n`;
+    message += `💰 **Price:** ${saleData.amountSol} SOL`;
+
+    // Add USD value if PriceService is available
+    if (this.secureTrending && this.secureTrending.priceService) {
+      try {
+        const solPrice = await this.secureTrending.priceService.getTokenPrice('SOL');
+        if (solPrice) {
+          const usdValue = parseFloat(saleData.amountSol) * solPrice;
+          message += ` ($${usdValue.toFixed(2)})`;
+        }
+      } catch (error) {
+        logger.warn('Failed to get SOL price for USD conversion:', error);
+      }
+    }
+
+    message += '\n';
+    message += `👤 **Buyer:** \`${this.shortenAddress(saleData.buyer)}\`\n`;
+    message += `📤 **Seller:** \`${this.shortenAddress(saleData.seller)}\`\n`;
+    message += `🏪 **Marketplace:** Magic Eden\n`;
+    message += `🔗 **Chain:** ◎ Solana\n`;
+    message += `📮 **Mint:** \`${this.shortenAddress(saleData.mintAddress)}\`\n`;
+    message += `🔗 **TX:** \`${this.shortenAddress(saleData.signature)}\`\n`;
+    message += `[View on Solana Explorer](https://explorer.solana.com/tx/${saleData.signature})\n`;
+
+    message += ` \nPowered by [Candy Codex](https://buy.candycodex.com/)`;
+
+    // Add footer advertisements
+    if (this.secureTrending) {
+      try {
+        const footerAds = await this.secureTrending.getActiveFooterAds();
+        if (footerAds && footerAds.length > 0) {
+          const adLinks = footerAds.map(ad => {
+            const ticker = ad.ticker_symbol || ad.token_symbol || 'TOKEN';
+            return `[⭐️${ticker}](${ad.custom_link})`;
+          });
+
+          if (adLinks.length < 3) {
+            adLinks.push('[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)');
+          }
+
+          message += `\n${adLinks.join(' ')}`;
+        } else {
+          message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
+        }
+      } catch (error) {
+        message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
+      }
+    } else {
+      message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
+    }
+
+    return message;
+  }
+
+  /**
+   * Format trending Magic Eden sale message
+   * @param {Object} token - Token data
+   * @param {Object} saleData - Sale data
+   * @returns {Promise<string>} Formatted message
+   */
+  async formatTrendingMagicEdenMessage(token, saleData) {
+    let message = `🔥 **TRENDING:** ${token.token_name || 'Solana NFT'}\n\n`;
+    const regularMessage = await this.formatMagicEdenSaleMessage(token, saleData);
+    const lines = regularMessage.split('\n');
+    message += lines.slice(1).join('\n');
+    return message;
+  }
+
+  /**
+   * Send Magic Eden notification with image
+   * @param {string} chatId - Telegram chat ID
+   * @param {string} message - Message text
+   * @param {Object} saleData - Sale data
+   * @param {Object} token - Token data
+   */
+  async sendMagicEdenNotificationWithImage(chatId, message, saleData, token) {
+    // Check if image fee is paid for this contract
+    const hasImageFee = this.secureTrending ? await this.secureTrending.isImageFeeActive(token.contract_address) : false;
+    logger.info(`🖼️ MAGIC EDEN IMAGE FEE CHECK: ${token.contract_address} - hasImageFee: ${hasImageFee}`);
+
+    try {
+      let imagePath = null;
+
+      if (hasImageFee && saleData.nfts && saleData.nfts[0]?.imageUri) {
+        // For PAID tokens: Try to fetch actual NFT image
+        logger.info(`✅ IMAGE FEE PAID: Processing Magic Eden NFT image`);
+        try {
+          imagePath = await this.downloadAndResizeSolanaImage(saleData.nfts[0].imageUri, saleData.mintAddress);
+        } catch (error) {
+          logger.warn(`Failed to process Solana NFT image: ${error.message}`);
+          imagePath = null;
+        }
+      }
+
+      // Fallback to default image if no paid image or download failed
+      if (!imagePath) {
+        logger.info(`🚫 Using default tracking image for Magic Eden notification`);
+        const path = require('path');
+        imagePath = path.join(__dirname, '../images/candyImage.jpg');
+      }
+
+      const boostButton = {
+        inline_keyboard: [[
+          {
+            text: 'BOOST YOUR NFT🟢',
+            callback_data: '/buy_trending'
+          }
+        ]]
+      };
+
+      await this.bot.telegram.sendPhoto(chatId, { source: imagePath }, {
+        caption: message,
+        parse_mode: 'Markdown',
+        reply_markup: boostButton
+      });
+
+      logger.info(`✅ Magic Eden notification with image sent successfully to ${chatId}`);
+
+    } catch (error) {
+      logger.error(`Error sending Magic Eden notification with image:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Download and resize Solana NFT image
+   * @param {string} imageUrl - NFT image URL
+   * @param {string} mintAddress - Solana mint address
+   * @returns {Promise<string>} Path to resized image
+   */
+  async downloadAndResizeSolanaImage(imageUrl, mintAddress) {
+    const axios = require('axios');
+    const sharp = require('sharp');
+    const fs = require('fs').promises;
+    const path = require('path');
+
+    try {
+      const tempDir = path.join(__dirname, '../../temp_solana_images');
+      await fs.mkdir(tempDir, { recursive: true });
+
+      const fileName = `solana_${mintAddress.slice(0, 8)}_${Date.now()}.jpg`;
+      const tempPath = path.join(tempDir, fileName);
+      const resizedPath = path.join(tempDir, `resized_${fileName}`);
+
+      // Download the image
+      logger.info(`📥 Downloading Solana NFT image: ${imageUrl}`);
+      const response = await axios.get(imageUrl, {
+        responseType: 'arraybuffer',
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+
+      await fs.writeFile(tempPath, response.data);
+      logger.info(`💾 Downloaded Solana image saved: ${tempPath}`);
+
+      // Resize to 300x300
+      await sharp(tempPath)
+        .resize(300, 300, {
+          fit: 'cover',
+          position: 'center'
+        })
+        .jpeg({
+          quality: 85,
+          progressive: true
+        })
+        .toFile(resizedPath);
+
+      // Clean up original
+      await fs.unlink(tempPath).catch(() => {});
+
+      logger.info(`🖼️ Solana image resized to 300x300: ${resizedPath}`);
+      return resizedPath;
+
+    } catch (error) {
+      logger.error(`❌ Failed to download/resize Solana image: ${error.message}`);
+      throw error;
     }
   }
 }

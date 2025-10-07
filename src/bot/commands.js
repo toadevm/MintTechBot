@@ -820,7 +820,14 @@ Choose your trending boost option:`;
             this.userStates.set(ctx.from.id.toString() + '_selected_chain', chainName);
             this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);
 
-            const message = `🔗 <b>${chainConfig.displayName}</b> selected!\n\n📝 Please enter the NFT contract address to track on ${chainConfig.displayName}:\n\n💡 Make sure the contract exists on ${chainConfig.displayName} network.`;
+            // Customize message based on chain type
+            let message;
+            if (chainName === 'solana') {
+              message = `◎ <b>Solana</b> selected!\n\n📝 Please enter the collection symbol:\n\nExample: <code>mad_lads</code>\n\n💡 The collection must exist on Magic Eden marketplace.`;
+            } else {
+              message = `🔗 <b>${chainConfig.displayName}</b> selected!\n\n📝 Please enter the NFT contract address to track on ${chainConfig.displayName}:\n\n💡 Make sure the contract exists on ${chainConfig.displayName} network.`;
+            }
+
             const keyboard = Markup.inlineKeyboard([
               [Markup.button.callback('◀️ Back to Chain Selection', 'back_to_chain_selection')]
             ]);
@@ -1562,7 +1569,20 @@ Choose your trending boost option:`;
       }
 
       // Handle NFT addresses without specific state (fallback for add_token)
+      // EVM address pattern
       if (text.match(/^0x[a-fA-F0-9]{40}$/)) {
+        await this.handleContractAddress(ctx, text);
+        return;
+      }
+
+      // Solana address pattern (base58, 32-44 characters)
+      if (text.match(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)) {
+        await this.handleContractAddress(ctx, text);
+        return;
+      }
+
+      // Magic Eden collection symbol or URL
+      if (text.match(/^[a-zA-Z0-9_-]+$/) && text.length < 50 && this.getUserState(userId) === this.STATE_EXPECTING_CONTRACT) {
         await this.handleContractAddress(ctx, text);
         return;
       }
@@ -1709,8 +1729,14 @@ Simple and focused - boost your NFTs easily! 🚀`;
       const selectedChain = this.userStates.get(ctx.from.id.toString() + '_selected_chain') || 'ethereum';
       const chainConfig = this.chainManager ? this.chainManager.getChain(selectedChain) : null;
 
-      logger.info(`Token addition - Telegram ID: ${ctx.from.id}, Database User ID: ${user.id}, Contract: ${contractAddress}, Chain: ${selectedChain}`);
-      ctx.reply(`🔍 Validating and adding contract on ${chainConfig ? chainConfig.displayName : selectedChain}...`);
+      logger.info(`Token addition - Telegram ID: ${ctx.from.id}, Database User ID: ${user.id}, Address: ${contractAddress}, Chain: ${selectedChain}`);
+
+      // Customize validation message based on chain
+      let validationMessage = `🔍 Validating and adding on ${chainConfig ? chainConfig.displayName : selectedChain}...`;
+      if (selectedChain === 'solana') {
+        validationMessage = `◎ Validating Solana NFT via Magic Eden...`;
+      }
+      ctx.reply(validationMessage);
 
       this.clearUserState(ctx.from.id);
       // Clear the selected chain from session data

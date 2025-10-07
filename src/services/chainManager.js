@@ -154,6 +154,21 @@ class ChainManager {
           openSeaName: 'ronin',
           rpcUrl: `https://ronin-mainnet.g.alchemy.com/v2/${alchemyApiKey}`,
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
+        },
+        {
+          name: 'solana',
+          chainId: 900, // Custom ID for Solana mainnet
+          displayName: 'Solana',
+          currencySymbol: 'SOL',
+          emoji: '◎',
+          isTestnet: false,
+          isActive: true,
+          isSolana: true, // Flag for Solana-specific handling
+          openSeaSupported: false,
+          magicEdenSupported: true,
+          heliusWebhookSupported: true,
+          rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
+          paymentContract: null // Solana uses different payment mechanism
         }
       ];
 
@@ -200,6 +215,14 @@ class ChainManager {
 
   getAlchemySupportedChains() {
     return Array.from(this.chains.values()).filter(chain => chain.alchemyNetwork);
+  }
+
+  getMagicEdenSupportedChains() {
+    return Array.from(this.chains.values()).filter(chain => chain.magicEdenSupported);
+  }
+
+  getSolanaChains() {
+    return Array.from(this.chains.values()).filter(chain => chain.isSolana);
   }
 
   // User chain preference methods

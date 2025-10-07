@@ -2,13 +2,16 @@ const logger = require('./logger');
 const CollectionResolver = require('./collectionResolver');
 
 class TokenTracker {
-  constructor(database, openSeaService, webhookHandlers = null, chainManager = null) {
+  constructor(database, openSeaService, webhookHandlers = null, chainManager = null, magicEdenService = null, heliusService = null) {
     this.db = database;
     this.openSea = openSeaService;
     this.webhookHandlers = webhookHandlers; // Add webhook handlers reference
     this.chainManager = chainManager;
+    this.magicEden = magicEdenService; // Magic Eden service for Solana NFT validation
+    this.helius = heliusService; // Helius service for Solana webhook management
     this.trackingIntervals = new Map();
     this.openSeaSubscriptions = new Map(); // Track OpenSea collection subscriptions
+    this.heliusWebhooks = new Map(); // Track Helius webhook subscriptions for Solana
     this.collectionResolver = new CollectionResolver(); // Add collection resolver
   }
 
@@ -16,6 +19,37 @@ class TokenTracker {
   setWebhookHandlers(webhookHandlers) {
     this.webhookHandlers = webhookHandlers;
     logger.info('WebhookHandlers set for TokenTracker - OpenSea notifications enabled');
+  }
+
+  /**
+   * Validate Solana address format (mint address or collection symbol)
+   * @param {string} address - Solana mint address or collection symbol
+   * @returns {Object} Validation result with address type
+   */
+  validateSolanaAddress(address) {
+    if (!address || typeof address !== 'string') {
+      return { isValid: false, reason: 'Invalid address format', addressType: null };
+    }
+
+    // Check if it's a Solana base58 address (32-44 characters, typical mint address)
+    const solanaAddressRegex = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+    if (solanaAddressRegex.test(address)) {
+      return { isValid: true, addressType: 'mint_address', address };
+    }
+
+    // Check if it's a collection symbol (alphanumeric with underscores/dashes)
+    const collectionSymbolRegex = /^[a-zA-Z0-9_-]+$/;
+    if (collectionSymbolRegex.test(address) && address.length < 50) {
+      return { isValid: true, addressType: 'collection_symbol', address };
+    }
+
+    // Check if it's a Magic Eden URL
+    const magicEdenUrlMatch = address.match(/magiceden\.io\/marketplace\/([a-zA-Z0-9_-]+)/);
+    if (magicEdenUrlMatch && magicEdenUrlMatch[1]) {
+      return { isValid: true, addressType: 'magic_eden_url', address: magicEdenUrlMatch[1] };
+    }
+
+    return { isValid: false, reason: 'Not a valid Solana mint address, collection symbol, or Magic Eden URL', addressType: null };
   }
 
   async initialize() {
@@ -150,6 +184,13 @@ class TokenTracker {
     try {
       logger.info(`Adding token ${contractAddress} for user ${userId} on chain ${chainName} with collection slug: ${collectionSlug}`);
 
+      // Branch logic based on chain type
+      if (chainName === 'solana') {
+        // Handle Solana NFT tracking
+        return await this.addSolanaToken(contractAddress, userId, telegramId, chatId, collectionSlug);
+      }
+
+      // EVM chain validation
       const { ethers } = require('ethers');
       if (!ethers.isAddress(contractAddress)) {
         throw new Error('Invalid contract address format');
@@ -1111,6 +1152,202 @@ class TokenTracker {
         opensea_subscription_id: openSeaSubscriptionId
       }
     };
+  }
+
+  /**
+   * Add a Solana NFT token for tracking
+   * @param {string} addressInput - Solana mint address, collection symbol, or Magic Eden URL
+   * @param {number} userId - Database user ID
+   * @param {string} telegramId - Telegram user ID
+   * @param {string} chatId - Chat context ID
+   * @param {string} collectionSlug - Optional collection slug
+   * @returns {Promise<Object>} Result object with success status and message
+   */
+  async addSolanaToken(addressInput, userId, telegramId, chatId, collectionSlug = null) {
+    try {
+      logger.info(`🔷 Adding Solana token ${addressInput} for user ${userId}`);
+
+      // Validate Solana address format
+      const validation = this.validateSolanaAddress(addressInput);
+      if (!validation.isValid) {
+        throw new Error(`Invalid Solana address: ${validation.reason}`);
+      }
+
+      // Extract address based on type
+      let mintAddress = validation.address;
+      let collectionSymbol = collectionSlug;
+
+      // If it's a collection symbol or URL, use it directly
+      if (validation.addressType === 'collection_symbol' || validation.addressType === 'magic_eden_url') {
+        collectionSymbol = validation.address;
+        mintAddress = validation.address; // Use as identifier
+      }
+
+      // Check if token already exists
+      const existingToken = await this.db.getTrackedToken(mintAddress, 'solana');
+      if (existingToken) {
+        logger.info(`🔗 Solana token ${mintAddress} already exists, subscribing user`);
+
+        // Check if inactive and reactivate if needed
+        if (!existingToken.is_active) {
+          const hasPremiumFeatures = await this.db.hasActivePremiumFeatures(mintAddress);
+          if (hasPremiumFeatures) {
+            await this.db.run('UPDATE tracked_tokens SET is_active = true WHERE id = $1', [existingToken.id]);
+            logger.info(`🔄 Reactivated inactive Solana token: ${mintAddress}`);
+          } else {
+            // Delete and recreate
+            await this.db.run('DELETE FROM user_subscriptions WHERE token_id = $1', [existingToken.id]);
+            await this.db.run('DELETE FROM tracked_tokens WHERE id = $1', [existingToken.id]);
+            return await this.createFreshSolanaToken(mintAddress, userId, chatId, collectionSymbol, validation.addressType);
+          }
+        }
+
+        // Subscribe user to existing token
+        await this.db.subscribeUserToToken(userId, existingToken.id, chatId);
+        return {
+          success: true,
+          message: `✅ You're now tracking ${existingToken.token_name || 'this Solana NFT collection'}!\n\n◎ Chain: Solana\n🏪 Marketplace: Magic Eden`,
+          token: existingToken
+        };
+      }
+
+      // Create new token
+      return await this.createFreshSolanaToken(mintAddress, userId, chatId, collectionSymbol, validation.addressType);
+
+    } catch (error) {
+      logger.error(`Error adding Solana token ${addressInput}:`, error);
+      return {
+        success: false,
+        message: `❌ Error adding Solana NFT: ${error.message}\n\nYou can provide:\n• Collection symbol (e.g., mad_lads)\n• Mint address\n• Magic Eden URL`
+      };
+    }
+  }
+
+  /**
+   * Create a fresh Solana token record
+   * @param {string} mintAddress - Solana mint address or collection symbol
+   * @param {number} userId - Database user ID
+   * @param {string} chatId - Chat context ID
+   * @param {string} collectionSymbol - Collection symbol/slug
+   * @param {string} addressType - Type of address provided
+   * @returns {Promise<Object>} Result object
+   */
+  async createFreshSolanaToken(mintAddress, userId, chatId, collectionSymbol = null, addressType = 'mint_address') {
+    try {
+      logger.info(`🆕 Creating fresh Solana token: ${mintAddress} (type: ${addressType})`);
+
+      if (!this.magicEden) {
+        throw new Error('Magic Eden service not available. Please check your MAGIC_EDEN_API_KEY configuration.');
+      }
+
+      let validation;
+      let collectionMetadata;
+
+      // Validate based on address type
+      if (addressType === 'mint_address') {
+        // Validate mint address via Magic Eden
+        validation = await this.magicEden.validateMintAddress(mintAddress);
+        if (!validation.isValid) {
+          throw new Error(validation.reason || 'Invalid Solana mint address');
+        }
+        collectionSymbol = validation.collectionSymbol;
+      } else {
+        // It's a collection symbol - validate via collection metadata
+        collectionMetadata = await this.magicEden.getCollectionMetadata(collectionSymbol || mintAddress);
+        if (!collectionMetadata.isValid) {
+          throw new Error(collectionMetadata.reason || 'Collection not found on Magic Eden');
+        }
+
+        // Create validation object from collection metadata
+        validation = {
+          isValid: true,
+          name: collectionSymbol || mintAddress,
+          symbol: collectionSymbol || mintAddress,
+          tokenType: 'Solana NFT',
+          collectionSymbol: collectionSymbol || mintAddress,
+          collectionTitle: collectionSymbol || mintAddress
+        };
+      }
+
+      // Set up Helius webhook for collection
+      let heliusWebhookId = null;
+      if (this.helius && collectionSymbol) {
+        try {
+          const webhookURL = `${process.env.WEBHOOK_URL}/webhook/helius`;
+          const webhookResult = await this.helius.createCollectionWebhook(collectionSymbol, webhookURL);
+          if (webhookResult.success) {
+            heliusWebhookId = webhookResult.webhookId;
+            this.heliusWebhooks.set(collectionSymbol, heliusWebhookId);
+            logger.info(`✅ Set up Helius webhook for Solana collection: ${collectionSymbol} (ID: ${heliusWebhookId})`);
+          } else {
+            logger.warn(`Failed to set up Helius webhook for ${collectionSymbol}: ${webhookResult.error || 'Unknown error'}`);
+          }
+        } catch (error) {
+          logger.warn(`Failed to set up Helius webhook for ${collectionSymbol}:`, error.message);
+        }
+      }
+
+      // Add to database
+      const tokenResult = await this.db.addTrackedToken(
+        mintAddress,
+        validation,
+        userId,
+        null, // No Alchemy webhook for Solana
+        collectionSymbol,
+        null, // No OpenSea subscription for Solana
+        'solana', // chain_name
+        900, // chain_id for Solana
+        heliusWebhookId,
+        'magiceden' // marketplace
+      );
+
+      // Subscribe user
+      await this.db.subscribeUserToToken(userId, tokenResult.id, chatId);
+      logger.info(`User ${userId} subscribed to Solana token ${mintAddress} (ID: ${tokenResult.id})`);
+
+      // Build success message
+      let successMessage = `✅ *${validation.name || 'Solana NFT Collection'}* added successfully!\n\n`;
+      successMessage += `◎ *Chain:* Solana\n`;
+      successMessage += `🏪 *Marketplace:* Magic Eden\n`;
+      successMessage += `🔔 You'll receive alerts for sales and listings\n`;
+
+      if (collectionSymbol && heliusWebhookId) {
+        successMessage += `\n🌟 *Real-time Tracking:* ✅ Enabled\n`;
+        successMessage += `   Collection: \`${collectionSymbol}\`\n`;
+      } else {
+        successMessage += `\n⚠️ *Real-time Tracking:* Limited\n`;
+        successMessage += `   (Helius webhook not configured)\n`;
+      }
+
+      if (collectionMetadata) {
+        successMessage += `\n📊 *Collection Stats:*\n`;
+        if (collectionMetadata.floorPrice) {
+          successMessage += `   Floor: ${collectionMetadata.floorPrice} SOL\n`;
+        }
+        if (collectionMetadata.listedCount) {
+          successMessage += `   Listed: ${collectionMetadata.listedCount}\n`;
+        }
+      }
+
+      return {
+        success: true,
+        message: successMessage,
+        token: {
+          id: tokenResult.id,
+          contract_address: mintAddress,
+          collection_slug: collectionSymbol,
+          token_name: validation.name,
+          token_symbol: validation.symbol,
+          chain_name: 'solana',
+          marketplace: 'magiceden',
+          helius_webhook_id: heliusWebhookId
+        }
+      };
+
+    } catch (error) {
+      logger.error(`Error creating fresh Solana token:`, error);
+      throw error;
+    }
   }
 }
 

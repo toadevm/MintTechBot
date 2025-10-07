@@ -6,6 +6,8 @@ const bodyParser = require('body-parser');
 const logger = require('./src/services/logger');
 const Database = require('./src/database/db');
 const OpenSeaService = require('./src/blockchain/opensea');
+const MagicEdenService = require('./src/blockchain/magiceden');
+const HeliusService = require('./src/blockchain/helius');
 const BotCommands = require('./src/bot/commands');
 const WebhookHandlers = require('./src/webhooks/handlers');
 const TokenTracker = require('./src/services/tokenTracker');
@@ -57,6 +59,26 @@ class MintyRushBot {
       await this.services.openSea.initialize();
       logger.info('🌊 OpenSea streaming service initialized');
 
+      // Initialize Magic Eden service (for Solana NFT validation)
+      try {
+        this.services.magicEden = new MagicEdenService();
+        await this.services.magicEden.initialize();
+        logger.info('🪄 Magic Eden service initialized');
+      } catch (error) {
+        logger.warn('Magic Eden service not available:', error.message);
+        this.services.magicEden = null;
+      }
+
+      // Initialize Helius service (for Solana webhook management)
+      try {
+        this.services.helius = new HeliusService();
+        await this.services.helius.initialize();
+        logger.info('🌟 Helius webhook service initialized');
+      } catch (error) {
+        logger.warn('Helius service not available:', error.message);
+        this.services.helius = null;
+      }
+
 
       try {
         this.services.trending = new TrendingService(this.services.db);
@@ -93,10 +115,12 @@ class MintyRushBot {
         this.services.db,
         this.services.openSea,
         null, // webhookHandlers will be set later
-        this.services.chainManager
+        this.services.chainManager,
+        this.services.magicEden,
+        this.services.helius
       );
       await this.services.tokenTracker.initialize();
-      logger.info('Token tracker initialized with OpenSea support');
+      logger.info('Token tracker initialized with OpenSea + Magic Eden support');
 
       this.services.channelService = new ChannelService(
         this.services.db,
@@ -218,7 +242,9 @@ class MintyRushBot {
       this.services.trending,
       this.services.secureTrending,
       this.services.openSea,
-      this.services.chainManager
+      this.services.chainManager,
+      this.services.magicEden,
+      this.services.helius
     );
 
     // Connect webhook handlers to token tracker for OpenSea notifications
@@ -227,6 +253,7 @@ class MintyRushBot {
     }
 
     this.app.post('/webhook/alchemy', webhookHandlers.handleAlchemyWebhook.bind(webhookHandlers));
+    this.app.post('/webhook/helius', webhookHandlers.handleHeliusWebhook.bind(webhookHandlers));
 
     this.app.get('/health', webhookHandlers.handleHealthCheck.bind(webhookHandlers));
 
@@ -365,6 +392,16 @@ class MintyRushBot {
       // Clean up OpenSea service
       if (this.services.openSea) {
         await this.services.openSea.disconnect();
+      }
+
+      // Clean up Helius service
+      if (this.services.helius) {
+        await this.services.helius.disconnect();
+      }
+
+      // Clean up Magic Eden service
+      if (this.services.magicEden) {
+        await this.services.magicEden.disconnect();
       }
 
       // Close database connection

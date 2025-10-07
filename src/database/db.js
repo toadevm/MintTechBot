@@ -7,41 +7,116 @@ class Database {
     this.dbUrl = process.env.DATABASE_URL;
   }
 
-  async initialize() {
-    try {
-      if (!this.dbUrl) {
-        throw new Error('DATABASE_URL not found in environment variables');
+  async initialize(maxRetries = 3, retryDelayMs = 5000) {
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        if (!this.dbUrl) {
+          throw new Error('DATABASE_URL not found in environment variables');
+        }
+
+        const dbHost = this.dbUrl.split('@')[1]?.split('?')[0] || 'database';
+
+        if (attempt > 1) {
+          logger.info(`Retry attempt ${attempt}/${maxRetries} for PostgreSQL connection...`);
+        } else {
+          logger.info(`Attempting PostgreSQL connection to: ${dbHost}`);
+        }
+
+        // Create PostgreSQL connection pool with Neon-specific settings
+        this.pool = new Pool({
+          connectionString: this.dbUrl,
+          ssl: {
+            rejectUnauthorized: false
+          },
+          max: 10, // Maximum number of clients in pool (reduced for Neon)
+          idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+          connectionTimeoutMillis: 60000, // Increased timeout for Neon (60 seconds)
+          query_timeout: 60000, // Query timeout
+          keepAlive: true,
+          keepAliveInitialDelayMillis: 10000,
+          statement_timeout: 60000 // Statement timeout
+        });
+
+        // Test connection with timeout
+        const connectionPromise = (async () => {
+          const client = await this.pool.connect();
+          try {
+            await client.query('SELECT NOW()');
+            return client;
+          } finally {
+            client.release();
+          }
+        })();
+
+        // Race between connection and timeout
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Connection timeout')), 60000);
+        });
+
+        await Promise.race([connectionPromise, timeoutPromise]);
+
+        logger.info(`✅ Connected to PostgreSQL database: ${this.dbUrl.split('@')[1]?.split('/')[0] || 'database'}`);
+
+        await this.createTables();
+        return true;
+
+      } catch (error) {
+        lastError = error;
+
+        // Close any partially created pool
+        if (this.pool) {
+          try {
+            await this.pool.end();
+            this.pool = null;
+          } catch (closeError) {
+            // Ignore errors when closing failed connection
+          }
+        }
+
+        if (attempt < maxRetries) {
+          logger.warn(`Connection attempt ${attempt} failed: ${error.message}`);
+          logger.info(`Waiting ${retryDelayMs}ms before retry...`);
+
+          // Special handling for VPN-related errors
+          if (error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED' || error.message.includes('timeout')) {
+            logger.warn('⚠️  Network error detected. If using VPN, ensure split tunneling is configured.');
+            logger.warn('⚠️  Run: sudo ./setup-vpn-split-tunnel.sh');
+          }
+
+          await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        } else {
+          logger.error(`Failed to connect to PostgreSQL database after ${maxRetries} attempts:`, error);
+
+          // Provide helpful error message
+          if (error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED') {
+            logger.error('');
+            logger.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            logger.error('💡 VPN TROUBLESHOOTING:');
+            logger.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            logger.error('If you are using a VPN (ProtonVPN, etc):');
+            logger.error('');
+            logger.error('1. Configure split tunneling to exclude Neon database:');
+            logger.error('   sudo ./setup-vpn-split-tunnel.sh');
+            logger.error('');
+            logger.error('2. Or manually add routes (without VPN connected):');
+            logger.error('   sudo ip route add 63.178.215.242 via 192.168.1.1');
+            logger.error('   sudo ip route add 3.69.34.233 via 192.168.1.1');
+            logger.error('   sudo ip route add 63.179.28.86 via 192.168.1.1');
+            logger.error('');
+            logger.error('3. Then reconnect VPN and test:');
+            logger.error('   node test-db-connection.js');
+            logger.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            logger.error('');
+          }
+
+          throw lastError;
+        }
       }
-
-      logger.info(`Attempting PostgreSQL connection to: ${this.dbUrl.split('@')[1]?.split('?')[0] || 'database'}`);
-
-      // Create PostgreSQL connection pool with Neon-specific settings
-      this.pool = new Pool({
-        connectionString: this.dbUrl,
-        ssl: {
-          rejectUnauthorized: false
-        },
-        max: 10, // Maximum number of clients in pool (reduced for Neon)
-        idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-        connectionTimeoutMillis: 20000, // Increased timeout for Neon (20 seconds)
-        query_timeout: 30000, // Query timeout
-        keepAlive: true,
-        keepAliveInitialDelayMillis: 10000
-      });
-
-      // Test connection
-      const client = await this.pool.connect();
-      await client.query('SELECT NOW()');
-      client.release();
-
-      logger.info(`Connected to PostgreSQL database: ${this.dbUrl.split('@')[1]?.split('/')[0] || 'database'}`);
-
-      await this.createTables();
-      return true;
-    } catch (error) {
-      logger.error('Failed to connect to PostgreSQL database:', error);
-      throw error;
     }
+
+    throw lastError;
   }
 
   async createTables() {
@@ -71,6 +146,8 @@ class Database {
         added_by_user_id INTEGER,
         webhook_id VARCHAR(255),
         opensea_subscription_id VARCHAR(255),
+        helius_webhook_id VARCHAR(255),
+        marketplace VARCHAR(50) DEFAULT 'opensea',
         is_active BOOLEAN DEFAULT true,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -306,11 +383,11 @@ class Database {
     return await this.get(sql, [telegramId]);
   }
 
-  async addTrackedToken(contractAddress, tokenData, addedByUserId, webhookId, collectionSlug = null, openSeaSubscriptionId = null, chainName = 'ethereum', chainId = 1) {
+  async addTrackedToken(contractAddress, tokenData, addedByUserId, webhookId, collectionSlug = null, openSeaSubscriptionId = null, chainName = 'ethereum', chainId = 1, heliusWebhookId = null, marketplace = 'opensea') {
     const sql = `INSERT INTO tracked_tokens
                  (contract_address, chain_name, chain_id, collection_slug, token_name, token_symbol, token_type, total_supply,
-                  added_by_user_id, webhook_id, opensea_subscription_id, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+                  added_by_user_id, webhook_id, opensea_subscription_id, helius_webhook_id, marketplace, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
                  ON CONFLICT (contract_address, chain_name)
                  DO UPDATE SET
                    collection_slug = EXCLUDED.collection_slug,
@@ -320,6 +397,8 @@ class Database {
                    total_supply = EXCLUDED.total_supply,
                    webhook_id = EXCLUDED.webhook_id,
                    opensea_subscription_id = EXCLUDED.opensea_subscription_id,
+                   helius_webhook_id = EXCLUDED.helius_webhook_id,
+                   marketplace = EXCLUDED.marketplace,
                    updated_at = NOW()
                  RETURNING id`;
     const result = await this.query(sql, [
@@ -333,7 +412,9 @@ class Database {
       tokenData.totalSupply,
       addedByUserId,
       webhookId,
-      openSeaSubscriptionId
+      openSeaSubscriptionId,
+      heliusWebhookId,
+      marketplace
     ]);
     return { id: result.rows[0]?.id };
   }

@@ -168,7 +168,7 @@ class ChainManager {
           magicEdenSupported: true,
           heliusWebhookSupported: true,
           rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
-          paymentContract: null // Solana uses different payment mechanism
+          paymentContract: '5dBMD7r6UrS6FA7oNLMEn5isMdXYnZqWb9kxUp3kUSzm' // Solana payment receiver address
         }
       ];
 

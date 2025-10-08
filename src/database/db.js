@@ -763,13 +763,13 @@ class Database {
     return footerResult && footerResult.count > 0;
   }
 
-  async createPendingPayment(userId, tokenId, expectedAmount, durationHours) {
+  async createPendingPayment(userId, tokenId, expectedAmount, durationHours, chain = 'ethereum') {
     const expiresAt = new Date(Date.now() + (30 * 60 * 1000)).toISOString();
     const sql = `INSERT INTO pending_payments
-                 (user_id, token_id, expected_amount, duration_hours, expires_at)
-                 VALUES ($1, $2, $3, $4, $5)
+                 (user_id, token_id, expected_amount, duration_hours, expires_at, chain_name)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  RETURNING id`;
-    const result = await this.query(sql, [userId, tokenId, expectedAmount, durationHours, expiresAt]);
+    const result = await this.query(sql, [userId, tokenId, expectedAmount, durationHours, expiresAt, chain]);
     return { id: result.rows[0]?.id };
   }
 

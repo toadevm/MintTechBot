@@ -114,8 +114,11 @@ class TokenTracker {
         logger.info(`🗑️ STARTUP CLEANUP: Processing ${tokensToCleanup.length} orphaned tokens...`);
         for (const token of tokensToCleanup) {
           try {
-            // Delete all subscriptions for this token
+            // Delete all foreign key references first (in correct order)
+            await this.db.run('DELETE FROM pending_payments WHERE token_id = $1', [token.id]);
             await this.db.run('DELETE FROM user_subscriptions WHERE token_id = $1', [token.id]);
+            await this.db.run('DELETE FROM trending_payments WHERE token_id = $1', [token.id]);
+            await this.db.run('DELETE FROM image_fee_payments WHERE contract_address = $1', [token.contract_address]);
 
             // Delete the token completely
             await this.db.run('DELETE FROM tracked_tokens WHERE id = $1', [token.id]);
@@ -217,7 +220,10 @@ class TokenTracker {
           } else {
             // Delete inactive token without premium features and create fresh record
             logger.info(`🗑️ DELETING INACTIVE TOKEN WITHOUT PREMIUM FEATURES - ${contractAddress}`);
+            // Delete all foreign key references first
+            await this.db.run('DELETE FROM pending_payments WHERE token_id = $1', [existingToken.id]);
             await this.db.run('DELETE FROM user_subscriptions WHERE token_id = $1', [existingToken.id]);
+            await this.db.run('DELETE FROM trending_payments WHERE token_id = $1', [existingToken.id]);
             await this.db.run('DELETE FROM tracked_tokens WHERE id = $1', [existingToken.id]);
             logger.info(`   ✅ Deleted inactive token ${contractAddress}, will create fresh record`);
 
@@ -232,15 +238,18 @@ class TokenTracker {
         const subscriptionResult = await this.db.subscribeUserToToken(userId, existingToken.id, chatId);
         logger.info(`User ${userId} subscribed to existing token ${contractAddress} in chat ${chatId}. Subscription result:`, subscriptionResult);
 
-        // Verify subscription was created
-        const userTokens = await this.db.getUserTrackedTokens(userId, chatId);
-        const isSubscribed = userTokens.some(token => token.id === existingToken.id);
-        logger.info(`Subscription verification - User ${userId} has ${userTokens.length} tokens, subscribed to ${contractAddress}: ${isSubscribed}`);
+        // Check if user was already subscribed (ON CONFLICT returned no ID)
+        const isNewSubscription = subscriptionResult && subscriptionResult.id;
+        if (!isNewSubscription) {
+          responseMessage = `ℹ️ You're already tracking ${existingToken.token_name || 'this NFT collection'}!`;
+          logger.info(`User ${userId} was already subscribed to token ${contractAddress} in chat ${chatId}`);
+        }
 
         return {
           success: true,
           message: responseMessage,
-          token: existingToken
+          token: existingToken,
+          alreadyTracked: !isNewSubscription
         };
       }
 
@@ -377,9 +386,18 @@ class TokenTracker {
           logger.info(`🗑️ DELETING TOKEN - No premium features to preserve for ${contractAddress}`);
 
           try {
-            // First delete any remaining subscriptions (should be none, but cleanup)
+            // Delete all foreign key references first (in correct order)
+            await this.db.run('DELETE FROM pending_payments WHERE token_id = $1', [token.id]);
+            logger.info(`   📊 Cleaned up pending_payments`);
+
             const subscriptionDeleteResult = await this.db.run('DELETE FROM user_subscriptions WHERE token_id = $1', [token.id]);
-            logger.info(`   📊 Cleaned up ${subscriptionDeleteResult.changes || 0} remaining subscriptions`);
+            logger.info(`   📊 Cleaned up ${subscriptionDeleteResult.changes || 0} subscriptions`);
+
+            await this.db.run('DELETE FROM trending_payments WHERE token_id = $1', [token.id]);
+            logger.info(`   📊 Cleaned up trending_payments`);
+
+            await this.db.run('DELETE FROM image_fee_payments WHERE contract_address = $1', [token.contract_address]);
+            logger.info(`   📊 Cleaned up image_fee_payments`);
 
             // Delete the token record completely
             const tokenDeleteResult = await this.db.run('DELETE FROM tracked_tokens WHERE id = $1', [token.id]);
@@ -1195,19 +1213,29 @@ class TokenTracker {
             await this.db.run('UPDATE tracked_tokens SET is_active = true WHERE id = $1', [existingToken.id]);
             logger.info(`🔄 Reactivated inactive Solana token: ${mintAddress}`);
           } else {
-            // Delete and recreate
+            // Delete and recreate - delete all foreign key references first
+            await this.db.run('DELETE FROM pending_payments WHERE token_id = $1', [existingToken.id]);
             await this.db.run('DELETE FROM user_subscriptions WHERE token_id = $1', [existingToken.id]);
+            await this.db.run('DELETE FROM trending_payments WHERE token_id = $1', [existingToken.id]);
             await this.db.run('DELETE FROM tracked_tokens WHERE id = $1', [existingToken.id]);
             return await this.createFreshSolanaToken(mintAddress, userId, chatId, collectionSymbol, validation.addressType);
           }
         }
 
         // Subscribe user to existing token
-        await this.db.subscribeUserToToken(userId, existingToken.id, chatId);
+        const subscriptionResult = await this.db.subscribeUserToToken(userId, existingToken.id, chatId);
+
+        // Check if user was already subscribed
+        const isNewSubscription = subscriptionResult && subscriptionResult.id;
+        const subscriptionMessage = isNewSubscription
+          ? `✅ You're now tracking ${existingToken.token_name || 'this Solana NFT collection'}!`
+          : `ℹ️ You're already tracking ${existingToken.token_name || 'this Solana NFT collection'}!`;
+
         return {
           success: true,
-          message: `✅ You're now tracking ${existingToken.token_name || 'this Solana NFT collection'}!\n\n◎ Chain: Solana\n🏪 Marketplace: Magic Eden`,
-          token: existingToken
+          message: `${subscriptionMessage}\n\n◎ Chain: Solana\n🏪 Marketplace: Magic Eden\n📮 Collection: ${existingToken.contract_address}`,
+          token: existingToken,
+          alreadyTracked: !isNewSubscription
         };
       }
 
@@ -1269,22 +1297,12 @@ class TokenTracker {
         };
       }
 
-      // Set up Helius webhook for collection
-      let heliusWebhookId = null;
+      // Use global Helius webhook (no per-collection webhook needed)
+      // The global webhook monitors ALL Magic Eden sales, and the handler filters by collection
+      let heliusWebhookId = 'global'; // Marker to indicate webhook is active
       if (this.helius && collectionSymbol) {
-        try {
-          const webhookURL = `${process.env.WEBHOOK_URL}/webhook/helius`;
-          const webhookResult = await this.helius.createCollectionWebhook(collectionSymbol, webhookURL);
-          if (webhookResult.success) {
-            heliusWebhookId = webhookResult.webhookId;
-            this.heliusWebhooks.set(collectionSymbol, heliusWebhookId);
-            logger.info(`✅ Set up Helius webhook for Solana collection: ${collectionSymbol} (ID: ${heliusWebhookId})`);
-          } else {
-            logger.warn(`Failed to set up Helius webhook for ${collectionSymbol}: ${webhookResult.error || 'Unknown error'}`);
-          }
-        } catch (error) {
-          logger.warn(`Failed to set up Helius webhook for ${collectionSymbol}:`, error.message);
-        }
+        logger.info(`✅ Using global Helius webhook for Solana collection: ${collectionSymbol}`);
+        this.heliusWebhooks.set(collectionSymbol, heliusWebhookId);
       }
 
       // Add to database

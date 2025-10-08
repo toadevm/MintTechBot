@@ -1811,14 +1811,39 @@ class WebhookHandlers {
 
       logger.info(`🌟 HELIUS NFT SALE - Mint: ${saleData.mintAddress}, Price: ${saleData.amountSol} SOL`);
 
-      // Find tracked tokens for this mint address
-      const token = await this.db.getTrackedToken(saleData.mintAddress, 'solana');
-      if (!token || !token.is_active) {
-        logger.debug(`Token ${saleData.mintAddress} not tracked or inactive, skipping`);
-        return false;
+      // For Solana NFTs, we need to find the collection symbol from the mint
+      // First, try to get collection info from Magic Eden
+      let collectionSymbol = null;
+      if (this.magicEden) {
+        try {
+          const nftInfo = await this.magicEden.getNFTMetadata(saleData.mintAddress);
+          collectionSymbol = nftInfo?.collection || nftInfo?.collectionSymbol;
+          if (collectionSymbol) {
+            logger.info(`📦 Found collection: ${collectionSymbol} for mint ${saleData.mintAddress}`);
+          }
+        } catch (error) {
+          logger.debug(`Could not fetch collection for mint ${saleData.mintAddress}: ${error.message}`);
+        }
       }
 
-      logger.info(`📊 Found tracked Solana NFT: ${token.token_name}`);
+      // Find tracked tokens by collection symbol for Solana
+      let token = null;
+      if (collectionSymbol) {
+        // Query by collection_slug for Solana tokens
+        const tokens = await this.db.all(
+          'SELECT * FROM tracked_tokens WHERE chain_name = $1 AND collection_slug = $2 AND is_active = true',
+          ['solana', collectionSymbol]
+        );
+        if (tokens && tokens.length > 0) {
+          token = tokens[0];
+          logger.info(`📊 Found tracked Solana collection: ${token.token_name} (${collectionSymbol})`);
+        }
+      }
+
+      if (!token) {
+        logger.debug(`Collection ${collectionSymbol || 'unknown'} for mint ${saleData.mintAddress} not tracked, skipping`);
+        return false;
+      }
 
       // Log activity to database
       const activityData = {
@@ -2001,7 +2026,7 @@ class WebhookHandlers {
   async formatMagicEdenSaleMessage(token, saleData) {
     const nftName = token.token_name || 'Solana NFT';
 
-    let message = `💰🟢 **${nftName}** Sale on Magic Eden\n\n`;
+    let message = `💰🟢 **${nftName}** **BUY!** on Magic Eden\n\n`;
     message += `💰 **Price:** ${saleData.amountSol} SOL`;
 
     // Add USD value if PriceService is available
@@ -2022,8 +2047,6 @@ class WebhookHandlers {
     message += `📤 **Seller:** \`${this.shortenAddress(saleData.seller)}\`\n`;
     message += `🏪 **Marketplace:** Magic Eden\n`;
     message += `🔗 **Chain:** ◎ Solana\n`;
-    message += `📮 **Mint:** \`${this.shortenAddress(saleData.mintAddress)}\`\n`;
-    message += `🔗 **TX:** \`${this.shortenAddress(saleData.signature)}\`\n`;
     message += `[View on Solana Explorer](https://explorer.solana.com/tx/${saleData.signature})\n`;
 
     message += ` \nPowered by [Candy Codex](https://buy.candycodex.com/)`;

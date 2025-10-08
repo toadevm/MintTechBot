@@ -14,3 +14,19 @@ typechain-types/
 coverage/
 coverage.json
 deployments.json
+
+# Temporary files and documentation
+*.md
+!README.md
+database_export/
+temp_opensea_images/
+*-test*.js
+test-*.js
+setup-*.sh
+fix-*.sh
+bypass-*.sh
+*.service
+export-*.js
+import-*.js
+add-*.js
+update-*.js

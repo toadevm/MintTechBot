@@ -2088,6 +2088,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
       const autoDetectedChain = token.chain_name || 'ethereum';
       const chainConfig = this.chainManager ? this.chainManager.getChain(autoDetectedChain) : null;
       const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : autoDetectedChain.charAt(0).toUpperCase() + autoDetectedChain.slice(1);
+      const currencySymbol = chainConfig ? chainConfig.currencySymbol : 'ETH';
 
       // Use secure trending service with fallback to old service
       const trendingService = this.secureTrending || this.trending;
@@ -2112,7 +2113,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
         const type = isPremium ? 'premium' : 'normal';
 
         buttons.push([Markup.button.callback(
-          `${buttonIcon} ${option.duration}h - ${feeEth} ETH`,
+          `${buttonIcon} ${option.duration}h - ${feeEth} ${currencySymbol}`,
           `duration_${tokenId}_${option.duration}_${type}_${autoDetectedChain}`
         )]);
       });
@@ -2869,20 +2870,47 @@ Choose an option:`;
         }
       }
 
-      let message = `🎯 <b>Your Tracked NFTs</b> (${tokens.length})\n\n`;
+      // Group tokens by chain
+      const tokensByChain = {};
+      tokens.forEach(token => {
+        const chainName = token.chain_name || 'ethereum';
+        if (!tokensByChain[chainName]) {
+          tokensByChain[chainName] = [];
+        }
+        tokensByChain[chainName].push(token);
+      });
+
+      let message = `🎯 <b>Your Tracked NFTs</b> (${tokens.length} total)\n\n`;
       const keyboard = [];
 
-      tokens.forEach((token, index) => {
-        message += `${index + 1}. <b>${token.token_name || 'Unknown'}</b> (${token.token_symbol || 'N/A'})\n`;
-        message += `   📮 <code>${token.contract_address}</code>\n`;
-        message += `   🟢 Status: Active\n\n`;
-        keyboard.push([
-          Markup.button.callback(
-            `🗑️ Remove ${token.token_name || token.contract_address.slice(0, 8)}...`,
-            `remove_${token.id}`
-          )
-        ]);
-      });
+      for (const [chainName, chainTokens] of Object.entries(tokensByChain)) {
+        const chainConfig = this.chainManager ? this.chainManager.getChain(chainName) : null;
+        const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : chainName;
+
+        message += `🔗 <b>${chainDisplay}</b> (${chainTokens.length})\n`;
+
+        chainTokens.forEach((token, index) => {
+          message += `   ${index + 1}. <b>${token.token_name || 'Unknown'}</b> (${token.token_symbol || 'N/A'})\n`;
+          message += `      📮 <code>${token.contract_address}</code>\n`;
+          message += `      🟢 Status: Active\n`;
+
+          // Show tracking status based on chain
+          if (token.chain_name === 'solana') {
+            message += `      🌟 Helius: ✅ Real-time tracking\n`;
+          } else if (token.collection_slug) {
+            message += `      🌊 OpenSea: ✅ Real-time tracking\n`;
+          }
+          message += '\n';
+
+          keyboard.push([
+            Markup.button.callback(
+              `🗑️ Remove ${token.token_name || token.contract_address.slice(0, 8)}...`,
+              `remove_${token.id}`
+            )
+          ]);
+        });
+        message += '\n';
+      }
 
       keyboard.push([Markup.button.callback('➕ Add More NFTs', 'add_token_start'), Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]);
 
@@ -3719,7 +3747,11 @@ Select trending duration:`;
           message += `   ${index + 1}. <b>${token.token_name || 'Unknown'}</b> (${token.token_symbol || 'N/A'})\n`;
           message += `      📮 <code>${token.contract_address}</code>\n`;
           message += `      🟢 Status: Active\n`;
-          if (token.collection_slug) {
+
+          // Show tracking status based on chain
+          if (token.chain_name === 'solana') {
+            message += `      🌟 Helius: ✅ Real-time tracking\n`;
+          } else if (token.collection_slug) {
             message += `      🌊 OpenSea: ✅ Real-time tracking\n`;
           }
           message += '\n';
@@ -3775,8 +3807,11 @@ Select trending duration:`;
         message += `   📮 <code>${token.contract_address}</code>\n`;
         message += `   🟢 Status: Active\n`;
 
-        if (token.collection_slug) {
-          message += `   🌊 OpenSea: ✅ Real-time tracking (${token.collection_slug})\n`;
+        // Show tracking status based on chain
+        if (token.chain_name === 'solana') {
+          message += `   🌟 Helius: ✅ Real-time tracking\n`;
+        } else if (token.collection_slug) {
+          message += `   🌊 OpenSea: ✅ Real-time tracking\n`;
         } else {
           message += `   🌊 OpenSea: ⚠️ No real-time tracking\n`;
         }

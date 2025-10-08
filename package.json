@@ -17,6 +17,7 @@
   "dependencies": {
     "@opensea/stream-js": "^0.2.1",
     "@openzeppelin/contracts": "^5.4.0",
+    "@solana/web3.js": "^1.98.4",
     "axios": "^1.12.0",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",

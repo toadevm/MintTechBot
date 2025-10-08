@@ -1,5 +1,6 @@
 const { ethers } = require('ethers');
 const logger = require('./logger');
+const SolanaPaymentService = require('../blockchain/solanaPaymentService');
 
 // Simple Payment Receiver ABI (minimal functions only)
 const SIMPLE_PAYMENT_RECEIVER_ABI = [
@@ -53,6 +54,10 @@ class SecureTrendingService {
     this.simplePaymentContract = process.env.SIMPLE_PAYMENT_CONTRACT_ADDRESS || '0x4704eaF9d285a1388c0370Bc7d05334d313f92Be';
     this.contract = null;
     this.provider = null;
+
+    // Solana payment service
+    this.solanaPaymentService = null;
+    this.solanaPaymentAddress = '5dBMD7r6UrS6FA7oNLMEn5isMdXYnZqWb9kxUp3kUSzm';
     
     // Predefined trending fees (in Wei) - no smart contract dependency
     this.trendingFees = {
@@ -91,17 +96,28 @@ class SecureTrendingService {
 
   async initialize() {
     try {
+      // Initialize Ethereum payment verification
       if (!this.simplePaymentContract) {
-        logger.warn('No simple payment contract address provided. Trending payments will be unavailable.');
-        return true;
+        logger.warn('No simple payment contract address provided. ETH trending payments will be unavailable.');
+      } else {
+        const alchemyUrl = `https://eth-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs`;
+        this.provider = new ethers.JsonRpcProvider(alchemyUrl);
+
+        // Read-only contract instance (no private key needed)
+        this.contract = new ethers.Contract(this.simplePaymentContract, SIMPLE_PAYMENT_RECEIVER_ABI, this.provider);
+        logger.info(`✅ ETH payment verification initialized: ${this.simplePaymentContract}`);
       }
 
-      const alchemyUrl = `https://eth-mainnet.g.alchemy.com/v2/kAmtb3hCAJaBhgQWSJBVs`;
-      this.provider = new ethers.JsonRpcProvider(alchemyUrl);
+      // Initialize Solana payment verification
+      try {
+        this.solanaPaymentService = new SolanaPaymentService();
+        await this.solanaPaymentService.initialize();
+        logger.info(`✅ SOL payment verification initialized: ${this.solanaPaymentAddress}`);
+      } catch (solanaError) {
+        logger.warn('Failed to initialize Solana payment service:', solanaError.message);
+        logger.warn('SOL trending payments will be unavailable.');
+      }
 
-      // Read-only contract instance (no private key needed)
-      this.contract = new ethers.Contract(this.simplePaymentContract, SIMPLE_PAYMENT_RECEIVER_ABI, this.provider);
-      logger.info(`Secure trending service initialized with contract: ${this.simplePaymentContract}`);
       return true;
     } catch (error) {
       logger.error('Failed to initialize secure trending service:', error);
@@ -202,6 +218,115 @@ class SecureTrendingService {
     return imageOptions;
   }
 
+  // ========== SOLANA FEE CALCULATION ==========
+
+  /**
+   * Calculate Solana trending fee (dynamic USD-equivalent pricing)
+   * @param {number} durationHours - Duration in hours (6, 12, 18, 24)
+   * @param {boolean} isPremium - Whether it's a premium trending
+   * @returns {Promise<number>} Fee in SOL
+   */
+  async calculateSolanaTrendingFee(durationHours, isPremium = false) {
+    try {
+      if (!this.priceService) {
+        throw new Error('Price service not available for Solana fee calculation');
+      }
+
+      // Get ETH fee in wei
+      const ethFeeWei = this.calculateTrendingFee(durationHours, isPremium);
+      const ethFeeAmount = parseFloat(ethers.formatEther(ethFeeWei));
+
+      // Get current ETH and SOL prices
+      const ethPrice = await this.priceService.getTokenPrice('ETH');
+      const solPrice = await this.priceService.getTokenPrice('SOL');
+
+      if (!ethPrice || !solPrice) {
+        throw new Error('Failed to fetch token prices');
+      }
+
+      // Calculate USD value of ETH fee
+      const usdValue = ethFeeAmount * ethPrice;
+
+      // Calculate equivalent SOL amount
+      const solAmount = usdValue / solPrice;
+
+      logger.info(`💰 SOL Fee Calculation: ${ethFeeAmount} ETH ($${ethPrice}) = $${usdValue.toFixed(2)} = ${solAmount.toFixed(4)} SOL ($${solPrice})`);
+
+      return solAmount;
+    } catch (error) {
+      logger.error('Error calculating Solana trending fee:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Calculate Solana image fee (dynamic USD-equivalent pricing)
+   * @param {number} durationDays - Duration in days (30, 60, 90, 180, 365)
+   * @returns {Promise<number>} Fee in SOL
+   */
+  async calculateSolanaImageFee(durationDays) {
+    try {
+      if (!this.priceService) {
+        throw new Error('Price service not available for Solana fee calculation');
+      }
+
+      const ethFeeWei = this.calculateImageFee(durationDays);
+      const ethFeeAmount = parseFloat(ethers.formatEther(ethFeeWei));
+
+      const ethPrice = await this.priceService.getTokenPrice('ETH');
+      const solPrice = await this.priceService.getTokenPrice('SOL');
+
+      if (!ethPrice || !solPrice) {
+        throw new Error('Failed to fetch token prices');
+      }
+
+      const usdValue = ethFeeAmount * ethPrice;
+      const solAmount = usdValue / solPrice;
+
+      logger.info(`💰 SOL Image Fee: ${ethFeeAmount} ETH = $${usdValue.toFixed(2)} = ${solAmount.toFixed(4)} SOL`);
+
+      return solAmount;
+    } catch (error) {
+      logger.error('Error calculating Solana image fee:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Calculate Solana footer ad fee (dynamic USD-equivalent pricing)
+   * @param {number} durationDays - Duration in days (30, 60, 90, 180, 365)
+   * @returns {Promise<number>} Fee in SOL
+   */
+  async calculateSolanaFooterFee(durationDays) {
+    try {
+      if (!this.priceService) {
+        throw new Error('Price service not available for Solana fee calculation');
+      }
+
+      const ethFeeWei = this.calculateFooterFee(durationDays);
+      const ethFeeAmount = parseFloat(ethers.formatEther(ethFeeWei));
+
+      const ethPrice = await this.priceService.getTokenPrice('ETH');
+      const solPrice = await this.priceService.getTokenPrice('SOL');
+
+      if (!ethPrice || !solPrice) {
+        throw new Error('Failed to fetch token prices');
+      }
+
+      const usdValue = ethFeeAmount * ethPrice;
+      const solAmount = usdValue / solPrice;
+
+      logger.info(`💰 SOL Footer Fee: ${ethFeeAmount} ETH = $${usdValue.toFixed(2)} = ${solAmount.toFixed(4)} SOL`);
+
+      return solAmount;
+    } catch (error) {
+      logger.error('Error calculating Solana footer fee:', error);
+      throw error;
+    }
+  }
+
+  // ========== END SOLANA FEE CALCULATION ==========
+
   // Get all footer fee options
   getFooterFeeOptions() {
     const footerOptions = [];
@@ -273,6 +398,64 @@ class SecureTrendingService {
       };
     }
   }
+
+  // ========== SOLANA PAYMENT VALIDATION ==========
+
+  /**
+   * Validate Solana transaction for trending payment
+   * @param {string} signature - Solana transaction signature
+   * @param {number} expectedSolAmount - Expected amount in SOL
+   * @param {number} durationHours - Duration in hours
+   * @returns {Promise<Object>} Validation result
+   */
+  async validateSolanaTrendingPayment(signature, expectedSolAmount, durationHours) {
+    try {
+      if (!this.solanaPaymentService) {
+        return {
+          valid: false,
+          reason: 'Solana payment service not initialized'
+        };
+      }
+
+      logger.info(`Validating Solana trending payment: sig=${signature}, expected=${expectedSolAmount} SOL`);
+
+      // Check if transaction already processed
+      if (await this.db.isTransactionProcessed(signature)) {
+        return {
+          valid: false,
+          reason: 'Transaction already processed'
+        };
+      }
+
+      // Validate transaction using Solana service
+      const validation = await this.solanaPaymentService.validateSolanaTransaction(
+        signature,
+        expectedSolAmount,
+        this.solanaPaymentAddress
+      );
+
+      if (!validation.valid) {
+        return validation;
+      }
+
+      return {
+        valid: true,
+        amount: validation.amount, // lamports as string
+        amountSol: validation.amountSol,
+        payer: validation.sender,
+        blockNumber: validation.slot,
+        signature: signature
+      };
+    } catch (error) {
+      logger.error(`Error validating Solana trending payment ${signature}:`, error);
+      return {
+        valid: false,
+        reason: `Validation error: ${error.message}`
+      };
+    }
+  }
+
+  // ========== END SOLANA PAYMENT VALIDATION ==========
 
   // Process validated trending payment (secure - no private keys)
   async processValidatedTrendingPayment(userId, tokenId, txHash, durationHours, isPremium = false) {
@@ -350,11 +533,22 @@ class SecureTrendingService {
       const chainDisplay = chainConfig ? chainConfig.displayName : 'Ethereum';
       const blockExplorer = this.getBlockExplorerUrl(chain, chainConfig);
 
-      const fee = this.calculateTrendingFee(durationHours, isPremium);
-      const feeEth = ethers.formatEther(fee);
+      let fee, feeFormatted;
+
+      // Calculate fee based on chain
+      if (chain === 'solana') {
+        // Dynamic SOL fee (USD-equivalent)
+        const solFee = await this.calculateSolanaTrendingFee(durationHours, isPremium);
+        fee = this.solanaPaymentService.convertSolToLamports(solFee);
+        feeFormatted = solFee.toFixed(4);
+      } else {
+        // ETH fee (wei)
+        fee = this.calculateTrendingFee(durationHours, isPremium);
+        feeFormatted = ethers.formatEther(fee);
+      }
 
       // Create pending payment record
-      await this.db.createPendingPayment(userId, tokenId, fee.toString(), durationHours);
+      await this.db.createPendingPayment(userId, tokenId, fee.toString(), durationHours, chain);
 
       const instructions = {
         contractAddress: paymentContract,
@@ -362,7 +556,7 @@ class SecureTrendingService {
         tokenName: token.token_name || 'Unknown Collection',
         duration: durationHours,
         fee: fee.toString(),
-        feeEth: feeEth,
+        feeEth: feeFormatted, // Keep name for compatibility but contains SOL for Solana
         isPremium: isPremium,
         chain: chain,
         instructions: [
@@ -398,11 +592,32 @@ class SecureTrendingService {
     return explorers[chain] || 'https://etherscan.io';
   }
 
-  // Manual transaction validation for /validate command
+  // Manual transaction validation for /validate command (supports both ETH and SOL)
   async validateUserTransaction(userId, txHash) {
     try {
       logger.info(`Manual validation requested: user=${userId}, tx=${txHash}`);
 
+      // Detect chain based on transaction hash format
+      // Solana signatures are base58 (~88 chars), ETH tx hashes are 0x + 64 hex (66 chars)
+      const isSolana = txHash.length > 70 && !txHash.startsWith('0x');
+      const chain = isSolana ? 'solana' : 'ethereum';
+
+      logger.info(`Detected chain: ${chain} (tx length: ${txHash.length})`);
+
+      if (isSolana) {
+        return await this.validateSolanaUserTransaction(userId, txHash);
+      } else {
+        return await this.validateEthereumUserTransaction(userId, txHash);
+      }
+    } catch (error) {
+      logger.error('Error in manual transaction validation:', error);
+      return { success: false, error: `Validation error: ${error.message}` };
+    }
+  }
+
+  // Validate Ethereum transaction (legacy method, now internal)
+  async validateEthereumUserTransaction(userId, txHash) {
+    try {
       // Check if transaction already processed
       if (await this.db.isTransactionProcessed(txHash)) {
         return {
@@ -433,12 +648,13 @@ class SecureTrendingService {
 
       logger.info(`Transaction validated: ${ethers.formatEther(paymentAmount)} ETH from ${payerAddress}`);
 
-      // Find user's pending payments that match this amount
+      // Find user's pending payments that match this amount (ETH chain)
       const userPendingPayments = await this.db.all(
-        `SELECT pp.*, tt.token_name, tt.contract_address 
+        `SELECT pp.*, tt.token_name, tt.contract_address
          FROM pending_payments pp
          JOIN tracked_tokens tt ON pp.token_id = tt.id
          WHERE pp.user_id = $1 AND pp.expected_amount = $2 AND pp.is_matched = false AND pp.expires_at > NOW()
+         AND (pp.chain_name = 'ethereum' OR pp.chain_name IS NULL)
          ORDER BY pp.created_at ASC`,
         [userId, paymentAmount.toString()]
       );
@@ -452,7 +668,7 @@ class SecureTrendingService {
 
       // Take the first (oldest) matching pending payment
       const matchingPayment = userPendingPayments[0];
-      
+
       logger.info(`Found matching pending payment: token=${matchingPayment.token_name}, duration=${matchingPayment.duration_hours}h`);
 
       // Mark transaction as processed to prevent duplicates
@@ -478,7 +694,7 @@ class SecureTrendingService {
         // Mark pending payment as matched
         await this.db.markPendingPaymentMatched(matchingPayment.id, txHash);
         logger.info(`Manual validation successful: ${matchingPayment.token_name} trending activated`);
-        
+
         return {
           success: true,
           tokenName: matchingPayment.token_name,
@@ -486,14 +702,134 @@ class SecureTrendingService {
           amount: paymentAmount.toString(),
           amountEth: ethers.formatEther(paymentAmount),
           txHash: txHash,
-          payer: payerAddress
+          payer: payerAddress,
+          chain: 'ethereum'
         };
       } else {
         logger.error(`Failed to process manually validated payment: ${result.error}`);
         return { success: false, error: result.error };
       }
     } catch (error) {
-      logger.error('Error in manual transaction validation:', error);
+      logger.error('Error in ETH transaction validation:', error);
+      return { success: false, error: `Validation error: ${error.message}` };
+    }
+  }
+
+  // Validate Solana transaction for user
+  async validateSolanaUserTransaction(userId, signature) {
+    try {
+      if (!this.solanaPaymentService) {
+        return {
+          success: false,
+          error: 'Solana payment verification not available.'
+        };
+      }
+
+      // Check if transaction already processed
+      if (await this.db.isTransactionProcessed(signature)) {
+        return {
+          success: false,
+          error: 'This transaction has already been processed.'
+        };
+      }
+
+      // Get transaction from Solana blockchain
+      const tx = await this.solanaPaymentService.getTransaction(signature);
+
+      if (tx.meta.err) {
+        return {
+          success: false,
+          error: 'Transaction failed on Solana blockchain.'
+        };
+      }
+
+      // Parse transaction to get amount and sender
+      const { accountKeys } = tx.transaction.message;
+      const { preBalances, postBalances } = tx.meta;
+
+      // Find payment address index
+      const paymentPubkey = new (require('@solana/web3.js').PublicKey)(this.solanaPaymentAddress);
+      let paymentIndex = -1;
+      for (let i = 0; i < accountKeys.length; i++) {
+        if (accountKeys[i].equals(paymentPubkey)) {
+          paymentIndex = i;
+          break;
+        }
+      }
+
+      if (paymentIndex === -1) {
+        return {
+          success: false,
+          error: `Transaction does not send SOL to payment address.\nExpected: ${this.solanaPaymentAddress}`
+        };
+      }
+
+      const amountLamports = postBalances[paymentIndex] - preBalances[paymentIndex];
+      const amountSol = amountLamports / (require('@solana/web3.js').LAMPORTS_PER_SOL);
+      const payerAddress = accountKeys[0].toString();
+
+      logger.info(`Transaction validated: ${amountSol} SOL from ${payerAddress}`);
+
+      // Find user's pending payments that match this amount (SOL chain)
+      const userPendingPayments = await this.db.all(
+        `SELECT pp.*, tt.token_name, tt.contract_address
+         FROM pending_payments pp
+         JOIN tracked_tokens tt ON pp.token_id = tt.id
+         WHERE pp.user_id = $1 AND pp.expected_amount = $2 AND pp.is_matched = false AND pp.expires_at > NOW()
+         AND pp.chain_name = 'solana'
+         ORDER BY pp.created_at ASC`,
+        [userId, amountLamports.toString()]
+      );
+
+      if (userPendingPayments.length === 0) {
+        return {
+          success: false,
+          error: `No matching pending payment found for ${amountSol.toFixed(4)} SOL.\nPlease use /buy_trending first to create a trending request.`
+        };
+      }
+
+      // Take the first (oldest) matching pending payment
+      const matchingPayment = userPendingPayments[0];
+
+      logger.info(`Found matching pending payment: token=${matchingPayment.token_name}, duration=${matchingPayment.duration_hours}h`);
+
+      // Mark transaction as processed to prevent duplicates
+      await this.db.markTransactionProcessed(
+        signature,
+        this.solanaPaymentAddress,
+        payerAddress,
+        amountLamports.toString(),
+        tx.slot,
+        'manual_trending_validation'
+      );
+
+      // Process the trending payment (need to add Solana support)
+      // For now, we'll add to trending_payments directly
+      const dbResult = await this.db.addTrendingPayment(
+        userId,
+        matchingPayment.token_id,
+        amountLamports.toString(),
+        signature,
+        matchingPayment.duration_hours,
+        payerAddress
+      );
+
+      // Mark pending payment as matched
+      await this.db.markPendingPaymentMatched(matchingPayment.id, signature);
+      logger.info(`Manual Solana validation successful: ${matchingPayment.token_name} trending activated`);
+
+      return {
+        success: true,
+        tokenName: matchingPayment.token_name,
+        duration: matchingPayment.duration_hours,
+        amount: amountLamports.toString(),
+        amountEth: amountSol.toFixed(4), // Use same field for compatibility
+        txHash: signature,
+        payer: payerAddress,
+        chain: 'solana'
+      };
+    } catch (error) {
+      logger.error('Error in Solana transaction validation:', error);
       return { success: false, error: `Validation error: ${error.message}` };
     }
   }

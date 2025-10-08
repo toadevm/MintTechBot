@@ -58,7 +58,11 @@ class PriceService {
         'usdt': 'tether',
         'dai': 'dai',
         'matic': 'matic-network',
-        'bnb': 'binancecoin'
+        'bnb': 'binancecoin',
+        'sol': 'solana', // Solana
+        'avax': 'avalanche-2',
+        'arb': 'arbitrum',
+        'op': 'optimism'
       };
 
       const coinId = tokenMap[tokenSymbol.toLowerCase()] || 'ethereum';
@@ -92,6 +96,12 @@ class PriceService {
       // Fallback to Ethereum price API
       if (tokenSymbol.toLowerCase() === 'eth' || tokenSymbol.toLowerCase() === 'weth') {
         return await this.fetchEthPriceFromAlternativeAPI();
+      }
+
+      // Fallback for SOL
+      if (tokenSymbol.toLowerCase() === 'sol') {
+        logger.warn('Using fallback SOL price: $20');
+        return 20;
       }
 
       throw error;

@@ -225,6 +225,22 @@ class Database {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )`,
 
+      `CREATE TABLE IF NOT EXISTS bitcoin_ordinals_activities (
+        id SERIAL PRIMARY KEY,
+        activity_id VARCHAR(255) UNIQUE NOT NULL,
+        collection_symbol VARCHAR(255) NOT NULL,
+        inscription_id VARCHAR(255),
+        activity_type VARCHAR(255) NOT NULL,
+        from_address VARCHAR(255),
+        to_address VARCHAR(255),
+        price DECIMAL,
+        marketplace VARCHAR(50) DEFAULT 'magiceden',
+        activity_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+        processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        notified BOOLEAN DEFAULT false,
+        UNIQUE(activity_id, collection_symbol)
+      )`,
+
       `CREATE TABLE IF NOT EXISTS channels (
         id SERIAL PRIMARY KEY,
         telegram_chat_id VARCHAR(255) UNIQUE NOT NULL,
@@ -312,6 +328,9 @@ class Database {
       'CREATE INDEX IF NOT EXISTS idx_processed_transactions_contract ON processed_transactions(contract_address)',
       'CREATE INDEX IF NOT EXISTS idx_nft_activities_contract ON nft_activities(contract_address)',
       'CREATE INDEX IF NOT EXISTS idx_nft_activities_created_at ON nft_activities(created_at)',
+      'CREATE INDEX IF NOT EXISTS idx_bitcoin_activities_activity_id ON bitcoin_ordinals_activities(activity_id)',
+      'CREATE INDEX IF NOT EXISTS idx_bitcoin_activities_collection ON bitcoin_ordinals_activities(collection_symbol)',
+      'CREATE INDEX IF NOT EXISTS idx_bitcoin_activities_timestamp ON bitcoin_ordinals_activities(activity_timestamp)',
       'CREATE INDEX IF NOT EXISTS idx_channels_chat_id ON channels(telegram_chat_id)',
       'CREATE INDEX IF NOT EXISTS idx_image_fee_payments_active ON image_fee_payments(contract_address, is_active, end_time)',
       'CREATE INDEX IF NOT EXISTS idx_image_fee_payments_tx_hash ON image_fee_payments(transaction_hash)',
@@ -334,6 +353,20 @@ class Database {
     try {
       // PostgreSQL doesn't need the same migrations as SQLite since we're creating fresh schema
       // This method is kept for future migrations
+
+      // Migration: Add last_activity_check column for Bitcoin Ordinals polling
+      try {
+        await this.query(`
+          ALTER TABLE tracked_tokens
+          ADD COLUMN IF NOT EXISTS last_activity_check TIMESTAMP WITH TIME ZONE
+        `);
+        logger.info('✅ Migration: Added last_activity_check column to tracked_tokens');
+      } catch (error) {
+        if (!error.message.includes('already exists')) {
+          logger.warn('Migration warning for last_activity_check column:', error.message);
+        }
+      }
+
       logger.info('Database migration completed');
     } catch (error) {
       logger.error('Error during database migration:', error);

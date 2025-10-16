@@ -2,13 +2,15 @@ const logger = require('./logger');
 const CollectionResolver = require('./collectionResolver');
 
 class TokenTracker {
-  constructor(database, openSeaService, webhookHandlers = null, chainManager = null, magicEdenService = null, heliusService = null) {
+  constructor(database, openSeaService, webhookHandlers = null, chainManager = null, magicEdenService = null, heliusService = null, magicEdenOrdinalsService = null, bitcoinPollerService = null) {
     this.db = database;
     this.openSea = openSeaService;
     this.webhookHandlers = webhookHandlers; // Add webhook handlers reference
     this.chainManager = chainManager;
     this.magicEden = magicEdenService; // Magic Eden service for Solana NFT validation
     this.helius = heliusService; // Helius service for Solana webhook management
+    this.magicEdenOrdinals = magicEdenOrdinalsService; // Magic Eden service for Bitcoin Ordinals validation
+    this.bitcoinPoller = bitcoinPollerService; // Bitcoin Ordinals Poller service (replaces Hiro)
     this.trackingIntervals = new Map();
     this.openSeaSubscriptions = new Map(); // Track OpenSea collection subscriptions
     this.heliusWebhooks = new Map(); // Track Helius webhook subscriptions for Solana
@@ -191,6 +193,11 @@ class TokenTracker {
       if (chainName === 'solana') {
         // Handle Solana NFT tracking
         return await this.addSolanaToken(contractAddress, userId, telegramId, chatId, collectionSlug);
+      }
+
+      if (chainName === 'bitcoin') {
+        // Handle Bitcoin Ordinals tracking
+        return await this.addBitcoinOrdinals(contractAddress, userId, telegramId, chatId, collectionSlug);
       }
 
       // EVM chain validation
@@ -1364,6 +1371,249 @@ class TokenTracker {
 
     } catch (error) {
       logger.error(`Error creating fresh Solana token:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Validate Bitcoin Ordinals address format (inscription ID or collection symbol)
+   * @param {string} address - Bitcoin inscription ID or collection symbol
+   * @returns {Object} Validation result with address type
+   */
+  validateBitcoinAddress(address) {
+    if (!address || typeof address !== 'string') {
+      return { isValid: false, reason: 'Invalid address format', addressType: null };
+    }
+
+    // Check if it's an inscription ID (format: <txid>i<index>, e.g., abc123...i0)
+    const inscriptionIdRegex = /^[a-f0-9]{64}i\d+$/i;
+    if (inscriptionIdRegex.test(address)) {
+      return { isValid: true, addressType: 'inscription_id', address };
+    }
+
+    // Check if it's a collection symbol (alphanumeric with underscores/dashes)
+    const collectionSymbolRegex = /^[a-zA-Z0-9_-]+$/;
+    if (collectionSymbolRegex.test(address) && address.length < 50) {
+      return { isValid: true, addressType: 'collection_symbol', address };
+    }
+
+    // Check if it's a Magic Eden Ordinals URL
+    if (this.magicEdenOrdinals) {
+      const collectionSymbol = this.magicEdenOrdinals.parseCollectionUrl(address);
+      if (collectionSymbol) {
+        return { isValid: true, addressType: 'magic_eden_url', address: collectionSymbol };
+      }
+    }
+
+    return { isValid: false, reason: 'Not a valid inscription ID, collection symbol, or Magic Eden Ordinals URL', addressType: null };
+  }
+
+  /**
+   * Add a Bitcoin Ordinals collection for tracking
+   * @param {string} addressInput - Bitcoin inscription ID, collection symbol, or Magic Eden URL
+   * @param {number} userId - Database user ID
+   * @param {string} telegramId - Telegram user ID
+   * @param {string} chatId - Chat context ID
+   * @param {string} collectionSlug - Optional collection slug
+   * @returns {Promise<Object>} Result object with success status and message
+   */
+  async addBitcoinOrdinals(addressInput, userId, telegramId, chatId, collectionSlug = null) {
+    try {
+      logger.info(`₿ Adding Bitcoin Ordinals ${addressInput} for user ${userId}`);
+
+      // Validate Bitcoin address format
+      const validation = this.validateBitcoinAddress(addressInput);
+      if (!validation.isValid) {
+        throw new Error(`Invalid Bitcoin Ordinals address: ${validation.reason}`);
+      }
+
+      // Extract address based on type
+      let identifier = validation.address;
+      let collectionSymbol = collectionSlug;
+
+      // If it's a collection symbol or URL, use it directly
+      if (validation.addressType === 'collection_symbol' || validation.addressType === 'magic_eden_url') {
+        collectionSymbol = validation.address;
+        identifier = validation.address; // Use as identifier
+      }
+
+      // Check if token already exists
+      const existingToken = await this.db.getTrackedToken(identifier, 'bitcoin');
+      if (existingToken) {
+        logger.info(`🔗 Bitcoin Ordinals collection ${identifier} already exists, subscribing user`);
+
+        // Check if inactive and reactivate if needed
+        if (!existingToken.is_active) {
+          const hasPremiumFeatures = await this.db.hasActivePremiumFeatures(identifier);
+          if (hasPremiumFeatures) {
+            await this.db.run('UPDATE tracked_tokens SET is_active = true WHERE id = $1', [existingToken.id]);
+            logger.info(`🔄 Reactivated inactive Bitcoin Ordinals collection: ${identifier}`);
+          } else {
+            // Delete and recreate - delete all foreign key references first
+            await this.db.run('DELETE FROM pending_payments WHERE token_id = $1', [existingToken.id]);
+            await this.db.run('DELETE FROM user_subscriptions WHERE token_id = $1', [existingToken.id]);
+            await this.db.run('DELETE FROM trending_payments WHERE token_id = $1', [existingToken.id]);
+            await this.db.run('DELETE FROM tracked_tokens WHERE id = $1', [existingToken.id]);
+            return await this.createFreshBitcoinOrdinalsToken(identifier, userId, chatId, collectionSymbol, validation.addressType);
+          }
+        }
+
+        // Subscribe user to existing token
+        const subscriptionResult = await this.db.subscribeUserToToken(userId, existingToken.id, chatId);
+
+        // Check if user was already subscribed
+        const isNewSubscription = subscriptionResult && subscriptionResult.id;
+        const subscriptionMessage = isNewSubscription
+          ? `✅ You're now tracking ${existingToken.token_name || 'this Bitcoin Ordinals collection'}!`
+          : `ℹ️ You're already tracking ${existingToken.token_name || 'this Bitcoin Ordinals collection'}!`;
+
+        return {
+          success: true,
+          message: `${subscriptionMessage}\n\n₿ Chain: Bitcoin\n🏪 Marketplace: Magic Eden\n📮 Collection: ${existingToken.contract_address}`,
+          token: existingToken,
+          alreadyTracked: !isNewSubscription
+        };
+      }
+
+      // Create new token
+      return await this.createFreshBitcoinOrdinalsToken(identifier, userId, chatId, collectionSymbol, validation.addressType);
+
+    } catch (error) {
+      logger.error(`Error adding Bitcoin Ordinals ${addressInput}:`, error);
+      return {
+        success: false,
+        message: `❌ Error adding Bitcoin Ordinals: ${error.message}\n\nYou can provide:\n• Collection symbol (e.g., node-monkes)\n• Inscription ID\n• Magic Eden Ordinals URL`
+      };
+    }
+  }
+
+  /**
+   * Create a fresh Bitcoin Ordinals token record
+   * @param {string} identifier - Bitcoin inscription ID or collection symbol
+   * @param {number} userId - Database user ID
+   * @param {string} chatId - Chat context ID
+   * @param {string} collectionSymbol - Collection symbol/slug
+   * @param {string} addressType - Type of address provided
+   * @returns {Promise<Object>} Result object
+   */
+  async createFreshBitcoinOrdinalsToken(identifier, userId, chatId, collectionSymbol = null, addressType = 'collection_symbol') {
+    try {
+      logger.info(`🆕 Creating fresh Bitcoin Ordinals token: ${identifier} (type: ${addressType})`);
+
+      if (!this.magicEdenOrdinals) {
+        throw new Error('Magic Eden Ordinals service not available. Please check your MAGIC_EDEN_API_KEY configuration.');
+      }
+
+      let validation;
+      let collectionMetadata;
+
+      // Validate based on address type
+      if (addressType === 'inscription_id') {
+        // For individual inscriptions, we need to fetch the collection from the inscription
+        const inscriptionData = await this.magicEdenOrdinals.getInscriptionMetadata(identifier);
+        if (!inscriptionData) {
+          throw new Error('Inscription not found on Magic Eden');
+        }
+
+        // Extract collection from inscription
+        collectionSymbol = inscriptionData.collectionSymbol || inscriptionData.collection;
+        if (!collectionSymbol) {
+          throw new Error('Could not determine collection for this inscription');
+        }
+
+        validation = {
+          isValid: true,
+          name: collectionSymbol,
+          symbol: collectionSymbol,
+          tokenType: 'Bitcoin Ordinals',
+          collectionSymbol: collectionSymbol
+        };
+      } else {
+        // It's a collection symbol - validate via collection metadata
+        collectionMetadata = await this.magicEdenOrdinals.validateCollectionSymbol(collectionSymbol || identifier);
+        if (!collectionMetadata.isValid) {
+          throw new Error(collectionMetadata.reason || 'Collection not found on Magic Eden');
+        }
+
+        // Use collection metadata for validation
+        validation = {
+          isValid: true,
+          name: collectionMetadata.name || collectionSymbol || identifier,
+          symbol: collectionSymbol || identifier,
+          tokenType: 'Bitcoin Ordinals',
+          collectionSymbol: collectionSymbol || identifier
+        };
+      }
+
+      // Add to database
+      const tokenResult = await this.db.addTrackedToken(
+        identifier,
+        validation,
+        userId,
+        null, // No Alchemy webhook for Bitcoin
+        collectionSymbol,
+        null, // No OpenSea subscription for Bitcoin
+        'bitcoin', // chain_name
+        0, // chain_id for Bitcoin
+        'poller', // Using Magic Eden API polling instead of webhooks
+        'magiceden' // marketplace
+      );
+
+      // Subscribe user
+      await this.db.subscribeUserToToken(userId, tokenResult.id, chatId);
+      logger.info(`User ${userId} subscribed to Bitcoin Ordinals ${identifier} (ID: ${tokenResult.id})`);
+
+      // Register collection with Bitcoin Ordinals Poller
+      if (this.bitcoinPoller && collectionSymbol) {
+        try {
+          await this.bitcoinPoller.addCollection(collectionSymbol, tokenResult.id, validation.name);
+          logger.info(`✅ Registered ${collectionSymbol} with Bitcoin Ordinals Poller`);
+        } catch (error) {
+          logger.error(`Failed to register collection with Bitcoin Poller:`, error);
+        }
+      }
+
+      // Build success message
+      let successMessage = `✅ *${validation.name || 'Bitcoin Ordinals Collection'}* added successfully!\n\n`;
+      successMessage += `₿ *Chain:* Bitcoin\n`;
+      successMessage += `🏪 *Marketplace:* Magic Eden\n`;
+      successMessage += `🔔 You'll receive alerts for sales and listings\n`;
+
+      if (collectionSymbol && this.bitcoinPoller) {
+        successMessage += `\n🌟 *Polling Tracker:* ✅ Enabled (5min intervals)\n`;
+        successMessage += `   Collection: \`${collectionSymbol}\`\n`;
+      } else {
+        successMessage += `\n⚠️ *Polling Tracker:* Limited\n`;
+        successMessage += `   (Bitcoin Ordinals Poller not configured)\n`;
+      }
+
+      if (collectionMetadata) {
+        successMessage += `\n📊 *Collection Stats:*\n`;
+        if (collectionMetadata.floorPrice) {
+          successMessage += `   Floor: ${collectionMetadata.floorPrice}\n`;
+        }
+        if (collectionMetadata.supply) {
+          successMessage += `   Supply: ${collectionMetadata.supply}\n`;
+        }
+      }
+
+      return {
+        success: true,
+        message: successMessage,
+        token: {
+          id: tokenResult.id,
+          contract_address: identifier,
+          collection_slug: collectionSymbol,
+          token_name: validation.name,
+          token_symbol: validation.symbol,
+          chain_name: 'bitcoin',
+          marketplace: 'magiceden',
+          polling_enabled: !!this.bitcoinPoller
+        }
+      };
+
+    } catch (error) {
+      logger.error(`Error creating fresh Bitcoin Ordinals token:`, error);
       throw error;
     }
   }

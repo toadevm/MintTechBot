@@ -1,7 +1,8 @@
 const logger = require('../services/logger');
+const axios = require('axios');
 
 class WebhookHandlers {
-  constructor(database, bot, trendingService = null, secureTrendingService = null, openSeaService = null, chainManager = null, magicEdenService = null, heliusService = null) {
+  constructor(database, bot, trendingService = null, secureTrendingService = null, openSeaService = null, chainManager = null, magicEdenService = null, heliusService = null, magicEdenOrdinalsService = null, hiroOrdinalsService = null) {
     this.db = database;
     this.bot = bot;
     this.trending = trendingService;
@@ -10,14 +11,18 @@ class WebhookHandlers {
     this.chainManager = chainManager;
     this.magicEden = magicEdenService;
     this.helius = heliusService;
+    this.magicEdenOrdinals = magicEdenOrdinalsService;
+    this.hiro = hiroOrdinalsService;
     this.processedTransactions = new Map();
     this.processedOpenSeaEvents = new Map(); // Track OpenSea events to prevent duplicates
     this.processedHeliusEvents = new Map(); // Track Helius events to prevent duplicates
+    this.processedHiroEvents = new Map(); // Track Hiro Ordinals events to prevent duplicates
     this.CACHE_EXPIRY_MS = 10 * 60 * 1000;
     setInterval(() => {
       this.cleanupExpiredTransactions();
       this.cleanupExpiredOpenSeaEvents();
       this.cleanupExpiredHeliusEvents();
+      this.cleanupExpiredHiroEvents();
     }, 5 * 60 * 1000);
   }
 
@@ -124,6 +129,20 @@ class WebhookHandlers {
     }
     if (removedCount > 0) {
       logger.debug(`Cleaned up ${removedCount} expired Helius event cache entries`);
+    }
+  }
+
+  cleanupExpiredHiroEvents() {
+    const now = Date.now();
+    let removedCount = 0;
+    for (const [eventKey, timestamp] of this.processedHiroEvents.entries()) {
+      if (now - timestamp > this.CACHE_EXPIRY_MS) {
+        this.processedHiroEvents.delete(eventKey);
+        removedCount++;
+      }
+    }
+    if (removedCount > 0) {
+      logger.debug(`Cleaned up ${removedCount} expired Hiro event cache entries`);
     }
   }
 
@@ -2202,6 +2221,938 @@ class WebhookHandlers {
 
     } catch (error) {
       logger.error(`❌ Failed to download/resize Solana image: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // ==================== BITCOIN ORDINALS POLLING HANDLERS (MAGIC EDEN) ====================
+
+  /**
+   * Handle Bitcoin Ordinals activity from Magic Eden API poller
+   * @param {Object} eventData - Activity data from BitcoinOrdinalsPoller
+   * @returns {Promise<boolean>} True if processed successfully
+   */
+  async handleBitcoinOrdinalsActivity(eventData) {
+    try {
+      logger.info(`₿ Processing Bitcoin Ordinals activity: ${eventData.activityType} for ${eventData.collectionSymbol}`);
+
+      // Find tracked token by collection symbol
+      const token = await this.db.get(
+        'SELECT * FROM tracked_tokens WHERE collection_slug = $1 AND chain_name = $2 AND is_active = true',
+        [eventData.collectionSymbol, 'bitcoin']
+      );
+
+      if (!token) {
+        logger.debug(`Collection ${eventData.collectionSymbol} not tracked, skipping activity`);
+        return false;
+      }
+
+      // Get all subscriptions for this token
+      const subscriptions = await this.db.all(
+        `SELECT us.*, u.telegram_id
+         FROM user_subscriptions us
+         JOIN users u ON us.user_id = u.id
+         WHERE us.token_id = $1 AND us.notification_enabled = true`,
+        [token.id]
+      );
+
+      if (subscriptions.length === 0) {
+        logger.debug(`No active subscriptions for ${eventData.collectionName}, skipping`);
+        return false;
+      }
+
+      logger.info(`₿ Sending Bitcoin Ordinals notifications to ${subscriptions.length} subscriptions`);
+
+      // Fetch inscription metadata to get the specific inscription image
+      let inscriptionImage = null;
+      let inscriptionMetadata = null;
+      let useCollectionFallback = false;
+
+      try {
+        if (this.magicEdenOrdinals && eventData.inscriptionId) {
+          inscriptionMetadata = await this.magicEdenOrdinals.getInscriptionMetadata(eventData.inscriptionId);
+          if (inscriptionMetadata) {
+            logger.debug(`₿ Inscription metadata fields:`, Object.keys(inscriptionMetadata));
+
+            // Try multiple possible image fields from Magic Eden API
+            // Check for higher quality versions first
+            inscriptionImage = inscriptionMetadata.contentURI ||
+                             inscriptionMetadata.imageURI ||
+                             inscriptionMetadata.content_url ||
+                             inscriptionMetadata.image ||
+                             inscriptionMetadata.meta?.high_res_img_url ||
+                             inscriptionMetadata.chain?.high_res_image ||
+                             null;
+
+            if (inscriptionImage) {
+              logger.info(`₿ Found inscription image URL: ${inscriptionImage}`);
+
+              // If it's a Magic Eden CDN URL, try to get a larger size
+              if (inscriptionImage.includes('img-cdn.magiceden.dev') || inscriptionImage.includes('ord-mirror.magiceden.dev')) {
+                // Try to replace size parameters or add width parameter
+                if (!inscriptionImage.includes('?')) {
+                  inscriptionImage = `${inscriptionImage}?w=600`;
+                  logger.info(`₿ Added size parameter to ME CDN: ${inscriptionImage}`);
+                }
+              }
+            } else {
+              logger.warn(`₿ No image found in inscription metadata. Available fields: ${JSON.stringify(Object.keys(inscriptionMetadata))}`);
+              useCollectionFallback = true;
+            }
+          } else {
+            logger.warn(`₿ No inscription metadata returned for ${eventData.inscriptionId}`);
+            useCollectionFallback = true;
+          }
+        }
+      } catch (imageError) {
+        logger.warn(`₿ Could not fetch inscription metadata:`, imageError.message);
+        useCollectionFallback = true;
+      }
+
+      // Fallback to collection image if no inscription image found
+      if (!inscriptionImage && useCollectionFallback) {
+        try {
+          if (this.magicEdenOrdinals) {
+            const collectionData = await this.magicEdenOrdinals.validateCollectionSymbol(eventData.collectionSymbol);
+            if (collectionData && collectionData.image) {
+              inscriptionImage = collectionData.image;
+              logger.info(`₿ Using collection image as fallback: ${inscriptionImage}`);
+            }
+          }
+        } catch (fallbackError) {
+          logger.warn(`₿ Could not fetch collection image fallback:`, fallbackError.message);
+        }
+      }
+
+      // Build notification message in EVM format
+      const activityEmoji = this.getBitcoinActivityEmoji(eventData.activityType);
+      const activityAction = this.formatBitcoinActivityAction(eventData.activityType);
+
+      // Add green emoji for buys (buying_broadcasted)
+      const greenEmoji = eventData.activityType === 'buying_broadcasted' ? '🟢' : '';
+
+      let message = `${activityEmoji}${greenEmoji} **${eventData.collectionName}** ${activityAction}\n\n`;
+
+      // Price information FIRST (only for sales and listings) - matching EVM format
+      logger.debug(`₿ Price data - activityType: ${eventData.activityType}, price: ${eventData.price}, priceRaw: ${eventData.priceRaw}`);
+
+      if (eventData.price && eventData.activityType !== 'transfer') {
+        // Get BTC price in USD and format as "0.3 BTC $6,939"
+        const priceWithUSD = await this.formatBTCPriceWithUSD(eventData.price, eventData.priceRaw);
+        const priceLabel = eventData.activityType === 'buying_broadcasted' ? 'Price' : 'List Price';
+        message += `💰 **${priceLabel}:** ${priceWithUSD}\n`;
+      } else if (eventData.activityType !== 'transfer') {
+        logger.warn(`₿ No price data available for ${eventData.activityType} event. Price: ${eventData.price}, PriceRaw: ${eventData.priceRaw}`);
+      }
+
+      // Inscription details (equivalent to NFT details in EVM)
+      if (eventData.inscriptionId) {
+        // Show truncated inscription ID
+        const truncatedId = eventData.inscriptionId.length > 20
+          ? `${eventData.inscriptionId.substring(0, 20)}...`
+          : eventData.inscriptionId;
+        message += `🖼️ **Inscription:** \`${truncatedId}\`\n`;
+      }
+
+      // Addresses (only show for transfers, like EVM)
+      if (eventData.activityType === 'transfer') {
+        if (eventData.seller) {
+          message += `📤 **From:** \`${eventData.seller.substring(0, 12)}...\`\n`;
+        }
+        if (eventData.buyer) {
+          message += `📥 **To:** \`${eventData.buyer.substring(0, 12)}...\`\n`;
+        }
+      }
+
+      // Marketplace and collection info
+      message += `🏪 **Marketplace:** ${eventData.marketplace}\n`;
+      message += `📮 **Collection:** \`${eventData.collectionSymbol}\`\n`;
+      message += `🔗 **Chain:** ₿ Bitcoin\n`;
+
+      // Link to specific inscription page
+      if (eventData.inscriptionId) {
+        message += `\n[View on Magic Eden](https://magiceden.io/ordinals/item-details/${eventData.inscriptionId})`;
+      }
+
+      // Add footer - Powered by Candy Codex
+      message += ` \nPowered by [Candy Codex](https://buy.candycodex.com/)`;
+
+      // Add footer advertisements
+      if (this.secureTrending) {
+        try {
+          const footerAds = await this.secureTrending.getActiveFooterAds();
+          if (footerAds && footerAds.length > 0) {
+            const adLinks = footerAds.map(ad => {
+              const ticker = ad.ticker_symbol || ad.token_symbol || 'TOKEN';
+              return `[⭐️${ticker}](${ad.custom_link})`;
+            });
+
+            if (adLinks.length < 3) {
+              adLinks.push('[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)');
+            }
+
+            message += `\n${adLinks.join(' ')}`;
+          } else {
+            message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
+          }
+        } catch (error) {
+          message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
+        }
+      } else {
+        message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
+      }
+
+      const boostButton = {
+        inline_keyboard: [[
+          {
+            text: 'BOOST YOUR NFT🟢',
+            callback_data: '/buy_trending'
+          }
+        ]]
+      };
+
+      // Send notifications to all subscribed users
+      for (const subscription of subscriptions) {
+        try {
+          if (inscriptionImage) {
+            // Try to download and send with inscription image
+            try {
+              const imagePath = await this.downloadAndResizeBitcoinImage(inscriptionImage, eventData.inscriptionId);
+              await this.bot.telegram.sendPhoto(subscription.chat_id, { source: imagePath }, {
+                caption: message,
+                parse_mode: 'Markdown',
+                reply_markup: boostButton
+              });
+
+              // Clean up image after sending
+              setTimeout(async () => {
+                try {
+                  const fs = require('fs').promises;
+                  await fs.unlink(imagePath).catch(() => {});
+                } catch (e) {
+                  // Ignore cleanup errors
+                }
+              }, 5000);
+
+              logger.info(`   ✅ Sent with inscription image to chat ${subscription.chat_id}`);
+            } catch (imageError) {
+              // Fallback to text-only if image fails
+              logger.warn(`   ⚠️ Inscription image failed, sending text-only:`, imageError.message);
+              await this.bot.telegram.sendMessage(subscription.chat_id, message, {
+                parse_mode: 'Markdown',
+                disable_web_page_preview: true,
+                reply_markup: boostButton
+              });
+              logger.info(`   ✅ Sent text-only to chat ${subscription.chat_id}`);
+            }
+          } else {
+            // Send text-only if no inscription image available
+            await this.bot.telegram.sendMessage(subscription.chat_id, message, {
+              parse_mode: 'Markdown',
+              disable_web_page_preview: true,
+              reply_markup: boostButton
+            });
+            logger.info(`   ✅ Sent text-only to chat ${subscription.chat_id}`);
+          }
+        } catch (error) {
+          logger.error(`   ❌ Failed to send to chat ${subscription.chat_id}:`, error.message);
+        }
+      }
+
+      return true;
+
+    } catch (error) {
+      logger.error(`Error handling Bitcoin Ordinals activity:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Download and resize Bitcoin Ordinals collection image
+   * @param {string} imageUrl - Image URL from Magic Eden
+   * @param {string} collectionSymbol - Collection symbol for filename
+   * @returns {Promise<string>} Path to resized image
+   */
+  async downloadAndResizeBitcoinImage(imageUrl, collectionSymbol) {
+    const fs = require('fs').promises;
+    const path = require('path');
+    const sharp = require('sharp');
+
+    try {
+      const tempDir = '/tmp';
+      const tempPath = path.join(tempDir, `bitcoin_ordinals_${collectionSymbol}_${Date.now()}_original.jpg`);
+      const resizedPath = path.join(tempDir, `bitcoin_ordinals_${collectionSymbol}_${Date.now()}_300x300.jpg`);
+
+      // Download image
+      const response = await axios.get(imageUrl, {
+        responseType: 'arraybuffer',
+        timeout: 10000,
+        maxContentLength: 50 * 1024 * 1024 // 50MB max
+      });
+
+      await fs.writeFile(tempPath, response.data);
+
+      // Get image metadata
+      const metadata = await sharp(tempPath).metadata();
+      logger.debug(`📊 Original Bitcoin inscription image: ${metadata.width}x${metadata.height}, format: ${metadata.format}`);
+
+      // Process image - resize to 300x300 with high quality settings
+      // For Bitcoin Ordinals: often pixel art or detailed artwork that needs sharp rendering
+      const sharpInstance = sharp(tempPath);
+
+      // If image is smaller than 300x300, upscale it with nearest neighbor (best for pixel art)
+      // If larger, downscale with lanczos3 (best for detailed images)
+      const resizeOptions = {
+        width: 300,
+        height: 300,
+        fit: 'cover',
+        position: 'center'
+      };
+
+      // Use nearest neighbor for small images (pixel art) to keep sharp pixels
+      if (metadata.width < 300 || metadata.height < 300) {
+        resizeOptions.kernel = 'nearest';
+        logger.debug(`📐 Using nearest neighbor for small image (${metadata.width}x${metadata.height})`);
+      } else {
+        resizeOptions.kernel = 'lanczos3';
+        logger.debug(`📐 Using lanczos3 for large image (${metadata.width}x${metadata.height})`);
+      }
+
+      // Create orange background (Bitcoin theme color)
+      const orangeBackground = Buffer.from(
+        '<svg width="300" height="300"><rect width="300" height="300" fill="#FF8C00"/></svg>'
+      );
+
+      // First resize the inscription image
+      const resizedInscription = await sharpInstance
+        .resize(resizeOptions)
+        .toBuffer();
+
+      // Composite inscription on orange background
+      await sharp(orangeBackground)
+        .composite([{
+          input: resizedInscription,
+          gravity: 'center'
+        }])
+        .jpeg({
+          quality: 92,
+          progressive: true,
+          mozjpeg: true
+        })
+        .toFile(resizedPath);
+
+      // Clean up original
+      await fs.unlink(tempPath).catch(() => {});
+
+      logger.info(`🖼️ Bitcoin Ordinals image processed with orange background: ${resizedPath} (300x300)`);
+      return resizedPath;
+
+    } catch (error) {
+      logger.error(`❌ Failed to download/resize Bitcoin Ordinals image: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get emoji for Bitcoin activity type
+   * @param {string} activityType - Activity type from Magic Eden
+   * @returns {string} Emoji
+   */
+  getBitcoinActivityEmoji(activityType) {
+    const emojiMap = {
+      'buying_broadcasted': '💰',
+      'sale': '💸',
+      'listing': '🏷️',
+      'transfer': '🔄',
+      'mint': '✨'
+    };
+    return emojiMap[activityType.toLowerCase()] || '₿';
+  }
+
+  /**
+   * Format Bitcoin activity type for display
+   * @param {string} activityType - Activity type from Magic Eden
+   * @returns {string} Formatted activity type
+   */
+  formatBitcoinActivityType(activityType) {
+    const typeMap = {
+      'buying_broadcasted': 'Buy Broadcasted',
+      'sale': 'Sale',
+      'listing': 'New Listing',
+      'transfer': 'Transfer',
+      'mint': 'Mint'
+    };
+    return typeMap[activityType.toLowerCase()] || activityType;
+  }
+
+  /**
+   * Format Bitcoin activity action for message header (like EVM format)
+   * @param {string} activityType - Activity type from Magic Eden
+   * @returns {string} Action text (e.g., "was sold", "was listed")
+   */
+  formatBitcoinActivityAction(activityType) {
+    const actionMap = {
+      'buying_broadcasted': 'was sold',
+      'sale': 'was sold',
+      'listing': 'was listed',
+      'list': 'was listed',
+      'transfer': 'was transferred',
+      'mint': 'was minted'
+    };
+    return actionMap[activityType.toLowerCase()] || 'activity';
+  }
+
+  /**
+   * Format BTC price with USD equivalent
+   * @param {string} btcPriceFormatted - Formatted BTC price string (e.g., "0.3 BTC")
+   * @param {number} satoshis - Price in satoshis
+   * @returns {Promise<string>} Formatted price with USD (e.g., "0.3 BTC $6939")
+   */
+  async formatBTCPriceWithUSD(btcPriceFormatted, satoshis) {
+    try {
+      if (!satoshis || satoshis === 0) {
+        return btcPriceFormatted || '0 BTC';
+      }
+
+      // Convert satoshis to BTC
+      const btcAmount = satoshis / 100000000;
+
+      // Fetch current BTC price in USD
+      const btcPriceUSD = await this.getBTCPriceUSD();
+
+      if (btcPriceUSD) {
+        const usdAmount = btcAmount * btcPriceUSD;
+        // Format USD with commas and no decimals for cleaner look
+        const formattedUSD = Math.round(usdAmount).toLocaleString('en-US');
+        return `${btcPriceFormatted} $${formattedUSD}`;
+      }
+
+      // Fallback if USD price fetch fails
+      return btcPriceFormatted;
+    } catch (error) {
+      logger.warn('Failed to format BTC price with USD:', error.message);
+      return btcPriceFormatted;
+    }
+  }
+
+  /**
+   * Get current BTC price in USD
+   * @returns {Promise<number|null>} BTC price in USD or null if fetch fails
+   */
+  async getBTCPriceUSD() {
+    try {
+      const axios = require('axios');
+      // Use CoinGecko free API (no auth required)
+      const response = await axios.get('https://api.coingecko.com/api/v3/simple/price', {
+        params: {
+          ids: 'bitcoin',
+          vs_currencies: 'usd'
+        },
+        timeout: 5000
+      });
+
+      const btcPrice = response.data?.bitcoin?.usd;
+      if (btcPrice) {
+        logger.debug(`₿ Current BTC price: $${btcPrice.toLocaleString('en-US')}`);
+        return btcPrice;
+      }
+
+      return null;
+    } catch (error) {
+      logger.warn('Failed to fetch BTC price from CoinGecko:', error.message);
+      return null;
+    }
+  }
+
+  // ==================== HIRO ORDINALS WEBHOOK HANDLERS (DEPRECATED - KEPT FOR REFERENCE) ====================
+
+  /**
+   * Handle Hiro Chainhook webhook for Bitcoin Ordinals transfers
+   * @deprecated This handler is deprecated and removed - using Magic Eden API polling instead
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   */
+  async handleHiroChainhook(req, res) {
+    try {
+      // Verify auth header
+      const authHeader = req.headers.authorization;
+      if (!this.hiro || !this.hiro.verifyChainhookAuth(authHeader)) {
+        logger.warn('⚠️ Unauthorized Hiro Chainhook webhook request');
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const event = req.body;
+      logger.info(`₿ Received Hiro Chainhook event: ${event.apply?.[0]?.type || 'unknown'}`);
+
+      await this.db.logWebhook('hiro', event, false);
+      let processed = false;
+
+      // Process inscription transfer events
+      if (event.apply && Array.isArray(event.apply)) {
+        for (const applyItem of event.apply) {
+          try {
+            if (applyItem.type === 'transaction' || applyItem.type === 'ordinal_operation') {
+              const transferProcessed = await this.handleInscriptionTransfer(applyItem);
+              if (transferProcessed) processed = true;
+            }
+          } catch (error) {
+            logger.error(`Error processing Hiro event:`, error);
+          }
+        }
+      }
+
+      await this.db.logWebhook('hiro', event, processed);
+      logger.info(`✅ Hiro Chainhook processed: ${processed ? 'success' : 'skipped'}`);
+
+      res.status(200).json({
+        success: true,
+        processed: processed,
+        message: 'Chainhook processed successfully'
+      });
+    } catch (error) {
+      logger.error('Error handling Hiro Chainhook:', error);
+      if (req.body) {
+        await this.db.logWebhook('hiro', req.body, false, error.message);
+      }
+      res.status(500).json({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  }
+
+  /**
+   * Handle a single inscription transfer event from Hiro Chainhook
+   * @param {Object} event - The event object from Hiro
+   * @returns {Promise<boolean>} True if processed successfully
+   */
+  async handleInscriptionTransfer(event) {
+    try {
+      if (!this.hiro) {
+        logger.warn('Hiro service not available');
+        return false;
+      }
+
+      // Parse the inscription transfer event
+      const transferData = this.hiro.parseInscriptionTransfer(event);
+      if (!transferData) {
+        logger.warn('Failed to parse Hiro inscription transfer event');
+        return false;
+      }
+
+      // Create deduplication key
+      const eventKey = `hiro:${transferData.txid}:${transferData.inscription_id}`;
+      if (this.isHiroEventProcessed(eventKey)) {
+        logger.info(`⏭️ Hiro event ${eventKey} already processed, skipping`);
+        return false;
+      }
+
+      // Mark as being processed
+      this.markHiroEventProcessed(eventKey);
+
+      logger.info(`₿ HIRO INSCRIPTION TRANSFER - ID: ${transferData.inscription_id}`);
+
+      // Find tracked tokens by collection symbol for Bitcoin
+      let token = null;
+      if (transferData.collection_symbol) {
+        const tokens = await this.db.all(
+          'SELECT * FROM tracked_tokens WHERE chain_name = $1 AND collection_slug = $2 AND is_active = true',
+          ['bitcoin', transferData.collection_symbol]
+        );
+        if (tokens && tokens.length > 0) {
+          token = tokens[0];
+          logger.info(`📊 Found tracked Bitcoin Ordinals collection: ${token.token_name} (${transferData.collection_symbol})`);
+        }
+      }
+
+      if (!token) {
+        logger.debug(`Collection ${transferData.collection_symbol || 'unknown'} for inscription ${transferData.inscription_id} not tracked, skipping`);
+        return false;
+      }
+
+      // Log activity to database
+      const activityData = {
+        contractAddress: transferData.inscription_id,
+        tokenId: transferData.inscription_number || null,
+        activityType: 'transfer',
+        fromAddress: transferData.sender,
+        toAddress: transferData.recipient,
+        transactionHash: transferData.txid,
+        blockNumber: transferData.block_height,
+        price: null, // Ordinals transfers don't have on-chain price data
+        marketplace: 'Bitcoin Network'
+      };
+
+      await this.db.logNFTActivity(activityData);
+
+      // Notify subscribed users
+      await this.notifyUsersOrdinals(token, transferData, activityData);
+
+      // Check if token should notify channels
+      const shouldNotifyChannels = await this.shouldNotifyChannelsForToken(token.contract_address);
+      if (shouldNotifyChannels.notify) {
+        logger.info(`📢 Notifying channels for ${token.token_name} via Ordinals transfer (${shouldNotifyChannels.reason})`);
+        await this.notifyChannelsOrdinals(token, transferData, activityData, shouldNotifyChannels.channels, shouldNotifyChannels.isTrending);
+      }
+
+      logger.info(`✅ Successfully processed Hiro inscription transfer for ${token.token_name}`);
+      return true;
+
+    } catch (error) {
+      logger.error('Error handling Hiro inscription transfer:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Check if Hiro event has been processed
+   * @param {string} eventKey - Unique event key
+   * @returns {boolean} True if already processed
+   */
+  isHiroEventProcessed(eventKey) {
+    const timestamp = this.processedHiroEvents.get(eventKey);
+    if (!timestamp) return false;
+
+    const isValid = (Date.now() - timestamp) <= this.CACHE_EXPIRY_MS;
+    if (!isValid) {
+      this.processedHiroEvents.delete(eventKey);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Mark Hiro event as processed
+   * @param {string} eventKey - Unique event key
+   */
+  markHiroEventProcessed(eventKey) {
+    this.processedHiroEvents.set(eventKey, Date.now());
+  }
+
+  /**
+   * Notify users about Bitcoin Ordinals transfer
+   * @param {Object} token - Token data from database
+   * @param {Object} transferData - Parsed transfer data from Hiro
+   * @param {Object} activityData - Activity data for database
+   * @returns {Promise<boolean>} True if notifications sent successfully
+   */
+  async notifyUsersOrdinals(token, transferData, activityData) {
+    try {
+      // Get users with their subscription context (chat_id)
+      const subscriptions = await this.db.all(`
+        SELECT u.telegram_id, u.username, us.notification_enabled, us.chat_id
+        FROM users u
+        JOIN user_subscriptions us ON u.id = us.user_id
+        WHERE us.token_id = $1 AND us.notification_enabled = true AND u.is_active = true
+      `, [token.id]);
+
+      if (!subscriptions || subscriptions.length === 0) {
+        logger.debug(`No users subscribed to Bitcoin Ordinals token: ${token.contract_address}`);
+        return false;
+      }
+
+      const message = await this.formatOrdinalsTransferMessage(token, transferData);
+      logger.info(`📤 Sending Bitcoin Ordinals transfer notification to ${subscriptions.length} subscription(s) for ${token.token_name}`);
+
+      let successCount = 0;
+
+      for (const subscription of subscriptions) {
+        try {
+          let targetChatId;
+          if (subscription.chat_id === 'private') {
+            targetChatId = subscription.telegram_id;
+          } else {
+            targetChatId = subscription.chat_id;
+          }
+
+          await this.sendOrdinalsNotificationWithImage(targetChatId, message, transferData, token);
+          successCount++;
+          logger.info(`✅ Bitcoin Ordinals notification sent to ${subscription.chat_id === 'private' ? 'private chat' : 'group'} ${targetChatId}`);
+        } catch (error) {
+          logger.error(`❌ Failed to send Bitcoin Ordinals notification to ${subscription.chat_id}:`, error);
+
+          if (error.response?.error_code === 403 || error.response?.error_code === 400) {
+            await this.db.run(
+              'UPDATE users SET is_active = false WHERE telegram_id = $1',
+              [subscription.telegram_id]
+            );
+            logger.info(`Deactivated user ${subscription.telegram_id} due to delivery failure`);
+          }
+        }
+      }
+
+      logger.info(`📊 Bitcoin Ordinals notification summary: ${successCount}/${subscriptions.length} notifications sent`);
+      return successCount > 0;
+    } catch (error) {
+      logger.error('Error notifying users for Bitcoin Ordinals transfer:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Notify channels about Bitcoin Ordinals transfer
+   * @param {Object} token - Token data
+   * @param {Object} transferData - Transfer data
+   * @param {Object} activityData - Activity data
+   * @param {Array} channels - Channels to notify
+   * @param {boolean} isTrending - Whether token is trending
+   * @returns {Promise<boolean>} True if notifications sent
+   */
+  async notifyChannelsOrdinals(token, transferData, activityData, channels, isTrending = false) {
+    try {
+      // Security check
+      const verification = await this.verifyChannelNotificationPermission(token.contract_address, token.token_name);
+      if (!verification.authorized) {
+        logger.warn(`🔒 BLOCKED BITCOIN ORDINALS CHANNEL NOTIFICATION: ${token.token_name} - ${verification.reason}`);
+        return false;
+      }
+
+      if (!channels || channels.length === 0) {
+        return false;
+      }
+
+      const message = isTrending
+        ? await this.formatTrendingOrdinalsMessage(token, transferData)
+        : await this.formatOrdinalsTransferMessage(token, transferData);
+
+      let notifiedCount = 0;
+      for (const channel of channels) {
+        try {
+          logger.info(`📤 SENDING Bitcoin Ordinals to channel ${channel.channel_title}: ${token.token_name}`);
+          await this.sendOrdinalsNotificationWithImage(channel.telegram_chat_id, message, transferData, token);
+          notifiedCount++;
+          logger.info(`✅ Bitcoin Ordinals notification sent to channel: ${channel.channel_title}`);
+        } catch (error) {
+          logger.error(`❌ Failed to send Bitcoin Ordinals notification to channel ${channel.channel_title}:`, error);
+
+          if (error.response?.error_code === 403) {
+            await this.db.run(
+              'UPDATE channels SET is_active = false WHERE telegram_chat_id = $1',
+              [channel.telegram_chat_id]
+            );
+          }
+        }
+      }
+
+      logger.info(`📢 Notified ${notifiedCount}/${channels.length} channels for Bitcoin Ordinals transfer`);
+      return notifiedCount > 0;
+    } catch (error) {
+      logger.error('Error notifying channels for Bitcoin Ordinals transfer:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Format Bitcoin Ordinals transfer message for Telegram
+   * @param {Object} token - Token data
+   * @param {Object} transferData - Transfer data from Hiro
+   * @returns {Promise<string>} Formatted message
+   */
+  async formatOrdinalsTransferMessage(token, transferData) {
+    const collectionName = token.token_name || 'Bitcoin Ordinals';
+
+    let message = `🔄 **${collectionName}** Transfer\n\n`;
+    message += `🖼️ **Inscription:** #${transferData.inscription_number || 'Unknown'}\n`;
+    message += `🆔 **Inscription ID:** \`${this.shortenAddress(transferData.inscription_id)}\`\n`;
+    message += `📤 **From:** \`${this.shortenAddress(transferData.sender)}\`\n`;
+    message += `📥 **To:** \`${this.shortenAddress(transferData.recipient)}\`\n`;
+    message += `🏪 **Marketplace:** Magic Eden Ordinals\n`;
+    message += `🔗 **Chain:** ₿ Bitcoin\n`;
+    message += `[View on Bitcoin Explorer](https://mempool.space/tx/${transferData.txid})\n`;
+
+    message += ` \nPowered by [Candy Codex](https://buy.candycodex.com/)`;
+
+    // Add footer advertisements
+    if (this.secureTrending) {
+      try {
+        const footerAds = await this.secureTrending.getActiveFooterAds();
+        if (footerAds && footerAds.length > 0) {
+          const adLinks = footerAds.map(ad => {
+            const ticker = ad.ticker_symbol || ad.token_symbol || 'TOKEN';
+            return `[⭐️${ticker}](${ad.custom_link})`;
+          });
+
+          if (adLinks.length < 3) {
+            adLinks.push('[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)');
+          }
+
+          message += `\n${adLinks.join(' ')}`;
+        } else {
+          message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
+        }
+      } catch (error) {
+        message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
+      }
+    } else {
+      message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
+    }
+
+    return message;
+  }
+
+  /**
+   * Format trending Bitcoin Ordinals transfer message
+   * @param {Object} token - Token data
+   * @param {Object} transferData - Transfer data
+   * @returns {Promise<string>} Formatted message
+   */
+  async formatTrendingOrdinalsMessage(token, transferData) {
+    let message = `🔥 **TRENDING:** ${token.token_name || 'Bitcoin Ordinals'}\n\n`;
+    const regularMessage = await this.formatOrdinalsTransferMessage(token, transferData);
+    const lines = regularMessage.split('\n');
+    message += lines.slice(1).join('\n');
+    return message;
+  }
+
+  /**
+   * Send Bitcoin Ordinals notification with image
+   * @param {string} chatId - Telegram chat ID
+   * @param {string} message - Message text
+   * @param {Object} transferData - Transfer data
+   * @param {Object} token - Token data
+   */
+  async sendOrdinalsNotificationWithImage(chatId, message, transferData, token) {
+    // Check if image fee is paid for this contract
+    const hasImageFee = this.secureTrending ? await this.secureTrending.isImageFeeActive(token.contract_address) : false;
+    logger.info(`🖼️ BITCOIN ORDINALS IMAGE FEE CHECK: ${token.contract_address} - hasImageFee: ${hasImageFee}`);
+
+    try {
+      let imagePath = null;
+
+      if (hasImageFee && this.magicEdenOrdinals) {
+        // For PAID tokens: Try to fetch actual inscription image from Magic Eden
+        logger.info(`✅ IMAGE FEE PAID: Attempting to fetch Bitcoin Ordinals inscription image`);
+        try {
+          const inscriptionMetadata = await this.magicEdenOrdinals.getInscriptionMetadata(transferData.inscription_id);
+          if (inscriptionMetadata && inscriptionMetadata.content_url) {
+            imagePath = await this.downloadAndResizeBitcoinImage(inscriptionMetadata.content_url, transferData.inscription_id);
+          }
+        } catch (error) {
+          logger.warn(`Failed to process Bitcoin Ordinals inscription image: ${error.message}`);
+          imagePath = null;
+        }
+      }
+
+      // Fallback to default image if no paid image or download failed
+      if (!imagePath) {
+        logger.info(`🚫 Using default tracking image for Bitcoin Ordinals notification`);
+        const path = require('path');
+        imagePath = path.join(__dirname, '../images/candyImage.jpg');
+      }
+
+      const boostButton = {
+        inline_keyboard: [[
+          {
+            text: 'BOOST YOUR NFT🟢',
+            callback_data: '/buy_trending'
+          }
+        ]]
+      };
+
+      await this.bot.telegram.sendPhoto(chatId, { source: imagePath }, {
+        caption: message,
+        parse_mode: 'Markdown',
+        reply_markup: boostButton
+      });
+
+      logger.info(`✅ Bitcoin Ordinals notification with image sent successfully to ${chatId}`);
+
+    } catch (error) {
+      logger.error(`Error sending Bitcoin Ordinals notification with image:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Download and resize Bitcoin Ordinals inscription image
+   * @param {string} imageUrl - Inscription image URL
+   * @param {string} inscriptionId - Bitcoin inscription ID
+   * @returns {Promise<string>} Path to resized image
+   */
+  async downloadAndResizeBitcoinImage(imageUrl, inscriptionId) {
+    const axios = require('axios');
+    const sharp = require('sharp');
+    const fs = require('fs').promises;
+    const path = require('path');
+
+    try {
+      const tempDir = path.join(__dirname, '../../temp_bitcoin_images');
+      await fs.mkdir(tempDir, { recursive: true });
+
+      const fileName = `bitcoin_${inscriptionId.slice(0, 8)}_${Date.now()}.jpg`;
+      const tempPath = path.join(tempDir, fileName);
+      const resizedPath = path.join(tempDir, `resized_${fileName}`);
+
+      // Download the image
+      logger.info(`📥 Downloading Bitcoin Ordinals inscription image: ${imageUrl}`);
+      const response = await axios.get(imageUrl, {
+        responseType: 'arraybuffer',
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+
+      await fs.writeFile(tempPath, response.data);
+      logger.info(`💾 Downloaded Bitcoin Ordinals image saved: ${tempPath}`);
+
+      // Get image metadata to determine best processing approach
+      const metadata = await sharp(tempPath).metadata();
+      logger.debug(`📊 Original Bitcoin inscription image: ${metadata.width}x${metadata.height}, format: ${metadata.format}`);
+
+      // Process image - resize to 300x300 with high quality settings
+      // For Bitcoin Ordinals: often pixel art or detailed artwork that needs sharp rendering
+      const sharpInstance = sharp(tempPath);
+
+      // If image is smaller than 300x300, upscale it with nearest neighbor (best for pixel art)
+      // If larger, downscale with lanczos3 (best for detailed images)
+      const resizeOptions = {
+        width: 300,
+        height: 300,
+        fit: 'cover',
+        position: 'center'
+      };
+
+      // Use nearest neighbor for small images (pixel art) to keep sharp pixels
+      if (metadata.width < 300 || metadata.height < 300) {
+        resizeOptions.kernel = 'nearest';
+        logger.debug(`📐 Using nearest neighbor for small image (${metadata.width}x${metadata.height})`);
+      } else {
+        resizeOptions.kernel = 'lanczos3';
+        logger.debug(`📐 Using lanczos3 for large image (${metadata.width}x${metadata.height})`);
+      }
+
+      // Create orange background (Bitcoin theme color)
+      const orangeBackground = Buffer.from(
+        '<svg width="300" height="300"><rect width="300" height="300" fill="#FF8C00"/></svg>'
+      );
+
+      // First resize the inscription image
+      const resizedInscription = await sharpInstance
+        .resize(resizeOptions)
+        .toBuffer();
+
+      // Composite inscription on orange background
+      await sharp(orangeBackground)
+        .composite([{
+          input: resizedInscription,
+          gravity: 'center'
+        }])
+        .jpeg({
+          quality: 92,
+          progressive: true,
+          mozjpeg: true
+        })
+        .toFile(resizedPath);
+
+      // Clean up original
+      await fs.unlink(tempPath).catch(() => {});
+
+      logger.info(`🖼️ Bitcoin Ordinals image processed with orange background: ${resizedPath} (300x300)`);
+      return resizedPath;
+
+    } catch (error) {
+      logger.error(`❌ Failed to download/resize Bitcoin Ordinals image: ${error.message}`);
       throw error;
     }
   }

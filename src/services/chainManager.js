@@ -169,6 +169,22 @@ class ChainManager {
           heliusWebhookSupported: true,
           rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
           paymentContract: '5dBMD7r6UrS6FA7oNLMEn5isMdXYnZqWb9kxUp3kUSzm' // Solana payment receiver address
+        },
+        {
+          name: 'bitcoin',
+          chainId: 0, // Bitcoin mainnet
+          displayName: 'Bitcoin',
+          currencySymbol: 'BTC',
+          emoji: '₿',
+          isTestnet: false,
+          isActive: true,
+          isBitcoin: true, // Flag for Bitcoin-specific handling
+          openSeaSupported: false,
+          magicEdenSupported: true,
+          ordinalsSupported: true,
+          hiroWebhookSupported: true,
+          rpcUrl: process.env.HIRO_ORDINALS_API_URL || 'https://api.hiro.so/ordinals/v1',
+          paymentContract: process.env.BITCOIN_PAYMENT_ADDRESS || 'bc1qplaceholder' // Bitcoin payment receiver address
         }
       ];
 
@@ -223,6 +239,10 @@ class ChainManager {
 
   getSolanaChains() {
     return Array.from(this.chains.values()).filter(chain => chain.isSolana);
+  }
+
+  getBitcoinChains() {
+    return Array.from(this.chains.values()).filter(chain => chain.isBitcoin);
   }
 
   // User chain preference methods

@@ -8,6 +8,7 @@ const Database = require('./src/database/db');
 const OpenSeaService = require('./src/blockchain/opensea');
 const MagicEdenService = require('./src/blockchain/magiceden');
 const HeliusService = require('./src/blockchain/helius');
+const MagicEdenOrdinalsService = require('./src/blockchain/magicEdenOrdinalsService');
 const BotCommands = require('./src/bot/commands');
 const WebhookHandlers = require('./src/webhooks/handlers');
 const TokenTracker = require('./src/services/tokenTracker');
@@ -15,6 +16,7 @@ const TrendingService = require('./src/services/trendingService');
 const SecureTrendingService = require('./src/services/secureTrendingService');
 const ChannelService = require('./src/services/channelService');
 const ChainManager = require('./src/services/chainManager');
+const BitcoinOrdinalsPoller = require('./src/services/bitcoinOrdinalsPoller');
 
 class MintyRushBot {
   constructor() {
@@ -79,6 +81,16 @@ class MintyRushBot {
         this.services.helius = null;
       }
 
+      // Initialize Magic Eden Ordinals service (for Bitcoin Ordinals validation)
+      try {
+        this.services.magicEdenOrdinals = new MagicEdenOrdinalsService();
+        await this.services.magicEdenOrdinals.initialize();
+        logger.info('🪄 Magic Eden Ordinals service initialized');
+      } catch (error) {
+        logger.warn('Magic Eden Ordinals service not available:', error.message);
+        this.services.magicEdenOrdinals = null;
+      }
+
 
       try {
         this.services.trending = new TrendingService(this.services.db);
@@ -111,16 +123,20 @@ class MintyRushBot {
         this.services.secureTrending = null;
       }
 
+      // Note: TokenTracker and Bitcoin Poller have a circular dependency, so we create TokenTracker first
+      // and add poller reference later
       this.services.tokenTracker = new TokenTracker(
         this.services.db,
         this.services.openSea,
         null, // webhookHandlers will be set later
         this.services.chainManager,
         this.services.magicEden,
-        this.services.helius
+        this.services.helius,
+        this.services.magicEdenOrdinals,
+        null // bitcoinPoller will be set later
       );
       await this.services.tokenTracker.initialize();
-      logger.info('Token tracker initialized with OpenSea + Magic Eden support');
+      logger.info('Token tracker initialized with OpenSea + Magic Eden + Bitcoin Ordinals support');
 
       this.services.channelService = new ChannelService(
         this.services.db,
@@ -133,6 +149,45 @@ class MintyRushBot {
 
 
       this.setupExpressMiddleware();
+
+      // Setup webhook handlers before initializing Bitcoin Ordinals poller
+      const webhookHandlers = new WebhookHandlers(
+        this.services.db,
+        this.bot,
+        this.services.trending,
+        this.services.secureTrending,
+        this.services.openSea,
+        this.services.chainManager,
+        this.services.magicEden,
+        this.services.helius,
+        this.services.magicEdenOrdinals,
+        null // Hiro removed
+      );
+
+      // Connect webhook handlers to token tracker
+      if (this.services.tokenTracker && this.services.tokenTracker.setWebhookHandlers) {
+        this.services.tokenTracker.setWebhookHandlers(webhookHandlers);
+      }
+
+      // Initialize Bitcoin Ordinals Poller (replaces Hiro webhooks)
+      try {
+        this.services.bitcoinPoller = new BitcoinOrdinalsPoller(
+          this.services.db,
+          this.services.magicEdenOrdinals,
+          webhookHandlers
+        );
+        await this.services.bitcoinPoller.initialize();
+        logger.info('₿ Bitcoin Ordinals Poller initialized');
+
+        // Connect Bitcoin Poller to Token Tracker
+        this.services.tokenTracker.bitcoinPoller = this.services.bitcoinPoller;
+      } catch (error) {
+        logger.warn('Bitcoin Ordinals Poller not available:', error.message);
+        this.services.bitcoinPoller = null;
+      }
+
+      // Store webhook handlers reference
+      this.webhookHandlers = webhookHandlers;
 
 
       this.setupWebhookRoutes();
@@ -155,10 +210,24 @@ class MintyRushBot {
 
       await this.startServer();
 
+      // Launch bot in long-polling mode with pending updates dropped (non-blocking)
+      this.bot.launch({
+        dropPendingUpdates: true,
+        allowedUpdates: ['message', 'callback_query']
+      }).then(() => {
+        logger.info('✅ Telegram bot launched successfully');
+      }).catch(error => {
+        logger.error('Failed to launch Telegram bot:', error);
+      });
 
-      await this.bot.launch();
-      logger.info('Telegram bot launched successfully');
+      // Don't wait for bot launch - continue initialization
+      logger.info('📱 Telegram bot launching in background...');
 
+      // Start Bitcoin Ordinals Poller immediately
+      if (this.services.bitcoinPoller) {
+        this.services.bitcoinPoller.start();
+        logger.info('₿ Bitcoin Ordinals Poller started');
+      }
 
       this.setupGracefulShutdown();
 
@@ -236,21 +305,8 @@ class MintyRushBot {
   }
 
   setupWebhookRoutes() {
-    const webhookHandlers = new WebhookHandlers(
-      this.services.db,
-      this.bot,
-      this.services.trending,
-      this.services.secureTrending,
-      this.services.openSea,
-      this.services.chainManager,
-      this.services.magicEden,
-      this.services.helius
-    );
-
-    // Connect webhook handlers to token tracker for OpenSea notifications
-    if (this.services.tokenTracker && this.services.tokenTracker.setWebhookHandlers) {
-      this.services.tokenTracker.setWebhookHandlers(webhookHandlers);
-    }
+    // Use existing webhook handlers from initialization
+    const webhookHandlers = this.webhookHandlers;
 
     this.app.post('/webhook/alchemy', webhookHandlers.handleAlchemyWebhook.bind(webhookHandlers));
     this.app.post('/webhook/helius', webhookHandlers.handleHeliusWebhook.bind(webhookHandlers));
@@ -402,6 +458,16 @@ class MintyRushBot {
       // Clean up Magic Eden service
       if (this.services.magicEden) {
         await this.services.magicEden.disconnect();
+      }
+
+      // Stop Bitcoin Ordinals Poller
+      if (this.services.bitcoinPoller) {
+        await this.services.bitcoinPoller.cleanup();
+      }
+
+      // Clean up Magic Eden Ordinals service
+      if (this.services.magicEdenOrdinals) {
+        await this.services.magicEdenOrdinals.disconnect();
       }
 
       // Close database connection

@@ -94,10 +94,11 @@ class BotCommands {
     const chatType = ctx.chat.type;
     const chatId = ctx.chat.id.toString();
 
-    // For private chats, always use "private" as the context
+    // Always use the actual chat ID (needed for Telegram notifications)
+    // Private chats get their numeric ID, groups/channels also use their ID
     if (chatType === 'private') {
-      logger.debug(`Chat context normalized: ${chatType} (${chatId}) → "private"`);
-      return 'private';
+      logger.debug(`Chat context: ${chatType} (${chatId})`);
+      return chatId; // Return actual chat ID for notifications to work
     }
 
     // For groups, supergroups, and channels, use the actual chat ID
@@ -2897,6 +2898,8 @@ Choose an option:`;
           // Show tracking status based on chain
           if (token.chain_name === 'solana') {
             message += `      🌟 Helius: ✅ Real-time tracking\n`;
+          } else if (token.chain_name === 'bitcoin') {
+            message += `      🏪 Magic Eden Ordinals: ✅ Real-time tracking\n`;
           } else if (token.collection_slug) {
             message += `      🌊 OpenSea: ✅ Real-time tracking\n`;
           }
@@ -3751,6 +3754,8 @@ Select trending duration:`;
           // Show tracking status based on chain
           if (token.chain_name === 'solana') {
             message += `      🌟 Helius: ✅ Real-time tracking\n`;
+          } else if (token.chain_name === 'bitcoin') {
+            message += `      🏪 Magic Eden Ordinals: ✅ Real-time tracking\n`;
           } else if (token.collection_slug) {
             message += `      🌊 OpenSea: ✅ Real-time tracking\n`;
           }
@@ -3810,6 +3815,8 @@ Select trending duration:`;
         // Show tracking status based on chain
         if (token.chain_name === 'solana') {
           message += `   🌟 Helius: ✅ Real-time tracking\n`;
+        } else if (token.chain_name === 'bitcoin') {
+          message += `   🏪 Magic Eden Ordinals: ✅ Real-time tracking\n`;
         } else if (token.collection_slug) {
           message += `   🌊 OpenSea: ✅ Real-time tracking\n`;
         } else {

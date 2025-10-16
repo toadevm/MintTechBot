@@ -64,39 +64,246 @@ class SecureTrendingService {
     this.bitcoinPaymentService = null;
     this.bitcoinPaymentAddress = process.env.BITCOIN_PAYMENT_ADDRESS;
     
-    // Predefined trending fees (in Wei) - no smart contract dependency
-    this.trendingFees = {
-      normal: {
-        6: ethers.parseEther('0.0625'),   // 6hrs: 0.0625 ETH
-        12: ethers.parseEther('0.1125'),  // 12hrs: 0.1125 ETH
-        18: ethers.parseEther('0.151'),   // 18hrs: 0.151 ETH
-        24: ethers.parseEther('0.20')     // 24hrs: 0.20 ETH
+    // Chain-specific pricing configuration
+    // All amounts are in native tokens and stored as smallest unit (wei/lamports/satoshis)
+    this.chainPricing = {
+      // Bitcoin pricing (amounts in satoshis)
+      bitcoin: {
+        trending: {
+          normal: {
+            6: '310000',      // 0.0031 BTC
+            12: '630000',     // 0.0063 BTC
+            18: '940000',     // 0.0094 BTC
+            24: '1200000'     // 0.012 BTC
+          },
+          premium: {
+            6: '630000',      // 0.0063 BTC
+            12: '1200000',    // 0.012 BTC
+            18: '1800000',    // 0.018 BTC
+            24: '2400000'     // 0.024 BTC
+          }
+        },
+        imageFees: {
+          30: '22000',        // 0.00022 BTC
+          60: '44000',        // 0.00044 BTC
+          90: '66000',        // 0.00066 BTC
+          180: '132000',      // 0.00132 BTC
+          365: '364000'       // 0.00364 BTC
+        },
+        footerFees: {
+          30: '5100000',      // 0.051 BTC
+          60: '10000000',     // 0.10 BTC
+          90: '15000000',     // 0.15 BTC
+          180: '30000000',    // 0.30 BTC
+          365: '61000000'     // 0.61 BTC
+        },
+        decimals: 8,
+        symbol: 'BTC'
       },
-      premium: {
-        6: ethers.parseEther('0.125'),    // 6hrs: 0.125 ETH
-        12: ethers.parseEther('0.225'),   // 12hrs: 0.225 ETH
-        18: ethers.parseEther('0.32'),    // 18hrs: 0.32 ETH
-        24: ethers.parseEther('0.40')     // 24hrs: 0.40 ETH
+      // Ethereum pricing (amounts in wei)
+      ethereum: {
+        trending: {
+          normal: {
+            6: ethers.parseEther('0.0625'),
+            12: ethers.parseEther('0.1125'),
+            18: ethers.parseEther('0.151'),
+            24: ethers.parseEther('0.20')
+          },
+          premium: {
+            6: ethers.parseEther('0.125'),
+            12: ethers.parseEther('0.225'),
+            18: ethers.parseEther('0.32'),
+            24: ethers.parseEther('0.40')
+          }
+        },
+        imageFees: {
+          30: ethers.parseEther('0.004'),
+          60: ethers.parseEther('0.008'),
+          90: ethers.parseEther('0.012'),
+          180: ethers.parseEther('0.024'),
+          365: ethers.parseEther('0.048')
+        },
+        footerFees: {
+          30: ethers.parseEther('1.0'),
+          60: ethers.parseEther('2.0'),
+          90: ethers.parseEther('3.0'),
+          180: ethers.parseEther('6.0'),
+          365: ethers.parseEther('12.0')
+        },
+        decimals: 18,
+        symbol: 'ETH'
+      },
+      // Arbitrum pricing (same as ETH but in ARB native token)
+      arbitrum: {
+        trending: {
+          normal: {
+            6: ethers.parseEther('0.0625'),
+            12: ethers.parseEther('0.1125'),
+            18: ethers.parseEther('0.151'),
+            24: ethers.parseEther('0.20')
+          },
+          premium: {
+            6: ethers.parseEther('0.125'),
+            12: ethers.parseEther('0.225'),
+            18: ethers.parseEther('0.32'),
+            24: ethers.parseEther('0.40')
+          }
+        },
+        imageFees: {
+          30: ethers.parseEther('0.004'),
+          60: ethers.parseEther('0.008'),
+          90: ethers.parseEther('0.012'),
+          180: ethers.parseEther('0.024'),
+          365: ethers.parseEther('0.048')
+        },
+        footerFees: {
+          30: ethers.parseEther('1.0'),
+          60: ethers.parseEther('2.0'),
+          90: ethers.parseEther('3.0'),
+          180: ethers.parseEther('6.0'),
+          365: ethers.parseEther('12.0')
+        },
+        decimals: 18,
+        symbol: 'ETH'
+      },
+      // Optimism pricing (same as ETH)
+      optimism: {
+        trending: {
+          normal: {
+            6: ethers.parseEther('0.0625'),
+            12: ethers.parseEther('0.1125'),
+            18: ethers.parseEther('0.151'),
+            24: ethers.parseEther('0.20')
+          },
+          premium: {
+            6: ethers.parseEther('0.125'),
+            12: ethers.parseEther('0.225'),
+            18: ethers.parseEther('0.32'),
+            24: ethers.parseEther('0.40')
+          }
+        },
+        imageFees: {
+          30: ethers.parseEther('0.004'),
+          60: ethers.parseEther('0.008'),
+          90: ethers.parseEther('0.012'),
+          180: ethers.parseEther('0.024'),
+          365: ethers.parseEther('0.048')
+        },
+        footerFees: {
+          30: ethers.parseEther('1.0'),
+          60: ethers.parseEther('2.0'),
+          90: ethers.parseEther('3.0'),
+          180: ethers.parseEther('6.0'),
+          365: ethers.parseEther('12.0')
+        },
+        decimals: 18,
+        symbol: 'ETH'
+      },
+      // Solana pricing (amounts in lamports)
+      solana: {
+        trending: {
+          normal: {
+            6: '1430000000',    // 1.43 SOL
+            12: '2870000000',   // 2.87 SOL
+            18: '4300000000',   // 4.30 SOL
+            24: '5730000000'    // 5.73 SOL
+          },
+          premium: {
+            6: '2870000000',    // 2.87 SOL
+            12: '5730000000',   // 5.73 SOL
+            18: '8570000000',   // 8.57 SOL
+            24: '11440000000'   // 11.44 SOL
+          }
+        },
+        imageFees: {
+          30: '95000000',       // 0.095 SOL
+          60: '190000000',      // 0.19 SOL
+          90: '290000000',      // 0.29 SOL
+          180: '580000000',     // 0.58 SOL
+          365: '1150000000'     // 1.15 SOL
+        },
+        footerFees: {
+          30: '23000000000',    // 23 SOL
+          60: '46000000000',    // 46 SOL
+          90: '69000000000',    // 69 SOL
+          180: '138000000000',  // 138 SOL
+          365: '276000000000'   // 276 SOL
+        },
+        decimals: 9,
+        symbol: 'SOL'
+      },
+      // BNB Smart Chain pricing (amounts in wei)
+      bsc: {
+        trending: {
+          normal: {
+            6: ethers.parseEther('0.36'),
+            12: ethers.parseEther('0.72'),
+            18: ethers.parseEther('1.08'),
+            24: ethers.parseEther('1.44')
+          },
+          premium: {
+            6: ethers.parseEther('0.72'),
+            12: ethers.parseEther('1.44'),
+            18: ethers.parseEther('2.16'),
+            24: ethers.parseEther('2.88')
+          }
+        },
+        imageFees: {
+          30: ethers.parseEther('0.024'),
+          60: ethers.parseEther('0.048'),
+          90: ethers.parseEther('0.072'),
+          180: ethers.parseEther('0.144'),
+          365: ethers.parseEther('0.288')
+        },
+        footerFees: {
+          30: ethers.parseEther('6.00'),
+          60: ethers.parseEther('12.00'),
+          90: ethers.parseEther('18.00'),
+          180: ethers.parseEther('36.00'),
+          365: ethers.parseEther('72.00')
+        },
+        decimals: 18,
+        symbol: 'BNB'
+      },
+      // HyperEVM pricing (amounts in wei)
+      hyperevm: {
+        trending: {
+          normal: {
+            6: ethers.parseEther('6.00'),
+            12: ethers.parseEther('12.00'),
+            18: ethers.parseEther('18.00'),
+            24: ethers.parseEther('24.00')
+          },
+          premium: {
+            6: ethers.parseEther('12.00'),
+            12: ethers.parseEther('24.00'),
+            18: ethers.parseEther('36.00'),
+            24: ethers.parseEther('48.00')
+          }
+        },
+        imageFees: {
+          30: ethers.parseEther('0.40'),
+          60: ethers.parseEther('0.80'),
+          90: ethers.parseEther('1.20'),
+          180: ethers.parseEther('2.40'),
+          365: ethers.parseEther('4.80')
+        },
+        footerFees: {
+          30: ethers.parseEther('100.00'),
+          60: ethers.parseEther('200.00'),
+          90: ethers.parseEther('300.00'),
+          180: ethers.parseEther('600.00'),
+          365: ethers.parseEther('1200.00')
+        },
+        decimals: 18,
+        symbol: 'HYPE'
       }
     };
 
-    // Image fee configuration (multiple durations)
-    this.imageFees = {
-      30: ethers.parseEther('0.004'),   // 30 days: 0.004 ETH
-      60: ethers.parseEther('0.008'),   // 60 days: 0.008 ETH
-      90: ethers.parseEther('0.012'),   // 90 days: 0.012 ETH
-      180: ethers.parseEther('0.024'),  // 180 days: 0.024 ETH
-      365: ethers.parseEther('0.048')   // 365 days: 0.048 ETH
-    };
-
-    // Footer ad fee configuration (multiple durations)
-    this.footerFees = {
-      30: ethers.parseEther('1.0'),     // 30 days: 1.0 ETH
-      60: ethers.parseEther('2.0'),     // 60 days: 2.0 ETH
-      90: ethers.parseEther('3.0'),     // 90 days: 3.0 ETH
-      180: ethers.parseEther('6.0'),    // 180 days: 6.0 ETH
-      365: ethers.parseEther('12.0')    // 365 days: 12.0 ETH
-    };
+    // Legacy fees for backward compatibility (points to Ethereum)
+    this.trendingFees = this.chainPricing.ethereum.trending;
+    this.imageFees = this.chainPricing.ethereum.imageFees;
+    this.footerFees = this.chainPricing.ethereum.footerFees;
   }
 
   async initialize() {
@@ -156,19 +363,69 @@ class SecureTrendingService {
     }
   }
 
-  // Calculate trending fee (no smart contract call needed)
-  calculateTrendingFee(durationHours, isPremium = false) {
+  // Calculate trending fee (chain-specific)
+  calculateTrendingFee(durationHours, isPremium = false, chain = 'ethereum') {
     const validDurations = [6, 12, 18, 24];
-    
+
     if (!validDurations.includes(durationHours)) {
       throw new Error('Invalid duration. Must be 6, 12, 18, or 24 hours');
     }
 
+    // Normalize chain name
+    const normalizedChain = this.normalizeChainName(chain);
+
+    // Get chain pricing or fall back to ethereum
+    const chainConfig = this.chainPricing[normalizedChain] || this.chainPricing.ethereum;
     const feeType = isPremium ? 'premium' : 'normal';
-    const fee = this.trendingFees[feeType][durationHours];
-    
-    logger.info(`Calculated ${feeType} trending fee for ${durationHours}h: ${ethers.formatEther(fee)} ETH`);
+    const fee = chainConfig.trending[feeType][durationHours];
+
+    // Format fee for logging
+    const formattedFee = this.formatChainAmount(fee, normalizedChain);
+    logger.info(`Calculated ${feeType} trending fee for ${durationHours}h on ${normalizedChain}: ${formattedFee} ${chainConfig.symbol}`);
+
     return fee;
+  }
+
+  // Helper: Normalize chain name for consistent lookup
+  normalizeChainName(chain) {
+    if (!chain) return 'ethereum';
+    const normalized = chain.toLowerCase().trim();
+
+    // Map common variations
+    const chainMap = {
+      'eth': 'ethereum',
+      'btc': 'bitcoin',
+      'sol': 'solana',
+      'bnb': 'bsc',
+      'binance': 'bsc',
+      'arb': 'arbitrum',
+      'op': 'optimism',
+      'hype': 'hyperevm'
+    };
+
+    return chainMap[normalized] || normalized;
+  }
+
+  // Helper: Format chain amount for display
+  formatChainAmount(amount, chain) {
+    const chainConfig = this.chainPricing[chain] || this.chainPricing.ethereum;
+
+    if (chain === 'bitcoin') {
+      // Bitcoin uses satoshis (8 decimals)
+      return (parseInt(amount) / 100000000).toFixed(8);
+    } else if (chain === 'solana') {
+      // Solana uses lamports (9 decimals)
+      return (parseInt(amount) / 1000000000).toFixed(4);
+    } else {
+      // EVM chains use wei (18 decimals)
+      return ethers.formatEther(amount);
+    }
+  }
+
+  // Helper: Get chain config for a specific chain
+  getChainConfig(chain = 'ethereum') {
+    const normalizedChain = this.normalizeChainName(chain);
+    return this.chainPricing[normalizedChain] || this.chainPricing.ethereum;
   }
 
   // Get all trending options (no smart contract dependency)
@@ -190,43 +447,69 @@ class SecureTrendingService {
     return trendingOptions;
   }
 
-  // Calculate image fee for specified duration
-  calculateImageFee(durationDays) {
+  // Calculate image fee for specified duration (chain-specific)
+  calculateImageFee(durationDays, chain = 'ethereum') {
     const validDurations = [30, 60, 90, 180, 365];
 
     if (!validDurations.includes(durationDays)) {
       throw new Error('Invalid duration. Must be 30, 60, 90, 180, or 365 days');
     }
 
-    const fee = this.imageFees[durationDays];
-    logger.info(`Calculated image fee for ${durationDays} days: ${ethers.formatEther(fee)} ETH`);
+    // Normalize chain name
+    const normalizedChain = this.normalizeChainName(chain);
+
+    // Get chain pricing or fall back to ethereum
+    const chainConfig = this.chainPricing[normalizedChain] || this.chainPricing.ethereum;
+    const fee = chainConfig.imageFees[durationDays];
+
+    // Format fee for logging
+    const formattedFee = this.formatChainAmount(fee, normalizedChain);
+    logger.info(`Calculated image fee for ${durationDays} days on ${normalizedChain}: ${formattedFee} ${chainConfig.symbol}`);
+
     return fee;
   }
 
-  // Calculate footer fee for specified duration
-  calculateFooterFee(durationDays) {
+  // Calculate footer fee for specified duration (chain-specific)
+  calculateFooterFee(durationDays, chain = 'ethereum') {
     const validDurations = [30, 60, 90, 180, 365];
 
     if (!validDurations.includes(durationDays)) {
       throw new Error('Invalid duration. Must be 30, 60, 90, 180, or 365 days');
     }
 
-    const fee = this.footerFees[durationDays];
-    logger.info(`Calculated footer fee for ${durationDays} days: ${ethers.formatEther(fee)} ETH`);
+    // Normalize chain name
+    const normalizedChain = this.normalizeChainName(chain);
+
+    // Get chain pricing or fall back to ethereum
+    const chainConfig = this.chainPricing[normalizedChain] || this.chainPricing.ethereum;
+    const fee = chainConfig.footerFees[durationDays];
+
+    // Format fee for logging
+    const formattedFee = this.formatChainAmount(fee, normalizedChain);
+    logger.info(`Calculated footer fee for ${durationDays} days on ${normalizedChain}: ${formattedFee} ${chainConfig.symbol}`);
+
     return fee;
   }
 
-  // Get all image fee options
-  getImageFeeOptions() {
+  // Get all image fee options (chain-specific)
+  getImageFeeOptions(chain = 'ethereum') {
     const imageOptions = [];
     const durations = [30, 60, 90, 180, 365];
+    const normalizedChain = this.normalizeChainName(chain);
+    const chainConfig = this.chainPricing[normalizedChain] || this.chainPricing.ethereum;
 
     for (const duration of durations) {
+      const fee = chainConfig.imageFees[duration];
+      const formattedFee = this.formatChainAmount(fee, normalizedChain);
+
       imageOptions.push({
         duration: duration,
         label: `${duration} Days`,
-        fee: this.imageFees[duration].toString(),
-        feeEth: ethers.formatEther(this.imageFees[duration])
+        fee: fee.toString(),
+        feeFormatted: formattedFee,
+        feeEth: formattedFee, // Keep for compatibility
+        symbol: chainConfig.symbol,
+        chain: normalizedChain
       });
     }
 
@@ -379,17 +662,25 @@ class SecureTrendingService {
 
   // ========== END BITCOIN FEE CALCULATION ==========
 
-  // Get all footer fee options
-  getFooterFeeOptions() {
+  // Get all footer fee options (chain-specific)
+  getFooterFeeOptions(chain = 'ethereum') {
     const footerOptions = [];
     const durations = [30, 60, 90, 180, 365];
+    const normalizedChain = this.normalizeChainName(chain);
+    const chainConfig = this.chainPricing[normalizedChain] || this.chainPricing.ethereum;
 
     for (const duration of durations) {
+      const fee = chainConfig.footerFees[duration];
+      const formattedFee = this.formatChainAmount(fee, normalizedChain);
+
       footerOptions.push({
         duration: duration,
         label: `${duration} Days`,
-        fee: this.footerFees[duration].toString(),
-        feeEth: ethers.formatEther(this.footerFees[duration])
+        fee: fee.toString(),
+        feeFormatted: formattedFee,
+        feeEth: formattedFee, // Keep for compatibility
+        symbol: chainConfig.symbol,
+        chain: normalizedChain
       });
     }
 

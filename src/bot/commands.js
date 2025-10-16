@@ -809,8 +809,8 @@ Choose your trending boost option:`;
           }
 
           // Store duration in session and proceed to chain selection
+          // Note: amount will be calculated after chain selection
           session.duration = duration;
-          session.amount = this.secureTrending.calculateImageFee(duration);
           this.setUserSession(ctx.from.id, session);
 
           return this.showChainSelection(ctx, 'image');
@@ -831,7 +831,9 @@ Choose your trending boost option:`;
 
           // Store duration in session and proceed directly to payment (skip chain selection)
           session.duration = duration;
-          session.amount = this.secureTrending.calculateImageFee(duration);
+          // Calculate amount using the token's chain
+          const chain = session.chain || 'ethereum';
+          session.amount = this.secureTrending.calculateImageFee(duration, chain);
           this.setUserSession(ctx.from.id, session);
 
           return this.showTokenImagePaymentInstructions(ctx, session);
@@ -2295,28 +2297,39 @@ Choose an option:`;
       const chainEmoji = chainConfig ? chainConfig.emoji : '🔷';
       const chainDisplay = chainConfig ? chainConfig.displayName : chainName.charAt(0).toUpperCase() + chainName.slice(1);
 
+      // Get chain-specific pricing
+      const chainNormalized = this.secureTrending.normalizeChainName(chainName);
+      const durations = [30, 60, 90, 180, 365];
+      const prices = {};
+      const symbol = this.secureTrending.getChainConfig(chainNormalized).symbol;
+
+      durations.forEach(duration => {
+        const fee = this.secureTrending.calculateImageFee(duration, chainName);
+        prices[duration] = this.secureTrending.formatChainAmount(fee, chainNormalized);
+      });
+
       const message = `🎨 <b>Image Fee - Select Duration</b>\n\n` +
         `🎯 <b>Selected NFT:</b> ${selectedToken.token_name || 'Unknown'} (${selectedToken.token_symbol || 'N/A'})\n` +
         `🔗 <b>Blockchain:</b> ${chainEmoji} ${chainDisplay}\n\n` +
         `Choose how long you want NFT images displayed instead of the CandyCodex image:\n\n` +
-        `🔹 <b>30 days</b> - 0.004 ETH\n` +
-        `🔹 <b>60 days</b> - 0.008 ETH\n` +
-        `🔹 <b>90 days</b> - 0.012 ETH\n` +
-        `🔹 <b>180 days</b> - 0.024 ETH\n` +
-        `🔹 <b>365 days</b> - 0.048 ETH\n\n` +
+        `🔹 <b>30 days</b> - ${prices[30]} ${symbol}\n` +
+        `🔹 <b>60 days</b> - ${prices[60]} ${symbol}\n` +
+        `🔹 <b>90 days</b> - ${prices[90]} ${symbol}\n` +
+        `🔹 <b>180 days</b> - ${prices[180]} ${symbol}\n` +
+        `🔹 <b>365 days</b> - ${prices[365]} ${symbol}\n\n` +
         `✨ Longer durations offer better value per day!`;
 
       const keyboard = Markup.inlineKeyboard([
         [
-          Markup.button.callback('30 days - 0.004 ETH', 'token_image_duration_30'),
-          Markup.button.callback('60 days - 0.008 ETH', 'token_image_duration_60')
+          Markup.button.callback(`30 days - ${prices[30]} ${symbol}`, 'token_image_duration_30'),
+          Markup.button.callback(`60 days - ${prices[60]} ${symbol}`, 'token_image_duration_60')
         ],
         [
-          Markup.button.callback('90 days - 0.012 ETH', 'token_image_duration_90'),
-          Markup.button.callback('180 days - 0.024 ETH', 'token_image_duration_180')
+          Markup.button.callback(`90 days - ${prices[90]} ${symbol}`, 'token_image_duration_90'),
+          Markup.button.callback(`180 days - ${prices[180]} ${symbol}`, 'token_image_duration_180')
         ],
         [
-          Markup.button.callback('365 days - 0.048 ETH', 'token_image_duration_365')
+          Markup.button.callback(`365 days - ${prices[365]} ${symbol}`, 'token_image_duration_365')
         ],
         [
           Markup.button.callback('◀️ Back to Token Selection', 'buy_image_menu'),
@@ -2924,10 +2937,14 @@ Select trending duration:`;
       const durations = [6, 12, 18, 24];
       const keyboard = [];
 
+      // Get chain config for proper symbol display
+      const chainNormalized = this.secureTrending.normalizeChainName(chain);
+      const chainSymbol = this.secureTrending.getChainConfig(chainNormalized).symbol;
+
       durations.forEach(duration => {
-        const fee = this.secureTrending.calculateTrendingFee(duration, isPremium);
-        const feeEth = require('ethers').formatEther(fee);
-        keyboard.push([Markup.button.callback(`${duration}h - ${feeEth} ETH`, `trending_duration_${tokenId}_${duration}_${isPremium ? 'premium' : 'normal'}_${chain}`)]);
+        const fee = this.secureTrending.calculateTrendingFee(duration, isPremium, chain);
+        const feeFormatted = this.secureTrending.formatChainAmount(fee, chainNormalized);
+        keyboard.push([Markup.button.callback(`${duration}h - ${feeFormatted} ${chainSymbol}`, `trending_duration_${tokenId}_${duration}_${isPremium ? 'premium' : 'normal'}_${chain}`)]);
       });
 
       keyboard.push([
@@ -3735,24 +3752,25 @@ Select trending duration:`;
     try {
       const message = `🎨 <b>Image Fee - Select Duration</b>\n\n` +
         `Choose how long you want NFT images displayed instead of the CandyCodex image:\n\n` +
-        `🔹 <b>30 days</b> - 0.004 ETH\n` +
-        `🔹 <b>60 days</b> - 0.008 ETH\n` +
-        `🔹 <b>90 days</b> - 0.012 ETH\n` +
-        `🔹 <b>180 days</b> - 0.024 ETH\n` +
-        `🔹 <b>365 days</b> - 0.048 ETH\n\n` +
-        `✨ Longer durations offer better value per day!`;
+        `🔹 <b>30 days</b>\n` +
+        `🔹 <b>60 days</b>\n` +
+        `🔹 <b>90 days</b>\n` +
+        `🔹 <b>180 days</b>\n` +
+        `🔹 <b>365 days</b>\n\n` +
+        `✨ Longer durations offer better value per day!\n` +
+        `💡 Pricing will be shown after chain selection.`;
 
       const keyboard = Markup.inlineKeyboard([
         [
-          Markup.button.callback('30 days - 0.004 ETH', 'image_duration_30'),
-          Markup.button.callback('60 days - 0.008 ETH', 'image_duration_60')
+          Markup.button.callback('30 days', 'image_duration_30'),
+          Markup.button.callback('60 days', 'image_duration_60')
         ],
         [
-          Markup.button.callback('90 days - 0.012 ETH', 'image_duration_90'),
-          Markup.button.callback('180 days - 0.024 ETH', 'image_duration_180')
+          Markup.button.callback('90 days', 'image_duration_90'),
+          Markup.button.callback('180 days', 'image_duration_180')
         ],
         [
-          Markup.button.callback('365 days - 0.048 ETH', 'image_duration_365')
+          Markup.button.callback('365 days', 'image_duration_365')
         ],
         [
           Markup.button.callback('◀️ Back to Image Spots Menu', 'menu_images')
@@ -3873,13 +3891,11 @@ Select trending duration:`;
       let message;
       if (paymentType === 'image') {
         const durationText = `${session.duration} days`;
-        const { ethers } = require('ethers');
-        const amountText = session.amount ? `${ethers.formatEther(session.amount)} ETH` : 'N/A ETH';
 
         message = `🎨 <b>Image Fee Payment - Select Chain</b>\n\n` +
-          `📅 Duration: <b>${durationText}</b>\n` +
-          `💰 Amount: <b>${amountText}</b>\n\n` +
-          `🔗 Select the blockchain network:`;
+          `📅 Duration: <b>${durationText}</b>\n\n` +
+          `🔗 Select the blockchain network:\n` +
+          `💡 Pricing varies by chain and will be shown on the payment screen.`;
       } else {
         // Footer ads - chain selection comes first
         message = `📢 <b>Footer Ad Payment - Select Chain</b>\n\n` +
@@ -3893,7 +3909,16 @@ Select trending duration:`;
       if (this.chainManager) {
         const supportedChains = this.chainManager.getChainsForPayments();
         supportedChains.forEach(chain => {
-          chainOptions.push([Markup.button.callback(`${chain.emoji} ${chain.displayName}`, `chain_${paymentType}_${chain.name}`)]);
+          // For image payments, show the price in the button
+          if (paymentType === 'image' && session?.duration) {
+            const fee = this.secureTrending.calculateImageFee(session.duration, chain.name);
+            const chainNormalized = this.secureTrending.normalizeChainName(chain.name);
+            const feeFormatted = this.secureTrending.formatChainAmount(fee, chainNormalized);
+            const chainConfig = this.secureTrending.getChainConfig(chainNormalized);
+            chainOptions.push([Markup.button.callback(`${chain.emoji} ${chain.displayName} - ${feeFormatted} ${chainConfig.symbol}`, `chain_${paymentType}_${chain.name}`)]);
+          } else {
+            chainOptions.push([Markup.button.callback(`${chain.emoji} ${chain.displayName}`, `chain_${paymentType}_${chain.name}`)]);
+          }
         });
       } else {
         // Fallback if chainManager not available

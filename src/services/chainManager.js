@@ -156,6 +156,19 @@ class ChainManager {
           paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
         },
         {
+          name: 'sei',
+          chainId: 1329,
+          displayName: 'Sei',
+          currencySymbol: 'SEI',
+          emoji: '🌊',
+          isTestnet: false,
+          isActive: true,
+          openSeaSupported: true,
+          openSeaName: 'sei',
+          rpcUrl: `https://sei-mainnet.g.alchemy.com/v2/${alchemyApiKey}`,
+          paymentContract: '0x405792CbED87Fbb34afA505F768C8eDF8f9504E9'
+        },
+        {
           name: 'solana',
           chainId: 900, // Custom ID for Solana mainnet
           displayName: 'Solana',

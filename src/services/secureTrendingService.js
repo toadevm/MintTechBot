@@ -1,6 +1,7 @@
 const { ethers } = require('ethers');
 const logger = require('./logger');
 const SolanaPaymentService = require('../blockchain/solanaPaymentService');
+const BitcoinPaymentService = require('../blockchain/bitcoinPaymentService');
 
 // Simple Payment Receiver ABI (minimal functions only)
 const SIMPLE_PAYMENT_RECEIVER_ABI = [
@@ -58,6 +59,10 @@ class SecureTrendingService {
     // Solana payment service
     this.solanaPaymentService = null;
     this.solanaPaymentAddress = '5dBMD7r6UrS6FA7oNLMEn5isMdXYnZqWb9kxUp3kUSzm';
+
+    // Bitcoin payment service
+    this.bitcoinPaymentService = null;
+    this.bitcoinPaymentAddress = process.env.BITCOIN_PAYMENT_ADDRESS;
     
     // Predefined trending fees (in Wei) - no smart contract dependency
     this.trendingFees = {
@@ -116,6 +121,16 @@ class SecureTrendingService {
       } catch (solanaError) {
         logger.warn('Failed to initialize Solana payment service:', solanaError.message);
         logger.warn('SOL trending payments will be unavailable.');
+      }
+
+      // Initialize Bitcoin payment verification
+      try {
+        this.bitcoinPaymentService = new BitcoinPaymentService(this.bitcoinPaymentAddress);
+        await this.bitcoinPaymentService.initialize();
+        logger.info(`✅ BTC payment verification initialized: ${this.bitcoinPaymentAddress}`);
+      } catch (bitcoinError) {
+        logger.warn('Failed to initialize Bitcoin payment service:', bitcoinError.message);
+        logger.warn('BTC trending payments will be unavailable.');
       }
 
       return true;
@@ -326,6 +341,43 @@ class SecureTrendingService {
   }
 
   // ========== END SOLANA FEE CALCULATION ==========
+
+  // ========== BITCOIN FEE CALCULATION ==========
+
+  /**
+   * Calculate Bitcoin footer ad fee (dynamic USD-equivalent pricing)
+   * @param {number} durationDays - Duration in days (30, 60, 90, 180, 365)
+   * @returns {Promise<number>} Fee in BTC
+   */
+  async calculateBitcoinFooterFee(durationDays) {
+    try {
+      if (!this.priceService) {
+        throw new Error('Price service not available for Bitcoin fee calculation');
+      }
+
+      const ethFeeWei = this.calculateFooterFee(durationDays);
+      const ethFeeAmount = parseFloat(ethers.formatEther(ethFeeWei));
+
+      const ethPrice = await this.priceService.getTokenPrice('ETH');
+      const btcPrice = await this.priceService.getTokenPrice('BTC');
+
+      if (!ethPrice || !btcPrice) {
+        throw new Error('Failed to fetch token prices');
+      }
+
+      const usdValue = ethFeeAmount * ethPrice;
+      const btcAmount = usdValue / btcPrice;
+
+      logger.info(`💰 BTC Footer Fee: ${ethFeeAmount} ETH = $${usdValue.toFixed(2)} = ${btcAmount.toFixed(8)} BTC`);
+
+      return btcAmount;
+    } catch (error) {
+      logger.error('Error calculating Bitcoin footer fee:', error);
+      throw error;
+    }
+  }
+
+  // ========== END BITCOIN FEE CALCULATION ==========
 
   // Get all footer fee options
   getFooterFeeOptions() {
@@ -592,20 +644,36 @@ class SecureTrendingService {
     return explorers[chain] || 'https://etherscan.io';
   }
 
-  // Manual transaction validation for /validate command (supports both ETH and SOL)
+  // Manual transaction validation for /validate command (supports ETH, SOL, and BTC)
   async validateUserTransaction(userId, txHash) {
     try {
       logger.info(`Manual validation requested: user=${userId}, tx=${txHash}`);
 
       // Detect chain based on transaction hash format
-      // Solana signatures are base58 (~88 chars), ETH tx hashes are 0x + 64 hex (66 chars)
-      const isSolana = txHash.length > 70 && !txHash.startsWith('0x');
-      const chain = isSolana ? 'solana' : 'ethereum';
+      // Bitcoin: 64 hex chars (no 0x prefix), example: a1b2c3d4...
+      // Solana: base58 (~88 chars), no 0x prefix
+      // Ethereum: 0x + 64 hex chars (66 chars total)
 
-      logger.info(`Detected chain: ${chain} (tx length: ${txHash.length})`);
+      let chain;
+      if (txHash.startsWith('0x')) {
+        chain = 'ethereum';
+      } else if (txHash.length === 64 && /^[a-fA-F0-9]{64}$/.test(txHash)) {
+        chain = 'bitcoin';
+      } else if (txHash.length > 70) {
+        chain = 'solana';
+      } else {
+        return {
+          success: false,
+          error: 'Unable to detect blockchain from transaction hash format.\n\nExpected formats:\n- Ethereum: 0x1234... (66 chars)\n- Bitcoin: 1234... (64 hex chars)\n- Solana: base58 (~88 chars)'
+        };
+      }
 
-      if (isSolana) {
+      logger.info(`Detected chain: ${chain} (tx format: ${txHash.substring(0, 20)}..., length: ${txHash.length})`);
+
+      if (chain === 'solana') {
         return await this.validateSolanaUserTransaction(userId, txHash);
+      } else if (chain === 'bitcoin') {
+        return await this.validateBitcoinUserTransaction(userId, txHash);
       } else {
         return await this.validateEthereumUserTransaction(userId, txHash);
       }
@@ -830,6 +898,109 @@ class SecureTrendingService {
       };
     } catch (error) {
       logger.error('Error in Solana transaction validation:', error);
+      return { success: false, error: `Validation error: ${error.message}` };
+    }
+  }
+
+  // Validate Bitcoin transaction for user
+  async validateBitcoinUserTransaction(userId, txid) {
+    try {
+      if (!this.bitcoinPaymentService) {
+        return {
+          success: false,
+          error: 'Bitcoin payment verification not available.'
+        };
+      }
+
+      // Check if transaction already processed
+      if (await this.db.isTransactionProcessed(txid)) {
+        return {
+          success: false,
+          error: 'This transaction has already been processed.'
+        };
+      }
+
+      // Get transaction from Bitcoin blockchain
+      const validation = await this.bitcoinPaymentService.validateBitcoinTransaction(
+        txid,
+        0, // We'll match based on actual amount received
+        this.bitcoinPaymentAddress,
+        1 // Minimum 1 confirmation required
+      );
+
+      if (!validation.valid) {
+        return {
+          success: false,
+          error: validation.reason
+        };
+      }
+
+      const amountSats = parseInt(validation.amount);
+      const amountBTC = validation.amountBTC;
+      const payerAddress = validation.sender;
+
+      logger.info(`Transaction validated: ${amountBTC} BTC from ${payerAddress}, ${validation.confirmations} confirmations`);
+
+      // Find user's pending payments that match this amount (BTC chain)
+      const userPendingPayments = await this.db.all(
+        `SELECT pp.*, tt.token_name, tt.contract_address
+         FROM pending_payments pp
+         JOIN tracked_tokens tt ON pp.token_id = tt.id
+         WHERE pp.user_id = $1 AND pp.expected_amount = $2 AND pp.is_matched = false AND pp.expires_at > NOW()
+         AND pp.chain_name = 'bitcoin'
+         ORDER BY pp.created_at ASC`,
+        [userId, amountSats.toString()]
+      );
+
+      if (userPendingPayments.length === 0) {
+        return {
+          success: false,
+          error: `No matching pending payment found for ${amountBTC.toFixed(8)} BTC.\nPlease use /buy_trending first to create a trending request.`
+        };
+      }
+
+      // Take the first (oldest) matching pending payment
+      const matchingPayment = userPendingPayments[0];
+
+      logger.info(`Found matching pending payment: token=${matchingPayment.token_name}, duration=${matchingPayment.duration_hours}h`);
+
+      // Mark transaction as processed to prevent duplicates
+      await this.db.markTransactionProcessed(
+        txid,
+        this.bitcoinPaymentAddress,
+        payerAddress,
+        amountSats.toString(),
+        validation.blockHeight,
+        'manual_trending_validation'
+      );
+
+      // Process the trending payment - add to trending_payments directly
+      const dbResult = await this.db.addTrendingPayment(
+        userId,
+        matchingPayment.token_id,
+        amountSats.toString(),
+        txid,
+        matchingPayment.duration_hours,
+        payerAddress
+      );
+
+      // Mark pending payment as matched
+      await this.db.markPendingPaymentMatched(matchingPayment.id, txid);
+      logger.info(`Manual Bitcoin validation successful: ${matchingPayment.token_name} trending activated`);
+
+      return {
+        success: true,
+        tokenName: matchingPayment.token_name,
+        duration: matchingPayment.duration_hours,
+        amount: amountSats.toString(),
+        amountEth: amountBTC.toFixed(8), // Use same field for compatibility
+        txHash: txid,
+        payer: payerAddress,
+        chain: 'bitcoin',
+        confirmations: validation.confirmations
+      };
+    } catch (error) {
+      logger.error('Error in Bitcoin transaction validation:', error);
       return { success: false, error: `Validation error: ${error.message}` };
     }
   }

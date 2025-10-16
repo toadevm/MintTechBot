@@ -398,7 +398,8 @@ class OpenSeaService {
         'apechain': 'ape_chain',
         'abstract': 'abstract',
         'base': 'base',
-        'ronin': 'ronin'
+        'ronin': 'ronin',
+        'sei': 'sei'
       };
 
       const openSeaChain = chainMapping[chainName] || 'ethereum';

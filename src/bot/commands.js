@@ -199,61 +199,16 @@ Simple and focused - boost your NFTs easily! 🚀`;
     // Manual transaction validation command
     bot.command('validate', async (ctx) => {
       try {
-        const telegramId = ctx.from.id.toString();
-        const args = ctx.message.text.split(' ').slice(1);
-
-        if (args.length === 0) {
-          await ctx.reply(
-            '⚠️ Please provide a transaction hash.\n\n' +
-            'Usage: `/validate 0xabc123...`\n\n' +
-            'After sending ETH for trending, use this command to validate your payment.',
-            { parse_mode: 'Markdown' }
-          );
-          return;
-        }
-
-        const txHash = args[0];
-
-        // Validate transaction hash format
-        if (!txHash.startsWith('0x') || txHash.length !== 66) {
-          await ctx.reply('⚠️ Invalid transaction hash format. Must start with 0x and be 66 characters long.');
-          return;
-        }
-
-        await ctx.reply('🔍 Validating your transaction... Please wait.');
-
-        // Use secure trending service for validation
         if (!this.secureTrending) {
-          await ctx.reply('❌ Validation service not available. Please try again later.');
-          return;
+          return ctx.reply('❌ Validation service not available.');
         }
 
-        // Get database user ID
-        const user = await this.db.getUser(telegramId);
-        if (!user) {
-          await ctx.reply('❌ User not found. Please use /start first.');
-          return;
-        }
+        // Trigger the verify trending button flow instead of text-based command
+        return this.showVerifyTokenSelection(ctx, 'trending');
 
-        const result = await this.secureTrending.validateUserTransaction(user.id, txHash);
-        
-        if (result.success) {
-          const successMessage = `✅ **Payment Validated Successfully!**\n\n` +
-            `🎯 **${result.tokenName}** trending activated!\n` +
-            `⏱️ Duration: ${result.duration} hours\n` +
-            `💰 Amount: ${result.amountEth} ETH\n` +
-            `🔗 TX: \`${txHash}\`\n\n` +
-            `Your NFT is now trending! 🚀`;
-          
-          await ctx.replyWithMarkdown(successMessage);
-          logger.info(`Manual validation successful: user=${userId}, tx=${txHash}`);
-        } else {
-          await ctx.reply(`❌ **Validation Failed**\n\n${result.error}`);
-          logger.warn(`Manual validation failed: user=${userId}, tx=${txHash}, error=${result.error}`);
-        }
       } catch (error) {
         logger.error('Error in validate command:', error);
-        await ctx.reply('❌ An error occurred while validating your transaction. Please try again.');
+        await ctx.reply('❌ An error occurred. Please try again.');
       }
     });
 
@@ -263,55 +218,12 @@ Simple and focused - boost your NFTs easily! 🚀`;
           return ctx.reply('❌ Image fee system not available.');
         }
 
-        const args = ctx.message.text.split(' ');
-        if (args.length < 2) {
-          return ctx.reply(
-            '📖 *Buy Image Fee Usage*\n\n' +
-            '`/buy_image <nft_address>`\n\n' +
-            'Pay 0.0040 ETH to display real NFT images from your NFT for 30 days instead of CandyCodex image.\n\n' +
-            'Example: `/buy_image 0x1234...abcd`',
-            { parse_mode: 'Markdown' }
-          );
-        }
-
-        const contractAddress = args[1].trim();
-        if (!ethers.isAddress(contractAddress)) {
-          return ctx.reply('⚠️ Invalid NFT address format.');
-        }
-
-        const user = await this.db.getUser(ctx.from.id.toString());
-        if (!user) {
-          return ctx.reply('Please start the bot first with /startminty');
-        }
-
-        // Check if image fee is already active
-        const isActive = await this.secureTrending.isImageFeeActive(contractAddress);
-        if (isActive) {
-          return ctx.reply('✅ Image fee is already active for this contract. Actual NFT images are being displayed.');
-        }
-
-        const instructions = await this.secureTrending.generateImagePaymentInstructions(contractAddress, user.id);
-        
-        const message = `💰 <b>Image Fee Payment Instructions</b>\n\n` +
-          `🎨 Collection: <b>${instructions.tokenName}</b>\n` +
-          `📮 Contract: <code>${instructions.tokenAddress}</code>\n` +
-          `💸 Fee: <b>${instructions.feeEth} ETH</b> (30 days)\n\n` +
-          `📋 <b>Payment Steps:</b>\n` +
-          instructions.instructions.join('\n') + '\n\n' +
-          `⚠️ After payment, use: <code>/validate_image ${instructions.tokenAddress} &lt;txhash&gt;</code>`;
-
-        await ctx.replyWithHTML(message, { disable_web_page_preview: true });
-        logger.info(`Image payment instructions sent: user=${user.id}, contract=${contractAddress}`);
+        // Trigger the buy image button flow instead of text-based command
+        return this.showImageTokenSelection(ctx);
 
       } catch (error) {
         logger.error('Error in buy_image command:', error);
-        if (error.message.includes('NFT not found')) {
-          const errorMessage = '⚠️ NFT address not found in tracked NFTs. Please add it first.';
-          const keyboard = Markup.inlineKeyboard([[Markup.button.callback('➕ Add NFT', 'add_token_start')]]);
-          ctx.replyWithHTML(errorMessage, keyboard);
-        } else {
-          ctx.reply('⚠️ An error occurred. Please try again.');
-        }
+        ctx.reply('⚠️ An error occurred. Please try again.');
       }
     });
 
@@ -321,55 +233,12 @@ Simple and focused - boost your NFTs easily! 🚀`;
           return ctx.reply('❌ Image fee system not available.');
         }
 
-        const args = ctx.message.text.split(' ');
-        if (args.length < 3) {
-          return ctx.reply(
-            '📖 *Validate Image Fee Usage*\n\n' +
-            '`/validate_image <nft_address> <txhash>`\n\n' +
-            'Validate your 0.0040 ETH image fee payment.\n\n' +
-            'Example: `/validate_image 0x1234...abcd 0xabc123...`',
-            { parse_mode: 'Markdown' }
-          );
-        }
-
-        const contractAddress = args[1].trim();
-        const txHash = args[2].trim();
-
-        if (!ethers.isAddress(contractAddress)) {
-          return ctx.reply('⚠️ Invalid NFT address format.');
-        }
-
-        if (!txHash.startsWith('0x') || txHash.length !== 66) {
-          return ctx.reply('⚠️ Invalid transaction hash format. Should be 0x followed by 64 characters.');
-        }
-
-        const user = await this.db.getUser(ctx.from.id.toString());
-        if (!user) {
-          return ctx.reply('Please start the bot first with /startminty');
-        }
-
-        await ctx.reply('⏳ Validating your image fee transaction...');
-
-        const result = await this.secureTrending.validateImageFeeTransaction(user.id, contractAddress, txHash);
-
-        if (result.success) {
-          const successMessage = `✅ *Image Fee Payment Validated!*\n\n` +
-            `🎨 Collection: *${result.tokenName}*\n` +
-            `📮 Contract: \`${result.contractAddress}\`\n` +
-            `💰 Amount: ${result.amountEth} ETH\n` +
-            `📝 Transaction: \`${result.txHash}\`\n` +
-            `👤 Payer: \`${result.payer}\`\n\n` +
-            `🖼️ *Actual NFT images will now be displayed for this contract for 30 days!*`;
-
-          await ctx.replyWithMarkdown(successMessage);
-          logger.info(`Image fee validated: user=${user.id}, contract=${contractAddress}, tx=${txHash}`);
-        } else {
-          await ctx.reply(`❌ Validation failed: ${result.error}`);
-        }
+        // Trigger the verify image button flow instead of text-based command
+        return this.showVerifyTokenSelection(ctx, 'image');
 
       } catch (error) {
         logger.error('Error in validate_image command:', error);
-        await ctx.reply('❌ An error occurred while validating your transaction. Please try again.');
+        await ctx.reply('❌ An error occurred. Please try again.');
       }
     });
 
@@ -379,49 +248,14 @@ Simple and focused - boost your NFTs easily! 🚀`;
           return ctx.reply('❌ Footer ad system not available.');
         }
 
-        const args = ctx.message.text.split(' ');
-        if (args.length < 2) {
-          return ctx.reply(
-            '📖 *Buy Footer Advertisement Usage*\n\n' +
-            '`/buy_footer <nft_address>`\n\n' +
-            'Pay 1.0 ETH to display your NFT name in notification footers for 30 days with custom clickable link.\n\n' +
-            'Example: `/buy_footer 0x1234...abcd`',
-            { parse_mode: 'Markdown' }
-          );
-        }
-
-        const contractAddress = args[1];
-        const user = await this.db.getUser(ctx.from.id.toString());
-        if (!user) {
-          return ctx.reply('⚠️ Please register first using /start');
-        }
-
-        // Generate payment instructions
-        const instructions = await this.secureTrending.generateFooterPaymentInstructions(contractAddress, user.id);
-        
-        const message =
-          `💰 <b>Footer Advertisement Payment</b>\n\n` +
-          `🎨 <b>Collection:</b> ${instructions.tokenName || 'Unknown'}\n` +
-          `🎯 <b>Token:</b> ${instructions.tokenSymbol || 'N/A'}\n` +
-          `💸 <b>Fee:</b> ${instructions.feeEth || '1.0'} ETH\n` +
-          `⏰ <b>Duration:</b> ${instructions.duration || '30 days'}\n` +
-          `📮 <b>Contract:</b> <code>${instructions.contractAddress || contractAddress}</code>\n\n` +
-          `📋 <b>Payment Steps:</b>\n` +
-          (instructions.instructions || ['Send payment to NFT address']).map((step, i) => `${i + 1}. ${step}`).join('\n') + '\n\n' +
-          `⚠️ After payment, use: <code>/validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt;</code>`;
-
-        await ctx.replyWithHTML(message, { disable_web_page_preview: true });
-        logger.info(`Footer payment instructions sent: user=${user.id}, contract=${contractAddress}`);
+        // Initialize session for footer payment flow
+        this.setUserSession(ctx.from.id, { flow: 'footer_payment' });
+        // Trigger the buy footer button flow (shows chain selection first)
+        return this.showChainSelection(ctx, 'footer');
 
       } catch (error) {
         logger.error('Error in buy_footer command:', error);
-        if (error.message.includes('NFT not found')) {
-          const errorMessage = '⚠️ NFT address not found in tracked NFTs. Please add it first.';
-          const keyboard = Markup.inlineKeyboard([[Markup.button.callback('➕ Add NFT', 'add_token_start')]]);
-          ctx.replyWithHTML(errorMessage, keyboard);
-        } else {
-          ctx.reply('⚠️ An error occurred while generating payment instructions. Please try again.');
-        }
+        ctx.reply('⚠️ An error occurred. Please try again.');
       }
     });
 
@@ -431,41 +265,12 @@ Simple and focused - boost your NFTs easily! 🚀`;
           return ctx.reply('❌ Footer ad system not available.');
         }
 
-        const args = ctx.message.text.split(' ');
-        if (args.length < 4) {
-          return ctx.reply(
-            '📖 *Validate Footer Advertisement Usage*\n\n' +
-            '`/validate_footer <nft_address> <txhash> <link>`\n\n' +
-            'Validate your 1.0 ETH footer advertisement payment and set your custom link.\n\n' +
-            'Example: `/validate_footer 0x1234...abcd 0xabc123... https://mytoken.com`',
-            { parse_mode: 'Markdown' }
-          );
-        }
-
-        const contractAddress = args[1];
-        const txHash = args[2];
-        const customLink = args.slice(3).join(' '); // Support URLs with spaces
-
-        const user = await this.db.getUser(ctx.from.id.toString());
-        if (!user) {
-          return ctx.reply('⚠️ Please register first using /start');
-        }
-
-        await ctx.reply('⏳ Validating your footer advertisement transaction...');
-
-        const result = await this.secureTrending.validateFooterTransaction(contractAddress, txHash, customLink, user.id);
-        
-        if (result.success) {
-          await ctx.reply(`✅ ${result.message}`, { parse_mode: 'Markdown' });
-          logger.info(`Footer ad validated: user=${user.id}, contract=${contractAddress}, txHash=${txHash}`);
-        } else {
-          await ctx.reply(`❌ ${result.error}`, { parse_mode: 'Markdown' });
-          logger.warn(`Footer ad validation failed: user=${user.id}, error=${result.error}`);
-        }
+        // Trigger the verify footer button flow instead of text-based command
+        return this.showFooterTickerSelection(ctx);
 
       } catch (error) {
         logger.error('Error in validate_footer command:', error);
-        await ctx.reply('❌ An error occurred while validating your transaction. Please try again.');
+        await ctx.reply('❌ An error occurred. Please try again.');
       }
     });
 
@@ -825,6 +630,8 @@ Choose your trending boost option:`;
             let message;
             if (chainName === 'solana') {
               message = `◎ <b>Solana</b> selected!\n\n📝 Please enter the collection symbol:\n\nExample: <code>mad_lads</code>\n\n💡 The collection must exist on Magic Eden marketplace.`;
+            } else if (chainName === 'bitcoin') {
+              message = `₿ <b>Bitcoin</b> selected!\n\n📝 Please enter the collection name:\n\nExample: <code>bitcoin-puppets</code> or <code>NodeMonkes</code>\n\n💡 The collection must exist on Magic Eden Ordinals marketplace.`;
             } else {
               message = `🔗 <b>${chainConfig.displayName}</b> selected!\n\n📝 Please enter the NFT contract address to track on ${chainConfig.displayName}:\n\n💡 Make sure the contract exists on ${chainConfig.displayName} network.`;
             }
@@ -941,7 +748,10 @@ Choose your trending boost option:`;
         }
         if (data === 'buy_footer_menu') {
           await ctx.answerCbQuery();
-          return this.showFooterDurationSelection(ctx);
+          // Initialize session for footer payment flow
+          this.setUserSession(ctx.from.id, { flow: 'footer_payment' });
+          // Show chain selection FIRST for footer ads
+          return this.showChainSelection(ctx, 'footer');
         }
         if (data === 'channel_add') {
           await ctx.answerCbQuery();
@@ -1031,7 +841,7 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
           const duration = parseInt(data.replace('footer_duration_', ''));
           const session = this.getUserSession(ctx.from.id);
-          if (!session || session.flow !== 'footer_payment') {
+          if (!session || session.flow !== 'footer_payment' || !session.chain) {
             try {
               return ctx.editMessageText('❌ Session expired. Please try again.');
             } catch (error) {
@@ -1039,12 +849,55 @@ Choose your trending boost option:`;
             }
           }
 
-          // Store duration in session and proceed to chain selection
+          // Store duration in session
           session.duration = duration;
-          session.amount = this.secureTrending.calculateFooterFee(duration);
+
+          // Hardcoded footer ad prices for all chains
+          const footerPrices = {
+            'ethereum': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH' },
+            'bitcoin': { 30: '0.051', 60: '0.10', 90: '0.15', 180: '0.30', 365: '0.61', symbol: 'BTC' },
+            'solana': { 30: '23', 60: '46', 90: '69', 180: '138', 365: '276', symbol: 'SOL' },
+            'bsc': { 30: '7.66', 60: '15.32', 90: '22.98', 180: '45.96', 365: '91.92', symbol: 'BNB' },
+            'arbitrum': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH' },
+            'optimism': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH' },
+            'hyperevm': { 30: '574', 60: '1150', 90: '1724', 180: '3448', 365: '6896', symbol: 'HYPE' },
+            'berachain': { 30: '3066', 60: '6132', 90: '9198', 180: '18396', 365: '36792', symbol: 'BERA' },
+            'avalanche': { 30: '460', 60: '920', 90: '1380', 180: '2760', 365: '5520', symbol: 'AVAX' },
+            'cronos': { 30: '65714', 60: '131428', 90: '197142', 180: '394284', 365: '788568', symbol: 'CRO' },
+            'moonbeam': { 30: '76666', 60: '153332', 90: '229998', 180: '459996', 365: '919992', symbol: 'GLMR' },
+            'zksync': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH' },
+            'base': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH' },
+            'sei': { 30: '32857', 60: '65714', 90: '98571', 180: '197142', 365: '394284', symbol: 'SEI' },
+            'apechain': { 30: '15333', 60: '30666', 90: '45999', 180: '91998', 365: '183996', symbol: 'APE' },
+            'abstract': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH' },
+            'ronin': { 30: '10000', 60: '20000', 90: '30000', 180: '60000', 365: '120000', symbol: 'RON' }
+          };
+
+          // Get prices for selected chain (default to ethereum if not found)
+          const chainPrices = footerPrices[session.chain] || footerPrices['ethereum'];
+          const priceString = chainPrices[duration];
+          const currencySymbol = chainPrices.symbol;
+
+          // Store amount based on chain type
+          if (session.chain === 'solana') {
+            const solAmount = parseFloat(priceString);
+            session.amount = this.secureTrending.solanaPaymentService.convertSolToLamports(solAmount);
+            session.amountFormatted = `${priceString} ${currencySymbol}`;
+          } else if (session.chain === 'bitcoin') {
+            const btcAmount = parseFloat(priceString);
+            session.amount = this.secureTrending.bitcoinPaymentService.convertBTCToSats(btcAmount);
+            session.amountFormatted = `${priceString} ${currencySymbol}`;
+          } else {
+            // For all EVM chains (ethereum, bsc, arbitrum, etc.)
+            const { ethers } = require('ethers');
+            session.amount = ethers.parseEther(priceString);
+            session.amountFormatted = `${priceString} ${currencySymbol}`;
+          }
+
           this.setUserSession(ctx.from.id, session);
 
-          return this.showChainSelection(ctx, 'footer');
+          // Proceed to link input (footer ads need custom link)
+          return this.showLinkInput(ctx);
         }
 
         // Trending selection handlers
@@ -1125,9 +978,10 @@ Choose your trending boost option:`;
           session.chain = chainName;
           this.setUserSession(ctx.from.id, session);
 
-          // For footer ads, ask for link first; for image fees, ask for contract
+          // For footer ads, show duration selection AFTER chain is selected
+          // For image fees, ask for contract
           if (paymentType === 'footer') {
-            return this.showLinkInput(ctx);
+            return this.showFooterDurationSelection(ctx);
           } else {
             return this.showContractInput(ctx, paymentType);
           }
@@ -2310,6 +2164,9 @@ Choose an option:`;
       const chatId = this.normalizeChatContext(ctx);
       const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
 
+      // Determine if this is from a callback query (has message to edit) or command (no message)
+      const isCallback = ctx.callbackQuery && ctx.callbackQuery.message;
+
       if (tokens.length === 0) {
         const message = `🖼️ <b>Select NFT for Image Display</b>\n\n` +
           `📝 You need to add some NFT collections first!\n\n` +
@@ -2320,12 +2177,12 @@ Choose an option:`;
           [Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]
         ]);
 
-        try {
+        if (isCallback) {
           return ctx.editMessageText(message, {
             parse_mode: 'HTML',
             reply_markup: keyboard.reply_markup
           });
-        } catch (error) {
+        } else {
           return ctx.replyWithHTML(message, keyboard);
         }
       }
@@ -2360,12 +2217,12 @@ Choose an option:`;
         Markup.button.callback('🏠 Main Menu', 'main_menu')
       ]);
 
-      try {
+      if (isCallback) {
         return ctx.editMessageText(message, {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
         });
-      } catch (error) {
+      } else {
         return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
       }
     } catch (error) {
@@ -2604,6 +2461,9 @@ Choose an option:`;
       const chatId = this.normalizeChatContext(ctx);
       const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
 
+      // Determine if this is from a callback query (has message to edit) or command (no message)
+      const isCallback = ctx.callbackQuery && ctx.callbackQuery.message;
+
       if (tokens.length === 0) {
         const verifyTypeText = verificationType === 'image' ? 'Image Fee' : 'Trending';
         const message = `🔍 <b>Verify ${verifyTypeText} Payment</b>\n\n` +
@@ -2615,12 +2475,12 @@ Choose an option:`;
           [Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]
         ]);
 
-        try {
+        if (isCallback) {
           return ctx.editMessageText(message, {
             parse_mode: 'HTML',
             reply_markup: keyboard.reply_markup
           });
-        } catch (error) {
+        } else {
           return ctx.replyWithHTML(message, keyboard);
         }
       }
@@ -2657,12 +2517,12 @@ Choose an option:`;
         Markup.button.callback('🏠 Main Menu', 'main_menu')
       ]);
 
-      try {
+      if (isCallback) {
         return ctx.editMessageText(message, {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
         });
-      } catch (error) {
+      } else {
         return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
       }
     } catch (error) {
@@ -2790,6 +2650,9 @@ Choose an option:`;
       // Get user's purchased footer ads
       const footerAds = await this.db.getUserFooterAds(user.id);
 
+      // Determine if this is from a callback query (has message to edit) or command (no message)
+      const isCallback = ctx.callbackQuery && ctx.callbackQuery.message;
+
       if (footerAds.length === 0) {
         const message = `🔗 <b>Verify Footer Payments</b>\n\n` +
           `❌ <b>No footer advertisements found!</b>\n\n` +
@@ -2800,12 +2663,12 @@ Choose an option:`;
           [Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]
         ];
 
-        try {
+        if (isCallback) {
           return ctx.editMessageText(message, {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
           });
-        } catch (error) {
+        } else {
           return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
         }
       }
@@ -2826,12 +2689,12 @@ Choose an option:`;
       // Add navigation buttons
       keyboard.push([Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]);
 
-      try {
+      if (isCallback) {
         return ctx.editMessageText(message, {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
         });
-      } catch (error) {
+      } else {
         return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
       }
     } catch (error) {
@@ -3893,35 +3756,72 @@ Select trending duration:`;
 
   async showFooterDurationSelection(ctx) {
     try {
+      // Get session to determine selected chain
+      const session = this.getUserSession(ctx.from.id);
+      const selectedChain = session?.chain || 'ethereum';
+
+      // Hardcoded footer ad prices for all chains
+      const footerPrices = {
+        'ethereum': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH', emoji: '⟠' },
+        'bitcoin': { 30: '0.051', 60: '0.10', 90: '0.15', 180: '0.30', 365: '0.61', symbol: 'BTC', emoji: '₿' },
+        'solana': { 30: '23', 60: '46', 90: '69', 180: '138', 365: '276', symbol: 'SOL', emoji: '◎' },
+        'bsc': { 30: '7.66', 60: '15.32', 90: '22.98', 180: '45.96', 365: '91.92', symbol: 'BNB', emoji: '💎' },
+        'arbitrum': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH', emoji: '🔷' },
+        'optimism': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH', emoji: '🔴' },
+        'hyperevm': { 30: '574', 60: '1150', 90: '1724', 180: '3448', 365: '6896', symbol: 'HYPE', emoji: '⚡' },
+        'berachain': { 30: '3066', 60: '6132', 90: '9198', 180: '18396', 365: '36792', symbol: 'BERA', emoji: '🐻' },
+        'avalanche': { 30: '460', 60: '920', 90: '1380', 180: '2760', 365: '5520', symbol: 'AVAX', emoji: '🔺' },
+        'cronos': { 30: '65714', 60: '131428', 90: '197142', 180: '394284', 365: '788568', symbol: 'CRO', emoji: '💠' },
+        'moonbeam': { 30: '76666', 60: '153332', 90: '229998', 180: '459996', 365: '919992', symbol: 'GLMR', emoji: '🌙' },
+        'zksync': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH', emoji: '⚡' },
+        'base': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH', emoji: '🔵' },
+        'sei': { 30: '32857', 60: '65714', 90: '98571', 180: '197142', 365: '394284', symbol: 'SEI', emoji: '🌊' },
+        'apechain': { 30: '15333', 60: '30666', 90: '45999', 180: '91998', 365: '183996', symbol: 'APE', emoji: '🦍' },
+        'abstract': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH', emoji: '🎨' },
+        'ronin': { 30: '10000', 60: '20000', 90: '30000', 180: '60000', 365: '120000', symbol: 'RON', emoji: '⚔️' }
+      };
+
+      // Get prices for selected chain (default to ethereum if not found)
+      const chainPrices = footerPrices[selectedChain] || footerPrices['ethereum'];
+      const fees = {
+        30: chainPrices[30],
+        60: chainPrices[60],
+        90: chainPrices[90],
+        180: chainPrices[180],
+        365: chainPrices[365]
+      };
+      const currencySymbol = chainPrices.symbol;
+      const chainEmoji = chainPrices.emoji;
+
       const message = `📢 <b>Footer Advertisement - Select Duration</b>\n\n` +
+        `${chainEmoji} <b>Chain:</b> ${selectedChain.charAt(0).toUpperCase() + selectedChain.slice(1)}\n\n` +
         `Choose how long your footer ad will be displayed:\n\n` +
-        `🔹 <b>30 days</b> - 1.0 ETH\n` +
-        `🔹 <b>60 days</b> - 2.0 ETH\n` +
-        `🔹 <b>90 days</b> - 3.0 ETH\n` +
-        `🔹 <b>180 days</b> - 6.0 ETH\n` +
-        `🔹 <b>365 days</b> - 12.0 ETH\n\n` +
+        `🔹 <b>30 days</b> - ${fees[30]} ${currencySymbol}\n` +
+        `🔹 <b>60 days</b> - ${fees[60]} ${currencySymbol}\n` +
+        `🔹 <b>90 days</b> - ${fees[90]} ${currencySymbol}\n` +
+        `🔹 <b>180 days</b> - ${fees[180]} ${currencySymbol}\n` +
+        `🔹 <b>365 days</b> - ${fees[365]} ${currencySymbol}\n\n` +
         `💡 Your ad will appear at the bottom of all token notifications!`;
 
       const keyboard = Markup.inlineKeyboard([
         [
-          Markup.button.callback('30 days - 1.0 ETH', 'footer_duration_30'),
-          Markup.button.callback('60 days - 2.0 ETH', 'footer_duration_60')
+          Markup.button.callback(`30 days - ${fees[30]} ${currencySymbol}`, 'footer_duration_30'),
+          Markup.button.callback(`60 days - ${fees[60]} ${currencySymbol}`, 'footer_duration_60')
         ],
         [
-          Markup.button.callback('90 days - 3.0 ETH', 'footer_duration_90'),
-          Markup.button.callback('180 days - 6.0 ETH', 'footer_duration_180')
+          Markup.button.callback(`90 days - ${fees[90]} ${currencySymbol}`, 'footer_duration_90'),
+          Markup.button.callback(`180 days - ${fees[180]} ${currencySymbol}`, 'footer_duration_180')
         ],
         [
-          Markup.button.callback('365 days - 12.0 ETH', 'footer_duration_365')
+          Markup.button.callback(`365 days - ${fees[365]} ${currencySymbol}`, 'footer_duration_365')
         ],
         [
           Markup.button.callback('◀️ Back to Footer Menu', 'menu_footer')
         ]
       ]);
 
-      // Set user state and initialize session
+      // Set user state (preserve existing session with chain)
       this.setUserState(ctx.from.id, this.STATE_FOOTER_DURATION_SELECT);
-      this.setUserSession(ctx.from.id, { flow: 'footer_payment' });
 
       try {
         await ctx.editMessageText(message, {
@@ -3940,23 +3840,29 @@ Select trending duration:`;
   async showChainSelection(ctx, paymentType) {
     try {
       const session = this.getUserSession(ctx.from.id);
-      if (!session) {
+
+      // For footer ads, we select chain FIRST (no session needed yet)
+      // For image fees, we select chain AFTER duration (session required)
+      if (paymentType === 'image' && !session) {
         return ctx.reply('❌ Session expired. Please try again.');
       }
 
-      const durationText = `${session.duration} days`;
-      const { ethers } = require('ethers');
-      const amountText = session.amount ? `${ethers.formatEther(session.amount)} ETH` : 'N/A ETH';
+      let message;
+      if (paymentType === 'image') {
+        const durationText = `${session.duration} days`;
+        const { ethers } = require('ethers');
+        const amountText = session.amount ? `${ethers.formatEther(session.amount)} ETH` : 'N/A ETH';
 
-      const message = paymentType === 'image' ?
-        `🎨 <b>Image Fee Payment - Select Chain</b>\n\n` +
-        `📅 Duration: <b>${durationText}</b>\n` +
-        `💰 Amount: <b>${amountText}</b>\n\n` +
-        `🔗 Select the blockchain network:` :
-        `📢 <b>Footer Ad Payment - Select Chain</b>\n\n` +
-        `📅 Duration: <b>${durationText}</b>\n` +
-        `💰 Amount: <b>${amountText}</b>\n\n` +
-        `🔗 Select the blockchain network:`;
+        message = `🎨 <b>Image Fee Payment - Select Chain</b>\n\n` +
+          `📅 Duration: <b>${durationText}</b>\n` +
+          `💰 Amount: <b>${amountText}</b>\n\n` +
+          `🔗 Select the blockchain network:`;
+      } else {
+        // Footer ads - chain selection comes first
+        message = `📢 <b>Footer Ad Payment - Select Chain</b>\n\n` +
+          `🔗 Select the blockchain network for your footer ad payment:\n\n` +
+          `💡 Duration and pricing will be shown on the next step.`;
+      }
 
       // Build chain options from chainManager - all chains with payment contracts
       const chainOptions = [];
@@ -3972,8 +3878,9 @@ Select trending duration:`;
       }
 
       // Navigation buttons
+      const backButtonText = paymentType === 'image' ? '◀️ Back to Duration Selection' : '◀️ Back to Footer Menu';
       chainOptions.push([
-        Markup.button.callback('◀️ Back to Duration Selection', paymentType === 'image' ? 'buy_image_menu' : 'buy_footer_menu'),
+        Markup.button.callback(backButtonText, paymentType === 'image' ? 'buy_image_menu' : 'buy_footer_menu'),
         Markup.button.callback('🏠 Main Menu', 'main_menu')
       ]);
 

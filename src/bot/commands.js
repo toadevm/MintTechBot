@@ -2367,15 +2367,11 @@ Choose an option:`;
         });
       }
 
-      const { ethers } = require('ethers');
       const chainConfig = this.chainManager ? this.chainManager.getChain(chain) : null;
       const chainEmoji = chainConfig ? chainConfig.emoji : '🔷';
       const chainDisplay = chainConfig ? chainConfig.displayName : chain.charAt(0).toUpperCase() + chain.slice(1);
-      const paymentContract = chainConfig ? chainConfig.paymentContract : process.env.SIMPLE_PAYMENT_CONTRACT_ADDRESS;
-      const currencySymbol = chainConfig ? chainConfig.currencySymbol : 'ETH';
 
       const durationText = `${duration} days`;
-      const amountText = ethers.formatEther(amount);
 
       const instructions = await this.secureTrending.generateImagePaymentInstructions(contractAddress, user.id, duration, chain);
 
@@ -2384,8 +2380,8 @@ Choose an option:`;
         `🔗 <b>Blockchain:</b> ${chainEmoji} ${chainDisplay}\n` +
         `📮 <b>Contract:</b> <code>${contractAddress}</code>\n` +
         `📅 <b>Duration:</b> ${durationText}\n` +
-        `💸 <b>Fee:</b> ${amountText} ${currencySymbol}\n\n` +
-        `🏦 <b>Payment Contract:</b> <code>${paymentContract}</code>\n\n` +
+        `💸 <b>Fee:</b> ${instructions.feeEth} ${instructions.symbol}\n\n` +
+        `🏦 <b>Payment Contract:</b> <code>${instructions.contractAddress}</code>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
         instructions.instructions.join('\n') + '\n\n' +
         `After making the payment, click the button below to submit your transaction hash.`;
@@ -3011,7 +3007,7 @@ Select trending duration:`;
         `💰 <b>Footer Advertisement Payment</b>\n\n` +
         `🎨 <b>Collection:</b> ${instructions.tokenName || 'Unknown'}\n` +
         `🎯 <b>Token:</b> ${instructions.tokenSymbol || 'N/A'}\n` +
-        `💸 <b>Fee:</b> ${instructions.feeEth || '1.0'} ETH\n` +
+        `💸 <b>Fee:</b> ${instructions.feeEth || '1.0'} ${instructions.symbol || 'ETH'}\n` +
         `⏰ <b>Duration:</b> ${instructions.duration || '30 days'}\n` +
         `📮 <b>Contract:</b> <code>${instructions.contractAddress || contractAddress}</code>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
@@ -3254,7 +3250,7 @@ Select trending duration:`;
       const message = `💰 <b>Image Fee Payment Instructions</b>\n\n` +
         `🎨 Collection: <b>${instructions.tokenName}</b>\n` +
         `📮 Contract: <code>${instructions.tokenAddress}</code>\n` +
-        `💸 Fee: <b>${instructions.feeEth} ETH</b> (30 days)\n\n` +
+        `💸 Fee: <b>${instructions.feeEth} ${instructions.symbol}</b> (${instructions.duration} days)\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
         instructions.instructions.join('\n') + '\n\n';
 
@@ -4036,17 +4032,16 @@ Select trending duration:`;
       session.tokenName = token.token_name;
       this.setUserSession(ctx.from.id, session);
 
-      const { ethers } = require('ethers');
+      const chain = session.chain || 'ethereum';
       const durationText = `${session.duration} days`;
-      const amountText = ethers.formatEther(session.amount);
 
-      const instructions = await this.secureTrending.generateImagePaymentInstructions(contractAddress, user.id, session.duration);
+      const instructions = await this.secureTrending.generateImagePaymentInstructions(contractAddress, user.id, session.duration, chain);
 
       const message = `🎨 <b>Image Fee Payment Instructions</b>\n\n` +
         `🎨 Collection: <b>${instructions.tokenName}</b>\n` +
         `📮 Contract: <code>${instructions.tokenAddress}</code>\n` +
         `📅 Duration: <b>${durationText}</b>\n` +
-        `💸 Fee: <b>${amountText} ETH</b>\n\n` +
+        `💸 Fee: <b>${instructions.feeEth} ${instructions.symbol}</b>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
         instructions.instructions.join('\n') + '\n\n' +
         `After making the payment, click the button below to submit your transaction hash.`;
@@ -4237,10 +4232,10 @@ Select trending duration:`;
       this.setUserSession(ctx.from.id, session);
 
       const { ethers } = require('ethers');
+      const chain = session.chain || 'ethereum';
       const durationText = `${session.duration} days`;
-      const amountText = ethers.formatEther(session.amount);
 
-      const instructions = await this.secureTrending.generateFooterPaymentInstructions(contractAddress, user.id, session.duration);
+      const instructions = await this.secureTrending.generateFooterPaymentInstructions(contractAddress, user.id, session.duration, chain);
 
       const message = `📢 <b>Footer Advertisement Payment Instructions</b>\n\n` +
         `🎨 Collection: <b>${instructions.tokenName}</b>\n` +
@@ -4248,7 +4243,7 @@ Select trending duration:`;
         `🔗 Custom Link: ${session.customLink}\n` +
         `⭐️ Ticker: <b>${session.tickerSymbol}</b>\n` +
         `📅 Duration: <b>${durationText}</b>\n` +
-        `💸 Fee: <b>${amountText} ETH</b>\n\n` +
+        `💸 Fee: <b>${instructions.feeEth} ${instructions.symbol}</b>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
         instructions.instructions.join('\n') + '\n\n' +
         `After making the payment, click the button below to submit your transaction hash.`;

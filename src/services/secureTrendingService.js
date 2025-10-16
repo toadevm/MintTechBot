@@ -1489,7 +1489,7 @@ class SecureTrendingService {
   }
 
   // Image Fee Methods
-  async generateImagePaymentInstructions(contractAddress, userId, durationDays = 30) {
+  async generateImagePaymentInstructions(contractAddress, userId, durationDays = 30, chain = 'ethereum') {
     try {
       const token = await this.db.get(
         'SELECT * FROM tracked_tokens WHERE LOWER(contract_address) = LOWER($1)',
@@ -1500,24 +1500,36 @@ class SecureTrendingService {
         throw new Error('Token not found in tracked tokens');
       }
 
-      const fee = this.calculateImageFee(durationDays);
-      const feeEth = ethers.formatEther(fee);
+      // Get chain-specific configuration
+      const normalizedChain = this.normalizeChainName(chain);
+      const chainConfig = this.chainPricing[normalizedChain] || this.chainPricing.ethereum;
+      const fee = this.calculateImageFee(durationDays, chain);
+      const feeFormatted = this.formatChainAmount(fee, normalizedChain);
+      const currencySymbol = chainConfig.symbol;
+
+      // Get chain-specific payment contract
+      const chainManagerConfig = this.chainManager ? this.chainManager.getChain(chain) : null;
+      const paymentContract = chainManagerConfig ? chainManagerConfig.paymentContract : this.simplePaymentContract;
+      const chainDisplay = chainManagerConfig ? chainManagerConfig.displayName : chain.charAt(0).toUpperCase() + chain.slice(1);
+      const blockExplorer = this.getBlockExplorerUrl(chain, chainManagerConfig);
 
       const instructions = {
-        contractAddress: this.simplePaymentContract,
+        contractAddress: paymentContract,
         tokenAddress: token.contract_address,
         tokenName: token.token_name || 'Unknown Collection',
         fee: fee.toString(),
-        feeEth: feeEth,
+        feeEth: feeFormatted, // Keep name for compatibility but contains chain-specific formatted amount
         duration: durationDays,
+        chain: normalizedChain,
+        symbol: currencySymbol,
         instructions: [
-          `1. <b>SEND EXACTLY ${feeEth.toUpperCase()} ETH</b> TO CONTRACT ADDRESS: ${this.simplePaymentContract}`,
-          '2. Use any Ethereum wallet on mainnet',
-          '3. No additional data or function calls required - just a simple ETH transfer',
+          `1. <b>SEND EXACTLY ${feeFormatted} ${currencySymbol}</b> TO CONTRACT ADDRESS: ${paymentContract}`,
+          `2. Use any ${chainDisplay} wallet on ${chainDisplay.toLowerCase()} network`,
+          `3. No additional data or function calls required - just a simple ${currencySymbol} transfer`,
           '4. Wait for transaction confirmation',
           '5. Copy transaction hash and submit with /validate_image command'
         ],
-        etherscanUrl: `https://etherscan.io/address/${this.simplePaymentContract}`
+        etherscanUrl: `${blockExplorer}/address/${paymentContract}`
       };
 
       return instructions;
@@ -1705,7 +1717,7 @@ class SecureTrendingService {
     }
   }
 
-  async generateFooterPaymentInstructions(contractAddress, userId, durationDays = 30) {
+  async generateFooterPaymentInstructions(contractAddress, userId, durationDays = 30, chain = 'ethereum') {
     try {
       // Get token info from database
       const token = await this.db.getTrackedToken(contractAddress);
@@ -1713,21 +1725,34 @@ class SecureTrendingService {
         throw new Error('Token not found in tracked tokens');
       }
 
-      const fee = this.calculateFooterFee(durationDays);
-      const feeEth = ethers.formatEther(fee);
+      // Get chain-specific configuration
+      const normalizedChain = this.normalizeChainName(chain);
+      const chainConfig = this.chainPricing[normalizedChain] || this.chainPricing.ethereum;
+      const fee = this.calculateFooterFee(durationDays, chain);
+      const feeFormatted = this.formatChainAmount(fee, normalizedChain);
+      const currencySymbol = chainConfig.symbol;
+
+      // Get chain-specific payment contract
+      const chainManagerConfig = this.chainManager ? this.chainManager.getChain(chain) : null;
+      const paymentContract = chainManagerConfig ? chainManagerConfig.paymentContract : this.simplePaymentContract;
+      const chainDisplay = chainManagerConfig ? chainManagerConfig.displayName : chain.charAt(0).toUpperCase() + chain.slice(1);
+      const blockExplorer = this.getBlockExplorerUrl(chain, chainManagerConfig);
 
       const instructions = {
         tokenName: token.token_name,
         tokenSymbol: token.token_symbol || 'UNKNOWN',
-        contractAddress: this.simplePaymentContract,
+        contractAddress: paymentContract,
+        tokenAddress: contractAddress,
         fee: fee.toString(),
-        feeEth: feeEth,
+        feeEth: feeFormatted, // Keep name for compatibility but contains chain-specific formatted amount
         duration: `${durationDays} days`,
-        paymentContract: this.simplePaymentContract,
-        etherscanUrl: `https://etherscan.io/address/${this.simplePaymentContract}`,
+        paymentContract: paymentContract,
+        chain: normalizedChain,
+        symbol: currencySymbol,
+        etherscanUrl: `${blockExplorer}/address/${paymentContract}`,
         instructions: [
-          `Send exactly ${feeEth} ETH to: ${this.simplePaymentContract}`,
-          `Network: Ethereum Mainnet`,
+          `Send exactly ${feeFormatted} ${currencySymbol} to: ${paymentContract}`,
+          `Network: ${chainDisplay}`,
           `Wait for transaction confirmation`,
           `Use /validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt; to activate`
         ]

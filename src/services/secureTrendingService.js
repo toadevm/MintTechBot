@@ -969,25 +969,17 @@ class SecureTrendingService {
       }
 
       // Get chain-specific configuration
-      const chainConfig = this.chainManager ? this.chainManager.getChain(chain) : null;
-      const paymentContract = chainConfig ? chainConfig.paymentContract : this.simplePaymentContract;
-      const currencySymbol = chainConfig ? chainConfig.currencySymbol : 'ETH';
-      const chainDisplay = chainConfig ? chainConfig.displayName : 'Ethereum';
-      const blockExplorer = this.getBlockExplorerUrl(chain, chainConfig);
+      const normalizedChain = this.normalizeChainName(chain);
+      const chainConfig = this.chainPricing[normalizedChain] || this.chainPricing.ethereum;
+      const fee = this.calculateTrendingFee(durationHours, isPremium, chain);
+      const feeFormatted = this.formatChainAmount(fee, normalizedChain);
+      const currencySymbol = chainConfig.symbol;
 
-      let fee, feeFormatted;
-
-      // Calculate fee based on chain
-      if (chain === 'solana') {
-        // Dynamic SOL fee (USD-equivalent)
-        const solFee = await this.calculateSolanaTrendingFee(durationHours, isPremium);
-        fee = this.solanaPaymentService.convertSolToLamports(solFee);
-        feeFormatted = solFee.toFixed(4);
-      } else {
-        // ETH fee (wei)
-        fee = this.calculateTrendingFee(durationHours, isPremium);
-        feeFormatted = ethers.formatEther(fee);
-      }
+      // Get chain-specific payment contract
+      const chainManagerConfig = this.chainManager ? this.chainManager.getChain(chain) : null;
+      const paymentContract = chainManagerConfig ? chainManagerConfig.paymentContract : this.simplePaymentContract;
+      const chainDisplay = chainManagerConfig ? chainManagerConfig.displayName : chain.charAt(0).toUpperCase() + chain.slice(1);
+      const blockExplorer = this.getBlockExplorerUrl(chain, chainManagerConfig);
 
       // Create pending payment record
       await this.db.createPendingPayment(userId, tokenId, fee.toString(), durationHours, chain);
@@ -998,11 +990,12 @@ class SecureTrendingService {
         tokenName: token.token_name || 'Unknown Collection',
         duration: durationHours,
         fee: fee.toString(),
-        feeEth: feeFormatted, // Keep name for compatibility but contains SOL for Solana
+        feeEth: feeFormatted, // Keep name for compatibility but contains chain-specific formatted amount
+        symbol: currencySymbol,
         isPremium: isPremium,
-        chain: chain,
+        chain: normalizedChain,
         instructions: [
-          `1. <b>SEND EXACTLY ${feeEth.toUpperCase()} ${currencySymbol}</b> TO CONTRACT ADDRESS: ${paymentContract}`,
+          `1. <b>SEND EXACTLY ${feeFormatted} ${currencySymbol}</b> TO CONTRACT ADDRESS: ${paymentContract}`,
           `2. Use any ${chainDisplay} wallet on ${chainDisplay.toLowerCase()} network`,
           `3. No additional data or function calls required - just a simple ${currencySymbol} transfer`,
           '4. Wait for transaction confirmation',
@@ -1539,9 +1532,9 @@ class SecureTrendingService {
     }
   }
 
-  async validateImageFeeTransaction(userId, contractAddress, txHash, durationDays = null) {
+  async validateImageFeeTransaction(userId, contractAddress, txHash, durationDays = null, chain = 'ethereum') {
     try {
-      logger.info(`Image fee validation requested: user=${userId}, contract=${contractAddress}, tx=${txHash}, duration=${durationDays}`);
+      logger.info(`Image fee validation requested: user=${userId}, contract=${contractAddress}, tx=${txHash}, duration=${durationDays}, chain=${chain}`);
 
       // Check if transaction already processed
       if (await this.db.isTransactionProcessed(txHash)) {
@@ -1550,6 +1543,10 @@ class SecureTrendingService {
           error: 'This transaction has already been processed.'
         };
       }
+
+      // Normalize chain and get config
+      const normalizedChain = this.normalizeChainName(chain);
+      const chainConfig = this.chainPricing[normalizedChain] || this.chainPricing.ethereum;
 
       // Get transaction details
       const txData = await this.getTransaction(txHash);
@@ -1571,12 +1568,12 @@ class SecureTrendingService {
       const paymentAmount = txData.transaction.value;
       const payerAddress = txData.transaction.from;
 
-      // Auto-detect duration if not provided by checking payment amount
+      // Auto-detect duration if not provided by checking payment amount against chain-specific pricing
       let detectedDuration = durationDays;
       if (!detectedDuration) {
         const durations = [30, 60, 90, 180, 365];
         for (const duration of durations) {
-          if (paymentAmount.toString() === this.imageFees[duration].toString()) {
+          if (paymentAmount.toString() === chainConfig.imageFees[duration].toString()) {
             detectedDuration = duration;
             break;
           }
@@ -1584,21 +1581,21 @@ class SecureTrendingService {
       }
 
       if (!detectedDuration) {
-        const validAmounts = Object.entries(this.imageFees).map(([days, amount]) =>
-          `${days} days: ${ethers.formatEther(amount)} ETH`
+        const validAmounts = Object.entries(chainConfig.imageFees).map(([days, amount]) =>
+          `${days} days: ${this.formatChainAmount(amount, normalizedChain)} ${chainConfig.symbol}`
         ).join(', ');
         return {
           success: false,
-          error: `Invalid payment amount. Valid amounts: ${validAmounts}\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+          error: `Invalid payment amount. Valid amounts: ${validAmounts}\nReceived: ${this.formatChainAmount(paymentAmount.toString(), normalizedChain)} ${chainConfig.symbol}`
         };
       }
 
       // Verify correct amount for detected duration
-      const expectedAmount = this.calculateImageFee(detectedDuration);
+      const expectedAmount = this.calculateImageFee(detectedDuration, chain);
       if (paymentAmount.toString() !== expectedAmount.toString()) {
         return {
           success: false,
-          error: `Incorrect payment amount for ${detectedDuration} days.\nExpected: ${ethers.formatEther(expectedAmount)} ETH\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+          error: `Incorrect payment amount for ${detectedDuration} days.\nExpected: ${this.formatChainAmount(expectedAmount, normalizedChain)} ${chainConfig.symbol}\nReceived: ${this.formatChainAmount(paymentAmount.toString(), normalizedChain)} ${chainConfig.symbol}`
         };
       }
 
@@ -1635,18 +1632,20 @@ class SecureTrendingService {
         detectedDuration
       );
 
-      logger.info(`Image fee payment processed successfully: db_id=${dbResult.id}, tx=${txHash}, duration=${detectedDuration} days`);
+      logger.info(`Image fee payment processed successfully: db_id=${dbResult.id}, tx=${txHash}, duration=${detectedDuration} days, chain=${normalizedChain}`);
 
       return {
         success: true,
         dbId: dbResult.id,
         tokenName: token.token_name,
         amount: paymentAmount.toString(),
-        amountEth: ethers.formatEther(paymentAmount),
+        amountEth: this.formatChainAmount(paymentAmount.toString(), normalizedChain),
         duration: detectedDuration,
         payer: payerAddress,
         txHash: txHash,
-        contractAddress: contractAddress
+        contractAddress: contractAddress,
+        chain: normalizedChain,
+        symbol: chainConfig.symbol
       };
     } catch (error) {
       logger.error('Error validating image fee transaction:', error);
@@ -1766,8 +1765,12 @@ class SecureTrendingService {
     }
   }
 
-  async validateFooterTransaction(contractAddress, txHash, customLink, userId, durationDays = null, tickerSymbol = null) {
+  async validateFooterTransaction(contractAddress, txHash, customLink, userId, durationDays = null, tickerSymbol = null, chain = 'ethereum') {
     try {
+      // Normalize chain and get config
+      const normalizedChain = this.normalizeChainName(chain);
+      const chainConfig = this.chainPricing[normalizedChain] || this.chainPricing.ethereum;
+
       // Get transaction data
       const txData = await this.validateTransactionHelper(txHash);
       if (!txData.success) {
@@ -1777,12 +1780,12 @@ class SecureTrendingService {
       const paymentAmount = BigInt(txData.transaction.value);
       const payerAddress = txData.transaction.from;
 
-      // Auto-detect duration if not provided by checking payment amount
+      // Auto-detect duration if not provided by checking payment amount against chain-specific pricing
       let detectedDuration = durationDays;
       if (!detectedDuration) {
         const durations = [30, 60, 90, 180, 365];
         for (const duration of durations) {
-          if (paymentAmount.toString() === this.footerFees[duration].toString()) {
+          if (paymentAmount.toString() === chainConfig.footerFees[duration].toString()) {
             detectedDuration = duration;
             break;
           }
@@ -1790,21 +1793,21 @@ class SecureTrendingService {
       }
 
       if (!detectedDuration) {
-        const validAmounts = Object.entries(this.footerFees).map(([days, amount]) =>
-          `${days} days: ${ethers.formatEther(amount)} ETH`
+        const validAmounts = Object.entries(chainConfig.footerFees).map(([days, amount]) =>
+          `${days} days: ${this.formatChainAmount(amount, normalizedChain)} ${chainConfig.symbol}`
         ).join(', ');
         return {
           success: false,
-          error: `Invalid payment amount. Valid amounts: ${validAmounts}\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+          error: `Invalid payment amount. Valid amounts: ${validAmounts}\nReceived: ${this.formatChainAmount(paymentAmount.toString(), normalizedChain)} ${chainConfig.symbol}`
         };
       }
 
       // Verify correct amount for detected duration
-      const expectedAmount = this.calculateFooterFee(detectedDuration);
+      const expectedAmount = this.calculateFooterFee(detectedDuration, chain);
       if (paymentAmount.toString() !== expectedAmount.toString()) {
         return {
           success: false,
-          error: `Incorrect payment amount for ${detectedDuration} days.\nExpected: ${ethers.formatEther(expectedAmount)} ETH\nReceived: ${ethers.formatEther(paymentAmount)} ETH`
+          error: `Incorrect payment amount for ${detectedDuration} days.\nExpected: ${this.formatChainAmount(expectedAmount, normalizedChain)} ${chainConfig.symbol}\nReceived: ${this.formatChainAmount(paymentAmount.toString(), normalizedChain)} ${chainConfig.symbol}`
         };
       }
 
@@ -1840,12 +1843,16 @@ class SecureTrendingService {
         tickerSymbol
       );
 
-      logger.info(`Footer ad payment validated: ${contractAddress} - ${ethers.formatEther(paymentAmount)} ETH, duration=${detectedDuration} days, ticker=${tickerSymbol}`);
+      const formattedAmount = this.formatChainAmount(paymentAmount.toString(), normalizedChain);
+      logger.info(`Footer ad payment validated: ${contractAddress} - ${formattedAmount} ${chainConfig.symbol}, duration=${detectedDuration} days, ticker=${tickerSymbol}, chain=${normalizedChain}`);
 
       return {
         success: true,
-        message: `Footer advertisement activated!\n🎨 Token: ${tickerSymbol || token.token_symbol || 'UNKNOWN'}\n💰 Fee: ${ethers.formatEther(paymentAmount)} ETH\n⏰ Duration: ${detectedDuration} days\n🔗 Link: ${customLink}`,
-        paymentId: result.id
+        message: `Footer advertisement activated!\n🎨 Token: ${tickerSymbol || token.token_symbol || 'UNKNOWN'}\n💰 Fee: ${formattedAmount} ${chainConfig.symbol}\n⏰ Duration: ${detectedDuration} days\n🔗 Link: ${customLink}`,
+        paymentId: result.id,
+        amountEth: formattedAmount,
+        chain: normalizedChain,
+        symbol: chainConfig.symbol
       };
 
     } catch (error) {

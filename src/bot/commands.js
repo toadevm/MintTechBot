@@ -3306,17 +3306,19 @@ Select trending duration:`;
       await ctx.reply('⏳ Validating your image fee transaction...');
 
       const user = await this.db.getUser(userId);
-      const result = await this.secureTrending.validateImageFeeTransaction(user.id, contractAddress, txHash, durationDays);
+      const chain = session.chain || 'ethereum';
+      const result = await this.secureTrending.validateImageFeeTransaction(user.id, contractAddress, txHash, durationDays, chain);
 
       this.clearUserState(ctx.from.id);
       this.clearUserSession(ctx.from.id);
       this.userStates.delete(userId + '_image_contract');
 
       if (result.success) {
+        const symbol = result.symbol || 'ETH';
         const successMessage = `✅ <b>Image Fee Payment Validated!</b>\n\n` +
           `🎨 Collection: <b>${result.tokenName}</b>\n` +
           `📮 Contract: <code>${result.contractAddress}</code>\n` +
-          `💰 Amount: ${result.amountEth} ETH\n` +
+          `💰 Amount: ${result.amountEth} ${symbol}\n` +
           `📅 Duration: <b>${durationDays} days</b>\n` +
           `📝 Transaction: <code>${result.txHash}</code>\n` +
           `👤 Payer: <code>${result.payer}</code>\n\n` +
@@ -3424,10 +3426,12 @@ Select trending duration:`;
         this.userStates.delete(telegramId + '_validation_token_id');
 
         if (result.success) {
+          const chain = result.chain || 'ethereum';
+          const symbol = this.secureTrending.getChainConfig(chain).symbol;
           const successMessage = `✅ **Payment Validated Successfully!**\n\n` +
             `🎯 **${result.tokenName}** trending activated!\n` +
             `⏱️ Duration: ${result.duration} hours\n` +
-            `💰 Amount: ${result.amountEth} ETH\n` +
+            `💰 Amount: ${result.amountEth} ${symbol}\n` +
             `🔗 TX: \`${txHash}\`\n\n` +
             `Your NFT is now trending! 🚀`;
 
@@ -3448,7 +3452,7 @@ Select trending duration:`;
         await ctx.reply('⏳ Validating your image fee transaction...');
 
         const user = await this.db.getUser(userId);
-        const result = await this.secureTrending.validateImageFeeTransaction(user.id, contractAddress, txHash, validationChain);
+        const result = await this.secureTrending.validateImageFeeTransaction(user.id, contractAddress, txHash, null, validationChain);
 
         this.clearUserState(ctx.from.id);
         this.userStates.delete(userId + '_validation_type');
@@ -3457,10 +3461,11 @@ Select trending duration:`;
         this.userStates.delete(userId + '_validation_token_id');
 
         if (result.success) {
+          const symbol = result.symbol || 'ETH';
           const successMessage = `✅ <b>Image Fee Payment Validated!</b>\n\n` +
             `🎨 Collection: <b>${result.tokenName}</b>\n` +
             `📮 Contract: <code>${result.contractAddress}</code>\n` +
-            `💰 Amount: ${result.amountEth} ETH\n` +
+            `💰 Amount: ${result.amountEth} ${symbol}\n` +
             `📝 Transaction: <code>${result.txHash}</code>\n` +
             `👤 Payer: <code>${result.payer}</code>\n\n` +
             `🖼️ <b>Actual NFT images will now be displayed for this contract for 30 days!</b>`;
@@ -3490,7 +3495,8 @@ Select trending duration:`;
         this.userStates.delete(userId + '_validation_ticker');
 
         if (result.success) {
-          await ctx.replyWithHTML(`✅ <b>Footer Payment Validated!</b>\n\n🔗 <b>Ticker:</b> ${ticker}\n💰 <b>Amount:</b> ${result.amountEth || 'N/A'} ETH\n📝 <b>Transaction:</b> <code>${txHash}</code>\n\n📢 Your footer advertisement is now active!`,
+          const symbol = result.symbol || 'ETH';
+          await ctx.replyWithHTML(`✅ <b>Footer Payment Validated!</b>\n\n🔗 <b>Ticker:</b> ${ticker}\n💰 <b>Amount:</b> ${result.amountEth || 'N/A'} ${symbol}\n📝 <b>Transaction:</b> <code>${txHash}</code>\n\n📢 Your footer advertisement is now active!`,
             Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]]));
         } else {
           await ctx.replyWithHTML(`❌ Footer validation failed: ${result.error}`,
@@ -3523,12 +3529,14 @@ Select trending duration:`;
       await ctx.reply('⏳ Validating your footer advertisement transaction...');
 
       const user = await this.db.getUser(userId);
-      const result = await this.secureTrending.validateFooterTransaction(contractAddress, txHash, customLink, user.id);
+      const validationChain = this.userStates.get(userId + '_validation_chain') || 'ethereum';
+      const result = await this.secureTrending.validateFooterTransaction(contractAddress, txHash, customLink, user.id, null, null, validationChain);
 
       this.clearUserState(ctx.from.id);
       this.userStates.delete(userId + '_validation_type');
       this.userStates.delete(userId + '_validation_contract');
       this.userStates.delete(userId + '_validation_tx');
+      this.userStates.delete(userId + '_validation_chain');
 
       if (result.success) {
         await ctx.replyWithHTML(`✅ ${result.message}`, Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]]));
@@ -3797,38 +3805,26 @@ Select trending duration:`;
       const session = this.getUserSession(ctx.from.id);
       const selectedChain = session?.chain || 'ethereum';
 
-      // Hardcoded footer ad prices for all chains
-      const footerPrices = {
-        'ethereum': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH', emoji: '⟠' },
-        'bitcoin': { 30: '0.051', 60: '0.10', 90: '0.15', 180: '0.30', 365: '0.61', symbol: 'BTC', emoji: '₿' },
-        'solana': { 30: '23', 60: '46', 90: '69', 180: '138', 365: '276', symbol: 'SOL', emoji: '◎' },
-        'bsc': { 30: '7.66', 60: '15.32', 90: '22.98', 180: '45.96', 365: '91.92', symbol: 'BNB', emoji: '💎' },
-        'arbitrum': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH', emoji: '🔷' },
-        'optimism': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH', emoji: '🔴' },
-        'hyperevm': { 30: '574', 60: '1150', 90: '1724', 180: '3448', 365: '6896', symbol: 'HYPE', emoji: '⚡' },
-        'berachain': { 30: '3066', 60: '6132', 90: '9198', 180: '18396', 365: '36792', symbol: 'BERA', emoji: '🐻' },
-        'avalanche': { 30: '460', 60: '920', 90: '1380', 180: '2760', 365: '5520', symbol: 'AVAX', emoji: '🔺' },
-        'cronos': { 30: '65714', 60: '131428', 90: '197142', 180: '394284', 365: '788568', symbol: 'CRO', emoji: '💠' },
-        'moonbeam': { 30: '76666', 60: '153332', 90: '229998', 180: '459996', 365: '919992', symbol: 'GLMR', emoji: '🌙' },
-        'zksync': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH', emoji: '⚡' },
-        'base': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH', emoji: '🔵' },
-        'sei': { 30: '32857', 60: '65714', 90: '98571', 180: '197142', 365: '394284', symbol: 'SEI', emoji: '🌊' },
-        'apechain': { 30: '15333', 60: '30666', 90: '45999', 180: '91998', 365: '183996', symbol: 'APE', emoji: '🦍' },
-        'abstract': { 30: '1', 60: '2', 90: '3', 180: '6', 365: '12', symbol: 'ETH', emoji: '🎨' },
-        'ronin': { 30: '10000', 60: '20000', 90: '30000', 180: '60000', 365: '120000', symbol: 'RON', emoji: '⚔️' }
-      };
+      // Get dynamic footer prices from secureTrendingService
+      const chainNormalized = this.secureTrending.normalizeChainName(selectedChain);
+      const footerOptions = this.secureTrending.getFooterFeeOptions(chainNormalized);
 
-      // Get prices for selected chain (default to ethereum if not found)
-      const chainPrices = footerPrices[selectedChain] || footerPrices['ethereum'];
-      const fees = {
-        30: chainPrices[30],
-        60: chainPrices[60],
-        90: chainPrices[90],
-        180: chainPrices[180],
-        365: chainPrices[365]
+      const fees = {};
+      footerOptions.forEach(option => {
+        fees[option.duration] = option.feeFormatted;
+      });
+
+      const chainConfig = this.secureTrending.getChainConfig(chainNormalized);
+      const currencySymbol = chainConfig.symbol;
+
+      // Chain emojis for display
+      const chainEmojis = {
+        'ethereum': '⟠', 'bitcoin': '₿', 'solana': '◎', 'bsc': '💎',
+        'arbitrum': '🔷', 'optimism': '🔴', 'hyperevm': '⚡', 'berachain': '🐻',
+        'avalanche': '🔺', 'cronos': '💠', 'moonbeam': '🌙', 'zksync': '⚡',
+        'base': '🔵', 'sei': '🌊', 'apechain': '🦍', 'abstract': '🎨', 'ronin': '⚔️'
       };
-      const currencySymbol = chainPrices.symbol;
-      const chainEmoji = chainPrices.emoji;
+      const chainEmoji = chainEmojis[chainNormalized] || '🔗';
 
       const message = `📢 <b>Footer Advertisement - Select Duration</b>\n\n` +
         `${chainEmoji} <b>Chain:</b> ${selectedChain.charAt(0).toUpperCase() + selectedChain.slice(1)}\n\n` +

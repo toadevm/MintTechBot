@@ -2045,7 +2045,7 @@ class WebhookHandlers {
   async formatMagicEdenSaleMessage(token, saleData) {
     const nftName = token.token_name || 'Solana NFT';
 
-    let message = `💰🟢 **${nftName}** **BUY!** on Magic Eden\n\n`;
+    let message = `💰🟢 **${nftName}** **BUY!**\n\n`;
     message += `💰 **Price:** ${saleData.amountSol} SOL`;
 
     // Add USD value if PriceService is available
@@ -2124,11 +2124,20 @@ class WebhookHandlers {
     const hasImageFee = this.secureTrending ? await this.secureTrending.isImageFeeActive(token.contract_address) : false;
     logger.info(`🖼️ MAGIC EDEN IMAGE FEE CHECK: ${token.contract_address} - hasImageFee: ${hasImageFee}`);
 
+    const boostButton = {
+      inline_keyboard: [[
+        {
+          text: 'BOOST YOUR NFT🟢',
+          callback_data: '/buy_trending'
+        }
+      ]]
+    };
+
     try {
       let imagePath = null;
 
+      // Only fetch actual NFT image if fee is PAID
       if (hasImageFee && saleData.nfts && saleData.nfts[0]?.imageUri) {
-        // For PAID tokens: Try to fetch actual NFT image
         logger.info(`✅ IMAGE FEE PAID: Processing Magic Eden NFT image`);
         try {
           imagePath = await this.downloadAndResizeSolanaImage(saleData.nfts[0].imageUri, saleData.mintAddress);
@@ -2136,24 +2145,18 @@ class WebhookHandlers {
           logger.warn(`Failed to process Solana NFT image: ${error.message}`);
           imagePath = null;
         }
+      } else if (!hasImageFee) {
+        logger.info(`🚫 IMAGE FEE NOT PAID: Using default tracking image for Magic Eden NFT`);
       }
 
-      // Fallback to default image if no paid image or download failed
+      // Always use default tracking image if no paid image or download failed
       if (!imagePath) {
-        logger.info(`🚫 Using default tracking image for Magic Eden notification`);
         const path = require('path');
         imagePath = path.join(__dirname, '../images/candyImage.jpg');
+        logger.info(`📷 Using default tracking image: ${imagePath}`);
       }
 
-      const boostButton = {
-        inline_keyboard: [[
-          {
-            text: 'BOOST YOUR NFT🟢',
-            callback_data: '/buy_trending'
-          }
-        ]]
-      };
-
+      // ALWAYS send as photo (like EVM chains)
       await this.bot.telegram.sendPhoto(chatId, { source: imagePath }, {
         caption: message,
         parse_mode: 'Markdown',
@@ -2371,11 +2374,11 @@ class WebhookHandlers {
 
       // Link to specific inscription page
       if (eventData.inscriptionId) {
-        message += `\n[View on Magic Eden](https://magiceden.io/ordinals/item-details/${eventData.inscriptionId})`;
+        message += `[View on Magic Eden](https://magiceden.io/ordinals/item-details/${eventData.inscriptionId})\n`;
       }
 
       // Add footer - Powered by Candy Codex
-      message += ` \nPowered by [Candy Codex](https://buy.candycodex.com/)`;
+      message += `\nPowered by [Candy Codex](https://buy.candycodex.com/)`;
 
       // Add footer advertisements
       if (this.secureTrending) {
@@ -2402,6 +2405,10 @@ class WebhookHandlers {
         message += `\n[BuyAdspot](https://t.me/MintTechBot?start=buy_footer)`;
       }
 
+      // Check if image fee is paid for this contract
+      const hasImageFee = this.secureTrending ? await this.secureTrending.isImageFeeActive(token.contract_address) : false;
+      logger.info(`🖼️ BITCOIN ORDINALS IMAGE FEE CHECK: ${token.contract_address} - hasImageFee: ${hasImageFee}`);
+
       const boostButton = {
         inline_keyboard: [[
           {
@@ -2414,45 +2421,46 @@ class WebhookHandlers {
       // Send notifications to all subscribed users
       for (const subscription of subscriptions) {
         try {
-          if (inscriptionImage) {
-            // Try to download and send with inscription image
+          let imagePath = null;
+
+          // Only fetch actual inscription image if fee is PAID
+          if (hasImageFee && inscriptionImage) {
+            logger.info(`   ✅ IMAGE FEE PAID: Attempting to fetch Bitcoin inscription image`);
             try {
-              const imagePath = await this.downloadAndResizeBitcoinImage(inscriptionImage, eventData.inscriptionId);
-              await this.bot.telegram.sendPhoto(subscription.chat_id, { source: imagePath }, {
-                caption: message,
-                parse_mode: 'Markdown',
-                reply_markup: boostButton
-              });
-
-              // Clean up image after sending
-              setTimeout(async () => {
-                try {
-                  const fs = require('fs').promises;
-                  await fs.unlink(imagePath).catch(() => {});
-                } catch (e) {
-                  // Ignore cleanup errors
-                }
-              }, 5000);
-
-              logger.info(`   ✅ Sent with inscription image to chat ${subscription.chat_id}`);
+              imagePath = await this.downloadAndResizeBitcoinImage(inscriptionImage, eventData.inscriptionId);
             } catch (imageError) {
-              // Fallback to text-only if image fails
-              logger.warn(`   ⚠️ Inscription image failed, sending text-only:`, imageError.message);
-              await this.bot.telegram.sendMessage(subscription.chat_id, message, {
-                parse_mode: 'Markdown',
-                disable_web_page_preview: true,
-                reply_markup: boostButton
-              });
-              logger.info(`   ✅ Sent text-only to chat ${subscription.chat_id}`);
+              logger.warn(`   ⚠️ Inscription image download failed: ${imageError.message}`);
+              imagePath = null;
             }
-          } else {
-            // Send text-only if no inscription image available
-            await this.bot.telegram.sendMessage(subscription.chat_id, message, {
-              parse_mode: 'Markdown',
-              disable_web_page_preview: true,
-              reply_markup: boostButton
-            });
-            logger.info(`   ✅ Sent text-only to chat ${subscription.chat_id}`);
+          } else if (!hasImageFee) {
+            logger.info(`   🚫 IMAGE FEE NOT PAID: Using default tracking image`);
+          }
+
+          // Always use default tracking image if no paid image or download failed
+          if (!imagePath) {
+            const path = require('path');
+            imagePath = path.join(__dirname, '../images/candyImage.jpg');
+          }
+
+          // ALWAYS send as photo (like EVM chains)
+          await this.bot.telegram.sendPhoto(subscription.chat_id, { source: imagePath }, {
+            caption: message,
+            parse_mode: 'Markdown',
+            reply_markup: boostButton
+          });
+
+          logger.info(`   ✅ Sent with image to chat ${subscription.chat_id}`);
+
+          // Clean up downloaded inscription image (not default image)
+          if (hasImageFee && imagePath && !imagePath.includes('candyImage.jpg')) {
+            setTimeout(async () => {
+              try {
+                const fs = require('fs').promises;
+                await fs.unlink(imagePath).catch(() => {});
+              } catch (e) {
+                // Ignore cleanup errors
+              }
+            }, 5000);
           }
         } catch (error) {
           logger.error(`   ❌ Failed to send to chat ${subscription.chat_id}:`, error.message);
@@ -2960,7 +2968,7 @@ class WebhookHandlers {
     message += `🔗 **Chain:** ₿ Bitcoin\n`;
     message += `[View on Bitcoin Explorer](https://mempool.space/tx/${transferData.txid})\n`;
 
-    message += ` \nPowered by [Candy Codex](https://buy.candycodex.com/)`;
+    message += `\nPowered by [Candy Codex](https://buy.candycodex.com/)`;
 
     // Add footer advertisements
     if (this.secureTrending) {
@@ -3016,11 +3024,20 @@ class WebhookHandlers {
     const hasImageFee = this.secureTrending ? await this.secureTrending.isImageFeeActive(token.contract_address) : false;
     logger.info(`🖼️ BITCOIN ORDINALS IMAGE FEE CHECK: ${token.contract_address} - hasImageFee: ${hasImageFee}`);
 
+    const boostButton = {
+      inline_keyboard: [[
+        {
+          text: 'BOOST YOUR NFT🟢',
+          callback_data: '/buy_trending'
+        }
+      ]]
+    };
+
     try {
       let imagePath = null;
 
+      // Only fetch actual inscription image if fee is PAID
       if (hasImageFee && this.magicEdenOrdinals) {
-        // For PAID tokens: Try to fetch actual inscription image from Magic Eden
         logger.info(`✅ IMAGE FEE PAID: Attempting to fetch Bitcoin Ordinals inscription image`);
         try {
           const inscriptionMetadata = await this.magicEdenOrdinals.getInscriptionMetadata(transferData.inscription_id);
@@ -3031,24 +3048,18 @@ class WebhookHandlers {
           logger.warn(`Failed to process Bitcoin Ordinals inscription image: ${error.message}`);
           imagePath = null;
         }
+      } else if (!hasImageFee) {
+        logger.info(`🚫 IMAGE FEE NOT PAID: Using default tracking image for Bitcoin Ordinals`);
       }
 
-      // Fallback to default image if no paid image or download failed
+      // Always use default tracking image if no paid image or download failed
       if (!imagePath) {
-        logger.info(`🚫 Using default tracking image for Bitcoin Ordinals notification`);
         const path = require('path');
         imagePath = path.join(__dirname, '../images/candyImage.jpg');
+        logger.info(`📷 Using default tracking image: ${imagePath}`);
       }
 
-      const boostButton = {
-        inline_keyboard: [[
-          {
-            text: 'BOOST YOUR NFT🟢',
-            callback_data: '/buy_trending'
-          }
-        ]]
-      };
-
+      // ALWAYS send as photo (like EVM chains)
       await this.bot.telegram.sendPhoto(chatId, { source: imagePath }, {
         caption: message,
         parse_mode: 'Markdown',

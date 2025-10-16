@@ -1909,12 +1909,17 @@ You will no longer receive notifications for this NFT in this chat context.`;
       }]);
 
       try {
-        return ctx.editMessageText(message, {
+        return await ctx.editMessageText(message, {
           reply_markup: {
             inline_keyboard: keyboard
           }
         });
       } catch (error) {
+        // Ignore "message is not modified" error (happens when clicking the same button twice)
+        if (error.response?.error_code === 400 && error.response?.description?.includes('message is not modified')) {
+          logger.debug('Message content unchanged, skipping edit');
+          return;
+        }
         return ctx.reply(message, {
           reply_markup: {
             inline_keyboard: keyboard
@@ -2178,10 +2183,19 @@ Choose an option:`;
         ]);
 
         if (isCallback) {
-          return ctx.editMessageText(message, {
-            parse_mode: 'HTML',
-            reply_markup: keyboard.reply_markup
-          });
+          try {
+            return await ctx.editMessageText(message, {
+              parse_mode: 'HTML',
+              reply_markup: keyboard.reply_markup
+            });
+          } catch (error) {
+            // Ignore "message is not modified" error (happens when clicking the same button twice)
+            if (error.response?.error_code === 400 && error.response?.description?.includes('message is not modified')) {
+              logger.debug('Message content unchanged, skipping edit');
+              return;
+            }
+            return ctx.replyWithHTML(message, keyboard);
+          }
         } else {
           return ctx.replyWithHTML(message, keyboard);
         }
@@ -2218,10 +2232,19 @@ Choose an option:`;
       ]);
 
       if (isCallback) {
-        return ctx.editMessageText(message, {
-          parse_mode: 'HTML',
-          reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
-        });
+        try {
+          return await ctx.editMessageText(message, {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
+          });
+        } catch (error) {
+          // Ignore "message is not modified" error
+          if (error.response?.error_code === 400 && error.response?.description?.includes('message is not modified')) {
+            logger.debug('Message content unchanged, skipping edit');
+            return;
+          }
+          return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+        }
       } else {
         return ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
       }

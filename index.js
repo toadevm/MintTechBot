@@ -115,7 +115,7 @@ class MintyRushBot {
 
       // Initialize secure trending service (no private keys)
       try {
-        this.services.secureTrending = new SecureTrendingService(this.services.db);
+        this.services.secureTrending = new SecureTrendingService(this.services.db, this.services.chainManager);
         await this.services.secureTrending.initialize();
         logger.info('🔒 Secure trending service initialized (no private keys)');
       } catch (error) {

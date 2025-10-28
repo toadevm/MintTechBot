@@ -605,7 +605,7 @@ class WebhookHandlers {
       message += '\n';
     }
 
-    message += ` \nPowered by [Candy Codex](https://buy.candycodex.com/)`;
+    message += ` \nPowered by [Candy Codex](https://mint.candycodex.com/)`;
 
     // Add footer advertisements if available
     if (this.secureTrending) {
@@ -1311,7 +1311,13 @@ class WebhookHandlers {
 
     // NFT details
     message += `🖼️ **NFT:** ${nftName}\n`;
-    if (eventData.tokenId) {
+
+    // Token ID as clickable shortened link to OpenSea
+    if (eventData.tokenId && eventData.contractAddress) {
+      const openseaUrl = `https://opensea.io/assets/${token.chain_name || 'ethereum'}/${eventData.contractAddress}/${eventData.tokenId}`;
+      const shortContract = this.shortenAddress(eventData.contractAddress);
+      message += `🔢 **Token ID:** [${shortContract}/${eventData.tokenId}](${openseaUrl})\n`;
+    } else if (eventData.tokenId) {
       message += `🔢 **Token ID:** ${eventData.tokenId}\n`;
     }
 
@@ -1387,7 +1393,7 @@ class WebhookHandlers {
       message += `[View Collection](https://opensea.io/collection/${eventData.collectionSlug})\n`;
     }
 
-    message += ` \nPowered by [Candy Codex](https://buy.candycodex.com/)`;
+    message += ` \nPowered by [Candy Codex](https://mint.candycodex.com/)`;
 
     // Add footer advertisements if available
     if (this.secureTrending) {
@@ -2062,13 +2068,25 @@ class WebhookHandlers {
     }
 
     message += '\n';
+
+    // Add NFT Mint address as clickable link
+    if (saleData.mintAddress) {
+      const shortMint = this.shortenAddress(saleData.mintAddress);
+      message += `🖼️ **NFT:** [${shortMint}](https://magiceden.io/item-details/${saleData.mintAddress})\n`;
+    }
+
     message += `👤 **Buyer:** \`${this.shortenAddress(saleData.buyer)}\`\n`;
     message += `📤 **Seller:** \`${this.shortenAddress(saleData.seller)}\`\n`;
     message += `🏪 **Marketplace:** Magic Eden\n`;
     message += `🔗 **Chain:** ◎ Solana\n`;
+
+    // Add Magic Eden link
+    if (saleData.mintAddress) {
+      message += `[View on Magic Eden](https://magiceden.io/item-details/${saleData.mintAddress})\n`;
+    }
     message += `[View on Solana Explorer](https://explorer.solana.com/tx/${saleData.signature})\n`;
 
-    message += ` \nPowered by [Candy Codex](https://buy.candycodex.com/)`;
+    message += ` \nPowered by [Candy Codex](https://mint.candycodex.com/)`;
 
     // Add footer advertisements
     if (this.secureTrending) {
@@ -2350,11 +2368,11 @@ class WebhookHandlers {
 
       // Inscription details (equivalent to NFT details in EVM)
       if (eventData.inscriptionId) {
-        // Show truncated inscription ID
-        const truncatedId = eventData.inscriptionId.length > 20
-          ? `${eventData.inscriptionId.substring(0, 20)}...`
+        // Show truncated inscription ID as a clickable link to Magic Eden
+        const truncatedId = eventData.inscriptionId.length > 16
+          ? `${eventData.inscriptionId.substring(0, 8)}...${eventData.inscriptionId.substring(eventData.inscriptionId.length - 4)}`
           : eventData.inscriptionId;
-        message += `🖼️ **Inscription:** \`${truncatedId}\`\n`;
+        message += `🖼️ **Inscription:** [${truncatedId}](https://magiceden.io/ordinals/item-details/${eventData.inscriptionId})\n`;
       }
 
       // Addresses (only show for transfers, like EVM)
@@ -2372,13 +2390,13 @@ class WebhookHandlers {
       message += `📮 **Collection:** \`${eventData.collectionSymbol}\`\n`;
       message += `🔗 **Chain:** ₿ Bitcoin\n`;
 
-      // Link to specific inscription page
+      // Add Magic Eden link
       if (eventData.inscriptionId) {
         message += `[View on Magic Eden](https://magiceden.io/ordinals/item-details/${eventData.inscriptionId})\n`;
       }
 
       // Add footer - Powered by Candy Codex
-      message += `\nPowered by [Candy Codex](https://buy.candycodex.com/)`;
+      message += `\nPowered by [Candy Codex](https://mint.candycodex.com/)`;
 
       // Add footer advertisements
       if (this.secureTrending) {
@@ -2958,17 +2976,23 @@ class WebhookHandlers {
    */
   async formatOrdinalsTransferMessage(token, transferData) {
     const collectionName = token.token_name || 'Bitcoin Ordinals';
+    const shortInscriptionId = this.shortenAddress(transferData.inscription_id);
 
     let message = `🔄 **${collectionName}** Transfer\n\n`;
     message += `🖼️ **Inscription:** #${transferData.inscription_number || 'Unknown'}\n`;
-    message += `🆔 **Inscription ID:** \`${this.shortenAddress(transferData.inscription_id)}\`\n`;
+    message += `🆔 **Inscription ID:** [${shortInscriptionId}](https://magiceden.io/ordinals/item-details/${transferData.inscription_id})\n`;
     message += `📤 **From:** \`${this.shortenAddress(transferData.sender)}\`\n`;
     message += `📥 **To:** \`${this.shortenAddress(transferData.recipient)}\`\n`;
     message += `🏪 **Marketplace:** Magic Eden Ordinals\n`;
     message += `🔗 **Chain:** ₿ Bitcoin\n`;
+
+    // Add Magic Eden link
+    if (transferData.inscription_id) {
+      message += `[View on Magic Eden](https://magiceden.io/ordinals/item-details/${transferData.inscription_id})\n`;
+    }
     message += `[View on Bitcoin Explorer](https://mempool.space/tx/${transferData.txid})\n`;
 
-    message += `\nPowered by [Candy Codex](https://buy.candycodex.com/)`;
+    message += `\nPowered by [Candy Codex](https://mint.candycodex.com/)`;
 
     // Add footer advertisements
     if (this.secureTrending) {

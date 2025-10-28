@@ -74,6 +74,14 @@ class BotCommands {
     logger.debug(`Cleared session for user ${userId}`);
   }
 
+  // Helper function to truncate address for display
+  truncateAddress(address, startChars = 6, endChars = 4) {
+    if (!address || address.length <= startChars + endChars) {
+      return address;
+    }
+    return `${address.substring(0, startChars)}...${address.substring(address.length - endChars)}`;
+  }
+
   clearUserSessionData(userId, type) {
     const userIdStr = userId.toString();
     if (type === 'footer') {
@@ -2039,6 +2047,7 @@ Choose an option:`;
       const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : chain.charAt(0).toUpperCase() + chain.slice(1);
       const currencySymbol = chainConfig ? chainConfig.currencySymbol : 'ETH';
       const paymentContract = chainConfig ? chainConfig.paymentContract : process.env.SIMPLE_PAYMENT_CONTRACT_ADDRESS || '0x4704eaF9d285a1388c0370Bc7d05334d313f92Be';
+      const truncatedAddress = this.truncateAddress(paymentContract);
 
       // Use secure trending service with fallback to old service
       const trendingService = this.secureTrending || this.trending;
@@ -2050,12 +2059,14 @@ Choose an option:`;
       message += `📮 Contract: <code>${instructions.tokenAddress}</code>\n`;
       message += `⏱️ Duration: ${duration} hours\n`;
       message += `💰 Fee: ${instructions.feeEth} ${currencySymbol}\n\n`;
-      message += `🏦 Payment Address:\n<code>${paymentContract}</code>\n\n`;
+      message += `🏦 <b>Payment Address (${truncatedAddress}):</b>\n\n`;
+      message += `<code>${paymentContract}</code>\n\n`;
       message += `📋 Payment Instructions:\n`;
       message += `1. Send ${instructions.feeEth} ${currencySymbol} to the payment address above\n`;
       message += `2. Make sure you're sending from ${chainDisplay} network\n`;
-      message += `3. Copy your transaction hash after the transfer\n`;
-      message += `4. Submit the transaction hash using the button below\n\n`;
+      message += `3. Tap the address above to copy it\n`;
+      message += `4. Copy your transaction hash after the transfer\n`;
+      message += `5. Submit the transaction hash using the button below\n\n`;
       message += `✅ Simple Process: Just send a regular ${currencySymbol} transfer - no complex contract calls needed!\n`;
       message += `⏰ Payment expires in 30 minutes\n\n`;
       message += `After successful transaction, submit your transaction hash below:`;
@@ -2374,6 +2385,7 @@ Choose an option:`;
       const durationText = `${duration} days`;
 
       const instructions = await this.secureTrending.generateImagePaymentInstructions(contractAddress, user.id, duration, chain);
+      const truncatedAddress = this.truncateAddress(instructions.contractAddress);
 
       const message = `💰 <b>Image Fee Payment Instructions</b>\n\n` +
         `🎯 <b>Selected NFT:</b> ${tokenName || 'Unknown'} (${tokenSymbol || 'N/A'})\n` +
@@ -2381,7 +2393,8 @@ Choose an option:`;
         `📮 <b>Contract:</b> <code>${contractAddress}</code>\n` +
         `📅 <b>Duration:</b> ${durationText}\n` +
         `💸 <b>Fee:</b> ${instructions.feeEth} ${instructions.symbol}\n\n` +
-        `🏦 <b>Payment Contract:</b> <code>${instructions.contractAddress}</code>\n\n` +
+        `🏦 <b>Payment Contract (${truncatedAddress}):</b>\n\n` +
+        `<code>${instructions.contractAddress}</code>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
         instructions.instructions.join('\n') + '\n\n' +
         `After making the payment, click the button below to submit your transaction hash.`;
@@ -3103,12 +3116,12 @@ Select trending duration:`;
         this.setUserSession(ctx.from.id, session);
         this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_LINK);
 
-        const { ethers } = require('ethers');
-        const amountText = ethers.formatEther(session.amount);
+        // Use pre-formatted amount that already includes the correct symbol
+        const amountText = session.amountFormatted || '0 ETH';
 
         return ctx.reply(`✅ <b>Payment Verified!</b>\n\n` +
           `🎨 Collection: <b>${session.tokenName}</b>\n` +
-          `💰 Amount: ${amountText} ETH\n` +
+          `💰 Amount: ${amountText}\n` +
           `📅 Duration: <b>${durationDays} days</b>\n\n` +
           `🔗 <b>Custom Link</b>\n\nNow please send me the custom link you want to display in the footer ads.\n\n<i>Example: https://mytoken.com</i>`, {
           parse_mode: 'HTML',
@@ -3246,11 +3259,14 @@ Select trending duration:`;
       }
 
       const instructions = await this.secureTrending.generateImagePaymentInstructions(contractAddress, user.id);
+      const truncatedAddress = this.truncateAddress(instructions.contractAddress);
 
       const message = `💰 <b>Image Fee Payment Instructions</b>\n\n` +
         `🎨 Collection: <b>${instructions.tokenName}</b>\n` +
         `📮 Contract: <code>${instructions.tokenAddress}</code>\n` +
         `💸 Fee: <b>${instructions.feeEth} ${instructions.symbol}</b> (${instructions.duration} days)\n\n` +
+        `🏦 <b>Payment Address (${truncatedAddress}):</b>\n\n` +
+        `<code>${instructions.contractAddress}</code>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
         instructions.instructions.join('\n') + '\n\n';
 
@@ -3944,9 +3960,9 @@ Select trending duration:`;
         return ctx.reply('❌ Session expired. Please try again.');
       }
 
-      const { ethers } = require('ethers');
       const durationText = `${session.duration} days`;
-      const amountText = session.amount ? `${ethers.formatEther(session.amount)} ETH` : 'N/A ETH';
+      // Use pre-formatted amount that already includes the correct symbol
+      const amountText = session.amountFormatted || 'N/A';
       const chainText = session.chain || 'Unknown';
 
       const message = paymentType === 'image' ?
@@ -4032,12 +4048,15 @@ Select trending duration:`;
       const durationText = `${session.duration} days`;
 
       const instructions = await this.secureTrending.generateImagePaymentInstructions(contractAddress, user.id, session.duration, chain);
+      const truncatedAddress = this.truncateAddress(instructions.contractAddress);
 
       const message = `🎨 <b>Image Fee Payment Instructions</b>\n\n` +
         `🎨 Collection: <b>${instructions.tokenName}</b>\n` +
         `📮 Contract: <code>${instructions.tokenAddress}</code>\n` +
         `📅 Duration: <b>${durationText}</b>\n` +
         `💸 Fee: <b>${instructions.feeEth} ${instructions.symbol}</b>\n\n` +
+        `🏦 <b>Payment Address (${truncatedAddress}):</b>\n\n` +
+        `<code>${instructions.contractAddress}</code>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
         instructions.instructions.join('\n') + '\n\n' +
         `After making the payment, click the button below to submit your transaction hash.`;
@@ -4227,11 +4246,11 @@ Select trending duration:`;
       session.tokenName = token.token_name;
       this.setUserSession(ctx.from.id, session);
 
-      const { ethers } = require('ethers');
       const chain = session.chain || 'ethereum';
       const durationText = `${session.duration} days`;
 
       const instructions = await this.secureTrending.generateFooterPaymentInstructions(contractAddress, user.id, session.duration, chain);
+      const truncatedAddress = this.truncateAddress(instructions.contractAddress);
 
       const message = `📢 <b>Footer Advertisement Payment Instructions</b>\n\n` +
         `🎨 Collection: <b>${instructions.tokenName}</b>\n` +
@@ -4240,6 +4259,8 @@ Select trending duration:`;
         `⭐️ Ticker: <b>${session.tickerSymbol}</b>\n` +
         `📅 Duration: <b>${durationText}</b>\n` +
         `💸 Fee: <b>${instructions.feeEth} ${instructions.symbol}</b>\n\n` +
+        `🏦 <b>Payment Address (${truncatedAddress}):</b>\n\n` +
+        `<code>${instructions.contractAddress}</code>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
         instructions.instructions.join('\n') + '\n\n' +
         `After making the payment, click the button below to submit your transaction hash.`;
@@ -4276,28 +4297,30 @@ Select trending duration:`;
         return ctx.reply('❌ Please register first using /start');
       }
 
-      const { ethers } = require('ethers');
       const durationText = `${session.duration} days`;
-      const amountText = ethers.formatEther(session.amount);
+      // Use pre-formatted amount that handles all chain types (Solana lamports, Bitcoin sats, EVM wei)
+      // session.amountFormatted already includes the symbol (e.g., "479.4 SOL")
+      const amountText = session.amountFormatted || '0 ETH';
 
       // Get chain-specific configuration
       const chainConfig = session?.chain && this.chainManager ? this.chainManager.getChain(session.chain) : null;
       const paymentContract = chainConfig ? chainConfig.paymentContract : this.secureTrending.simplePaymentContract;
-      const currencySymbol = chainConfig ? chainConfig.currencySymbol : 'ETH';
       const chainDisplay = chainConfig ? chainConfig.displayName : 'Ethereum';
       const chainEmoji = chainConfig ? chainConfig.emoji : '🔷';
+      const truncatedAddress = this.truncateAddress(paymentContract);
 
       const message = `📢 <b>Footer Advertisement Payment Instructions</b>\n\n` +
         `🔗 Custom Link: ${session.customLink}\n` +
         `⭐️ Ticker: <b>${session.tickerSymbol}</b>\n` +
         `📅 Duration: <b>${durationText}</b>\n` +
-        `💸 Fee: <b>${amountText} ${currencySymbol}</b>\n` +
+        `💸 Fee: <b>${amountText}</b>\n` +
         `${chainEmoji} Chain: <b>${chainDisplay}</b>\n\n` +
-        `🏦 <b>Payment Address:</b>\n<code>${paymentContract}</code>\n\n` +
+        `🏦 <b>Payment Address (${truncatedAddress}):</b>\n\n` +
+        `<code>${paymentContract}</code>\n\n` +
         `📋 <b>Payment Steps:</b>\n` +
-        `1. <b>SEND EXACTLY ${amountText} ${currencySymbol}</b> TO CONTRACT ADDRESS: ${paymentContract}\n` +
+        `1. <b>SEND EXACTLY ${amountText}</b> to the payment address above\n` +
         `2. Use any ${chainDisplay} wallet on ${chainDisplay.toLowerCase()} network\n` +
-        `3. No additional data or function calls required - just a simple ${currencySymbol} transfer\n` +
+        `3. Tap the address above to copy it\n` +
         `4. Wait for transaction confirmation\n` +
         `5. Submit your transaction hash below\n\n` +
         `After making the payment, click the button below to submit your transaction hash.`;

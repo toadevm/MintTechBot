@@ -367,6 +367,22 @@ class Database {
         }
       }
 
+      // Migration: Fix chain_name for existing Bitcoin tokens
+      try {
+        const result = await this.query(`
+          UPDATE tracked_tokens
+          SET chain_name = 'bitcoin'
+          WHERE marketplace = 'magiceden'
+          AND (chain_name IS NULL OR chain_name = '' OR chain_name = 'ethereum')
+          AND (contract_address NOT LIKE '0x%')
+        `);
+        if (result.rowCount > 0) {
+          logger.info(`✅ Migration: Updated chain_name to 'bitcoin' for ${result.rowCount} Bitcoin Ordinals tokens`);
+        }
+      } catch (error) {
+        logger.warn('Migration warning for Bitcoin chain_name fix:', error.message);
+      }
+
       logger.info('Database migration completed');
     } catch (error) {
       logger.error('Error during database migration:', error);

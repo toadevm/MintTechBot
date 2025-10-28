@@ -236,31 +236,31 @@ class SecureTrendingService {
       bsc: {
         trending: {
           normal: {
-            6: ethers.parseEther('0.36'),
-            12: ethers.parseEther('0.72'),
-            18: ethers.parseEther('1.08'),
-            24: ethers.parseEther('1.44')
+            6: ethers.parseEther('0.4791'),
+            12: ethers.parseEther('0.9583'),
+            18: ethers.parseEther('1.4373'),
+            24: ethers.parseEther('2.3961')
           },
           premium: {
-            6: ethers.parseEther('0.72'),
-            12: ethers.parseEther('1.44'),
-            18: ethers.parseEther('2.16'),
-            24: ethers.parseEther('2.88')
+            6: ethers.parseEther('0.9582'),
+            12: ethers.parseEther('1.9164'),
+            18: ethers.parseEther('2.8752'),
+            24: ethers.parseEther('4.78')
           }
         },
         imageFees: {
-          30: ethers.parseEther('0.024'),
-          60: ethers.parseEther('0.048'),
-          90: ethers.parseEther('0.072'),
-          180: ethers.parseEther('0.144'),
-          365: ethers.parseEther('0.288')
+          30: ethers.parseEther('0.032'),
+          60: ethers.parseEther('0.064'),
+          90: ethers.parseEther('0.096'),
+          180: ethers.parseEther('0.192'),
+          365: ethers.parseEther('0.384')
         },
         footerFees: {
-          30: ethers.parseEther('6.00'),
-          60: ethers.parseEther('12.00'),
-          90: ethers.parseEther('18.00'),
-          180: ethers.parseEther('36.00'),
-          365: ethers.parseEther('72.00')
+          30: ethers.parseEther('7.66'),
+          60: ethers.parseEther('15.32'),
+          90: ethers.parseEther('22.98'),
+          180: ethers.parseEther('45.96'),
+          365: ethers.parseEther('91.92')
         },
         decimals: 18,
         symbol: 'BNB'
@@ -269,31 +269,31 @@ class SecureTrendingService {
       hyperevm: {
         trending: {
           normal: {
-            6: ethers.parseEther('6.00'),
-            12: ethers.parseEther('12.00'),
-            18: ethers.parseEther('18.00'),
-            24: ethers.parseEther('24.00')
+            6: ethers.parseEther('36'),
+            12: ethers.parseEther('72'),
+            18: ethers.parseEther('108'),
+            24: ethers.parseEther('144')
           },
           premium: {
-            6: ethers.parseEther('12.00'),
-            12: ethers.parseEther('24.00'),
-            18: ethers.parseEther('36.00'),
-            24: ethers.parseEther('48.00')
+            6: ethers.parseEther('72'),
+            12: ethers.parseEther('144'),
+            18: ethers.parseEther('216'),
+            24: ethers.parseEther('288')
           }
         },
         imageFees: {
-          30: ethers.parseEther('0.40'),
-          60: ethers.parseEther('0.80'),
-          90: ethers.parseEther('1.20'),
-          180: ethers.parseEther('2.40'),
-          365: ethers.parseEther('4.80')
+          30: ethers.parseEther('2.5'),
+          60: ethers.parseEther('5'),
+          90: ethers.parseEther('7.5'),
+          180: ethers.parseEther('15'),
+          365: ethers.parseEther('30')
         },
         footerFees: {
-          30: ethers.parseEther('574.00'),
-          60: ethers.parseEther('1150.00'),
-          90: ethers.parseEther('1724.00'),
-          180: ethers.parseEther('3448.00'),
-          365: ethers.parseEther('6896.00')
+          30: ethers.parseEther('574'),
+          60: ethers.parseEther('1150'),
+          90: ethers.parseEther('1724'),
+          180: ethers.parseEther('3448'),
+          365: ethers.parseEther('6896')
         },
         decimals: 18,
         symbol: 'HYPE'
@@ -302,31 +302,31 @@ class SecureTrendingService {
       sei: {
         trending: {
           normal: {
-            6: ethers.parseEther('2053.56'),    // 6hrs
-            12: ethers.parseEther('3696.41'),   // 12hrs
-            18: ethers.parseEther('4961.47'),   // 18hrs
-            24: ethers.parseEther('6571.40')    // 24hrs
+            6: ethers.parseEther('2054'),
+            12: ethers.parseEther('4108'),
+            18: ethers.parseEther('6162'),
+            24: ethers.parseEther('8216')
           },
           premium: {
-            6: ethers.parseEther('4107.13'),    // 6hrs
-            12: ethers.parseEther('7392.83'),   // 12hrs
-            18: ethers.parseEther('10510.98'),  // 18hrs
-            24: ethers.parseEther('13142.80')   // 24hrs
+            6: ethers.parseEther('4108'),
+            12: ethers.parseEther('8216'),
+            18: ethers.parseEther('12324'),
+            24: ethers.parseEther('16432')
           }
         },
         imageFees: {
-          30: ethers.parseEther('131.43'),      // 30 days
-          60: ethers.parseEther('262.86'),      // 60 days
-          90: ethers.parseEther('394.28'),      // 90 days
-          180: ethers.parseEther('788.57'),     // 180 days
-          365: ethers.parseEther('1577.14')     // 365 days
+          30: ethers.parseEther('136'),
+          60: ethers.parseEther('272'),
+          90: ethers.parseEther('408'),
+          180: ethers.parseEther('816'),
+          365: ethers.parseEther('1632')
         },
         footerFees: {
-          30: ethers.parseEther('32857.00'),
-          60: ethers.parseEther('65714.00'),
-          90: ethers.parseEther('98571.00'),
-          180: ethers.parseEther('197142.00'),
-          365: ethers.parseEther('394284.00')
+          30: ethers.parseEther('32857'),
+          60: ethers.parseEther('65714'),
+          90: ethers.parseEther('98571'),
+          180: ethers.parseEther('197142'),
+          365: ethers.parseEther('394284')
         },
         decimals: 18,
         symbol: 'SEI'
@@ -396,6 +396,237 @@ class SecureTrendingService {
         },
         decimals: 18,
         symbol: 'ETH'
+      },
+      // Berachain pricing
+      berachain: {
+        trending: {
+          normal: {
+            6: ethers.parseEther('192'),
+            12: ethers.parseEther('384'),
+            18: ethers.parseEther('576'),
+            24: ethers.parseEther('768')
+          },
+          premium: {
+            6: ethers.parseEther('384'),
+            12: ethers.parseEther('768'),
+            18: ethers.parseEther('1152'),
+            24: ethers.parseEther('1536')
+          }
+        },
+        imageFees: {
+          30: ethers.parseEther('13'),
+          60: ethers.parseEther('26'),
+          90: ethers.parseEther('39'),
+          180: ethers.parseEther('78'),
+          365: ethers.parseEther('156')
+        },
+        footerFees: {
+          30: ethers.parseEther('3066'),
+          60: ethers.parseEther('6132'),
+          90: ethers.parseEther('9198'),
+          180: ethers.parseEther('18396'),
+          365: ethers.parseEther('36792')
+        },
+        decimals: 18,
+        symbol: 'BERA'
+      },
+      // Avalanche pricing
+      avalanche: {
+        trending: {
+          normal: {
+            6: ethers.parseEther('29'),
+            12: ethers.parseEther('58'),
+            18: ethers.parseEther('87'),
+            24: ethers.parseEther('116')
+          },
+          premium: {
+            6: ethers.parseEther('58'),
+            12: ethers.parseEther('116'),
+            18: ethers.parseEther('145'),
+            24: ethers.parseEther('174')
+          }
+        },
+        imageFees: {
+          30: ethers.parseEther('2'),
+          60: ethers.parseEther('4'),
+          90: ethers.parseEther('6'),
+          180: ethers.parseEther('12'),
+          365: ethers.parseEther('24')
+        },
+        footerFees: {
+          30: ethers.parseEther('460'),
+          60: ethers.parseEther('920'),
+          90: ethers.parseEther('1380'),
+          180: ethers.parseEther('2760'),
+          365: ethers.parseEther('5520')
+        },
+        decimals: 18,
+        symbol: 'AVAX'
+      },
+      // Cronos pricing
+      cronos: {
+        trending: {
+          normal: {
+            6: ethers.parseEther('4107'),
+            12: ethers.parseEther('8214'),
+            18: ethers.parseEther('12321'),
+            24: ethers.parseEther('16428')
+          },
+          premium: {
+            6: ethers.parseEther('8214'),
+            12: ethers.parseEther('16428'),
+            18: ethers.parseEther('24642'),
+            24: ethers.parseEther('32856')
+          }
+        },
+        imageFees: {
+          30: ethers.parseEther('272'),
+          60: ethers.parseEther('544'),
+          90: ethers.parseEther('816'),
+          180: ethers.parseEther('1632'),
+          365: ethers.parseEther('3264')
+        },
+        footerFees: {
+          30: ethers.parseEther('65714'),
+          60: ethers.parseEther('131428'),
+          90: ethers.parseEther('197142'),
+          180: ethers.parseEther('394284'),
+          365: ethers.parseEther('788568')
+        },
+        decimals: 18,
+        symbol: 'CRO'
+      },
+      // Moonbeam pricing
+      moonbeam: {
+        trending: {
+          normal: {
+            6: ethers.parseEther('4792'),
+            12: ethers.parseEther('9584'),
+            18: ethers.parseEther('14376'),
+            24: ethers.parseEther('19168')
+          },
+          premium: {
+            6: ethers.parseEther('9584'),
+            12: ethers.parseEther('19168'),
+            18: ethers.parseEther('28752'),
+            24: ethers.parseEther('38336')
+          }
+        },
+        imageFees: {
+          30: ethers.parseEther('20'),
+          60: ethers.parseEther('40'),
+          90: ethers.parseEther('60'),
+          180: ethers.parseEther('120'),
+          365: ethers.parseEther('240')
+        },
+        footerFees: {
+          30: ethers.parseEther('76666'),
+          60: ethers.parseEther('153332'),
+          90: ethers.parseEther('229998'),
+          180: ethers.parseEther('459996'),
+          365: ethers.parseEther('919992')
+        },
+        decimals: 18,
+        symbol: 'GLMR'
+      },
+      // ApeChain pricing
+      apechain: {
+        trending: {
+          normal: {
+            6: ethers.parseEther('958'),
+            12: ethers.parseEther('1916'),
+            18: ethers.parseEther('2874'),
+            24: ethers.parseEther('3832')
+          },
+          premium: {
+            6: ethers.parseEther('1916'),
+            12: ethers.parseEther('3832'),
+            18: ethers.parseEther('5748'),
+            24: ethers.parseEther('7664')
+          }
+        },
+        imageFees: {
+          30: ethers.parseEther('63'),
+          60: ethers.parseEther('126'),
+          90: ethers.parseEther('189'),
+          180: ethers.parseEther('378'),
+          365: ethers.parseEther('756')
+        },
+        footerFees: {
+          30: ethers.parseEther('15333'),
+          60: ethers.parseEther('30666'),
+          90: ethers.parseEther('45999'),
+          180: ethers.parseEther('91998'),
+          365: ethers.parseEther('183996')
+        },
+        decimals: 18,
+        symbol: 'APE'
+      },
+      // Abstract pricing (same as ETH)
+      abstract: {
+        trending: {
+          normal: {
+            6: ethers.parseEther('0.0625'),
+            12: ethers.parseEther('0.1125'),
+            18: ethers.parseEther('0.151'),
+            24: ethers.parseEther('0.20')
+          },
+          premium: {
+            6: ethers.parseEther('0.125'),
+            12: ethers.parseEther('0.225'),
+            18: ethers.parseEther('0.32'),
+            24: ethers.parseEther('0.40')
+          }
+        },
+        imageFees: {
+          30: ethers.parseEther('0.004'),
+          60: ethers.parseEther('0.008'),
+          90: ethers.parseEther('0.012'),
+          180: ethers.parseEther('0.024'),
+          365: ethers.parseEther('0.048')
+        },
+        footerFees: {
+          30: ethers.parseEther('1.0'),
+          60: ethers.parseEther('2.0'),
+          90: ethers.parseEther('3.0'),
+          180: ethers.parseEther('6.0'),
+          365: ethers.parseEther('12.0')
+        },
+        decimals: 18,
+        symbol: 'ETH'
+      },
+      // Ronin pricing
+      ronin: {
+        trending: {
+          normal: {
+            6: ethers.parseEther('625'),
+            12: ethers.parseEther('1250'),
+            18: ethers.parseEther('1875'),
+            24: ethers.parseEther('2500')
+          },
+          premium: {
+            6: ethers.parseEther('1250'),
+            12: ethers.parseEther('2500'),
+            18: ethers.parseEther('3750'),
+            24: ethers.parseEther('5000')
+          }
+        },
+        imageFees: {
+          30: ethers.parseEther('40'),
+          60: ethers.parseEther('80'),
+          90: ethers.parseEther('120'),
+          180: ethers.parseEther('240'),
+          365: ethers.parseEther('480')
+        },
+        footerFees: {
+          30: ethers.parseEther('10000'),
+          60: ethers.parseEther('20000'),
+          90: ethers.parseEther('30000'),
+          180: ethers.parseEther('60000'),
+          365: ethers.parseEther('120000')
+        },
+        decimals: 18,
+        symbol: 'RON'
       }
     };
 

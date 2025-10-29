@@ -1,5 +1,6 @@
 const { ethers } = require('ethers');
 const logger = require('./logger');
+const addresses = require('../config/addresses');
 const SolanaPaymentService = require('../blockchain/solanaPaymentService');
 const BitcoinPaymentService = require('../blockchain/bitcoinPaymentService');
 
@@ -52,17 +53,17 @@ class SecureTrendingService {
   constructor(database, chainManager = null) {
     this.db = database;
     this.chainManager = chainManager;
-    this.simplePaymentContract = process.env.SIMPLE_PAYMENT_CONTRACT_ADDRESS || '0x4704eaF9d285a1388c0370Bc7d05334d313f92Be';
+    this.simplePaymentContract = addresses.ethereum.paymentContract;
     this.contract = null;
     this.provider = null;
 
     // Solana payment service
     this.solanaPaymentService = null;
-    this.solanaPaymentAddress = '5dBMD7r6UrS6FA7oNLMEn5isMdXYnZqWb9kxUp3kUSzm';
+    this.solanaPaymentAddress = addresses.solana.paymentWallet;
 
     // Bitcoin payment service
     this.bitcoinPaymentService = null;
-    this.bitcoinPaymentAddress = process.env.BITCOIN_PAYMENT_ADDRESS;
+    this.bitcoinPaymentAddress = addresses.bitcoin.paymentWallet;
     
     // Chain-specific pricing configuration
     // All amounts are in native tokens and stored as smallest unit (wei/lamports/satoshis)

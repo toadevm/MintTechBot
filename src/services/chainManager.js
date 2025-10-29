@@ -1,4 +1,5 @@
 const logger = require('./logger');
+const addresses = require('../config/addresses');
 
 class ChainManager {
   constructor(database) {
@@ -37,7 +38,7 @@ class ChainManager {
           openSeaSupported: true,
           openSeaName: 'ethereum',
           rpcUrl: `https://eth-mainnet.g.alchemy.com/v2/${alchemyApiKey}`,
-          paymentContract: '0x4704eaF9d285a1388c0370Bc7d05334d313f92Be'
+          paymentContract: addresses.ethereum.paymentContract
         },
         {
           name: 'arbitrum',

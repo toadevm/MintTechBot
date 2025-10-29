@@ -2746,13 +2746,9 @@ You will no longer receive notifications for this NFT in this chat context.`;
           message += `      📮 <code>${token.contract_address}</code>\n`;
           message += `      🟢 Status: Active\n`;
 
-          // Show tracking status based on chain
-          if (token.chain_name === 'solana') {
-            message += `      🌟 Helius: ✅ Real-time tracking\n`;
-          } else if (token.chain_name === 'bitcoin') {
-            message += `      🏪 Magic Eden Ordinals: ✅ Real-time tracking\n`;
-          } else if (token.collection_slug) {
-            message += `      🌊 OpenSea: ✅ Real-time tracking\n`;
+          // Show tracking status
+          if (token.collection_slug || token.chain_name === 'solana' || token.chain_name === 'bitcoin') {
+            message += `      📊 Tracking: ✅ Active\n`;
           }
           message += '\n';
 
@@ -3617,13 +3613,9 @@ Select trending duration:`;
           message += `      📮 <code>${token.contract_address}</code>\n`;
           message += `      🟢 Status: Active\n`;
 
-          // Show tracking status based on chain
-          if (token.chain_name === 'solana') {
-            message += `      🌟 Helius: ✅ Real-time tracking\n`;
-          } else if (token.chain_name === 'bitcoin') {
-            message += `      🏪 Magic Eden Ordinals: ✅ Real-time tracking\n`;
-          } else if (token.collection_slug) {
-            message += `      🌊 OpenSea: ✅ Real-time tracking\n`;
+          // Show tracking status
+          if (token.collection_slug || token.chain_name === 'solana' || token.chain_name === 'bitcoin') {
+            message += `      📊 Tracking: ✅ Active\n`;
           }
           message += '\n';
 
@@ -3678,15 +3670,9 @@ Select trending duration:`;
         message += `   📮 <code>${token.contract_address}</code>\n`;
         message += `   🟢 Status: Active\n`;
 
-        // Show tracking status based on chain
-        if (token.chain_name === 'solana') {
-          message += `   🌟 Helius: ✅ Real-time tracking\n`;
-        } else if (token.chain_name === 'bitcoin') {
-          message += `   🏪 Magic Eden Ordinals: ✅ Real-time tracking\n`;
-        } else if (token.collection_slug) {
-          message += `   🌊 OpenSea: ✅ Real-time tracking\n`;
-        } else {
-          message += `   🌊 OpenSea: ⚠️ No real-time tracking\n`;
+        // Show tracking status
+        if (token.collection_slug || token.chain_name === 'solana' || token.chain_name === 'bitcoin') {
+          message += `   📊 Tracking: ✅ Active\n`;
         }
         message += '\n';
 

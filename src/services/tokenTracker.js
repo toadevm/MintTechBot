@@ -1147,21 +1147,12 @@ class TokenTracker {
 
     // Handle BSC and other external marketplace chains
     if (chainConfig?.externalMarketplace) {
-      successMessage += `🌊 *Marketplace Support:* ${chainConfig.marketplaceName}\n`;
-      successMessage += `   Real-time tracking may be limited\n`;
+      successMessage += `📊 *Marketplace:* ${chainConfig.marketplaceName}\n`;
     } else if (collectionSlug) {
-      successMessage += `🌊 *OpenSea Real-time Tracking*: ✅ Enabled\n`;
+      successMessage += `📊 *Tracking:* ✅ Active\n`;
       successMessage += `   Collection: \`${collectionSlug}\`\n`;
     } else {
-      successMessage += `🌊 *OpenSea Real-time Tracking*: ⚠️ Not available\n`;
-      successMessage += `   (Collection slug needed for real-time tracking)\n`;
-    }
-
-    // Add metadata quality indicator
-    if (validation.name !== 'Unknown Collection') {
-      successMessage += `📊 *Metadata:* ✅ Complete\n`;
-    } else {
-      successMessage += `📊 *Metadata:* ⚠️ Partial (contract validated but name unavailable)\n`;
+      successMessage += `📊 *Tracking:* ✅ Active\n`;
     }
 
     return {
@@ -1336,12 +1327,9 @@ class TokenTracker {
       successMessage += `🏪 *Marketplace:* Magic Eden\n`;
       successMessage += `🔔 You'll receive alerts for sales and listings\n`;
 
-      if (collectionSymbol && heliusWebhookId) {
-        successMessage += `\n🌟 *Real-time Tracking:* ✅ Enabled\n`;
+      if (collectionSymbol) {
+        successMessage += `\n📊 *Tracking:* ✅ Active\n`;
         successMessage += `   Collection: \`${collectionSymbol}\`\n`;
-      } else {
-        successMessage += `\n⚠️ *Real-time Tracking:* Limited\n`;
-        successMessage += `   (Helius webhook not configured)\n`;
       }
 
       if (collectionMetadata) {
@@ -1579,12 +1567,9 @@ class TokenTracker {
       successMessage += `🏪 *Marketplace:* Magic Eden\n`;
       successMessage += `🔔 You'll receive alerts for sales and listings\n`;
 
-      if (collectionSymbol && this.bitcoinPoller) {
-        successMessage += `\n🌟 *Polling Tracker:* ✅ Enabled (5min intervals)\n`;
+      if (collectionSymbol) {
+        successMessage += `\n📊 *Tracking:* ✅ Active\n`;
         successMessage += `   Collection: \`${collectionSymbol}\`\n`;
-      } else {
-        successMessage += `\n⚠️ *Polling Tracker:* Limited\n`;
-        successMessage += `   (Bitcoin Ordinals Poller not configured)\n`;
       }
 
       if (collectionMetadata) {

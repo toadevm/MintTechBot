@@ -5,11 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js",
-    "compile": "hardhat compile",
-    "test-contracts": "hardhat test",
-    "deploy": "hardhat run scripts/deploy.js --network sepolia",
-    "mint": "node trigger-mint-notification.js"
+    "dev": "node --watch index.js"
   },
   "keywords": [],
   "author": "",
@@ -31,13 +27,5 @@
     "telegraf": "^4.16.3",
     "winston": "^3.17.0",
     "ws": "^8.18.3"
-  },
-  "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^6.1.0",
-    "@nomicfoundation/hardhat-verify": "^2.1.1",
-    "@typechain/ethers-v6": "^0.5.1",
-    "@typechain/hardhat": "^9.1.0",
-    "hardhat": "^2.26.3",
-    "hardhat-deploy": "^1.0.4"
   }
 }

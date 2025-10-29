@@ -1127,60 +1127,6 @@ class Database {
   // CONTEXT-AWARE TOKEN QUERIES
   // ============================================================================
 
-  /**
-   * Get user's tracked tokens across ALL contexts (private + all groups)
-   * @param {number} userId - User database ID
-   * @param {string|null} chainName - Optional chain filter
-   * @returns {Array} All tracked tokens with chat_id
-   */
-  async getUserTrackedTokensAllContexts(userId, chainName = null) {
-    let sql = `
-      SELECT tt.*, us.notification_enabled, us.chat_id
-      FROM tracked_tokens tt
-      JOIN user_subscriptions us ON tt.id = us.token_id
-      WHERE us.user_id = $1
-        AND tt.is_active = true
-    `;
-
-    const params = [userId];
-
-    if (chainName) {
-      sql += ` AND tt.chain_name = $2`;
-      params.push(chainName);
-    }
-
-    sql += ` ORDER BY tt.created_at DESC`;
-    return await this.all(sql, params);
-  }
-
-  /**
-   * Get user's tracked tokens in groups only
-   * @param {number} userId - User database ID
-   * @param {string|null} chainName - Optional chain filter
-   * @returns {Array} Group-tracked tokens only
-   */
-  async getUserTrackedTokensGroupsOnly(userId, chainName = null) {
-    let sql = `
-      SELECT tt.*, us.notification_enabled, us.chat_id
-      FROM tracked_tokens tt
-      JOIN user_subscriptions us ON tt.id = us.token_id
-      JOIN users u ON us.user_id = u.id
-      WHERE us.user_id = $1
-        AND tt.is_active = true
-        AND us.chat_id != u.telegram_id
-    `;
-
-    const params = [userId];
-
-    if (chainName) {
-      sql += ` AND tt.chain_name = $2`;
-      params.push(chainName);
-    }
-
-    sql += ` ORDER BY tt.created_at DESC`;
-    return await this.all(sql, params);
-  }
-
   async close() {
     try {
       if (this.pool) {

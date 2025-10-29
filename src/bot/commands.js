@@ -437,19 +437,8 @@ class BotCommands {
           return ctx.reply('Please start the bot first with /startminty');
         }
 
-        // Show context filter menu
-        const message = `📊 <b>View Your Tracked NFTs</b>
-
-Choose which tokens to view:`;
-
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('🌐 All Contexts', 'view_tokens_all')],
-          [Markup.button.callback('📱 Private Only', 'view_tokens_private')],
-          [Markup.button.callback('👥 Groups Only', 'view_tokens_groups')],
-          [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
-        ]);
-
-        await ctx.replyWithHTML(message, keyboard);
+        // Use same context-aware logic as menu button
+        return this.showMyTokens(ctx);
       } catch (error) {
         logger.error('Error in my_tokens command:', error);
         ctx.reply('❌ Error retrieving your NFTs. Please try again.');
@@ -691,21 +680,6 @@ Choose your trending boost option:`;
           return;
         }
 
-        // Token context filter handlers
-        if (data === 'view_tokens_all') {
-          await ctx.answerCbQuery();
-          return this.showTokensAllContexts(ctx);
-        }
-
-        if (data === 'view_tokens_private') {
-          await ctx.answerCbQuery();
-          return this.showTokensPrivateOnly(ctx);
-        }
-
-        if (data === 'view_tokens_groups') {
-          await ctx.answerCbQuery();
-          return this.showTokensGroupsOnly(ctx);
-        }
 
         // Chain selection handlers for multi-chain support
         if (data.startsWith('chain_select_')) {
@@ -1322,17 +1296,6 @@ Choose your trending boost option:`;
         }
 
 
-        // Handle context-aware removal (from All Contexts or Groups Only views)
-        if (data.startsWith('remove_ctx_')) {
-          await ctx.answerCbQuery();
-          // Format: remove_ctx_${tokenId}_${chatId}
-          const parts = data.replace('remove_ctx_', '').split('_');
-          const tokenId = parts[0];
-          const chatId = parts.slice(1).join('_'); // Handle negative chat IDs with underscores
-          await this.handleRemoveToken(ctx, tokenId, chatId);
-          return;
-        }
-
         if (data.startsWith('remove_')) {
           const tokenId = data.replace('remove_', '');
           await ctx.answerCbQuery();
@@ -1855,215 +1818,6 @@ Add NFT contracts to track. All group members will receive notifications in the 
     }
   }
 
-  // ============================================================================
-  // CONTEXT-AWARE TOKEN DISPLAY METHODS
-  // ============================================================================
-
-  /**
-   * Resolve context labels for tokens (Private vs Group Name)
-   */
-  async resolveTokenContexts(tokens, ctx) {
-    const user = await this.db.getUser(ctx.from.id.toString());
-
-    return await Promise.all(tokens.map(async (token) => {
-      let contextLabel;
-
-      if (token.chat_id === user.telegram_id) {
-        contextLabel = '📱 Private';
-      } else {
-        // Try to get group title
-        try {
-          const chat = await ctx.telegram.getChat(token.chat_id);
-          contextLabel = `👥 ${chat.title || 'Group'}`;
-        } catch (error) {
-          contextLabel = '👥 Group';
-        }
-      }
-
-      return { ...token, contextLabel };
-    }));
-  }
-
-  /**
-   * Show tokens from ALL contexts (private + all groups)
-   */
-  async showTokensAllContexts(ctx) {
-    try {
-      const user = await this.db.getUser(ctx.from.id.toString());
-      if (!user) {
-        return ctx.reply('Please start the bot first with /startminty');
-      }
-
-      const tokens = await this.db.getUserTrackedTokensAllContexts(user.id);
-
-      if (tokens.length === 0) {
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('➕ Add NFT', 'add_token_start')],
-          [Markup.button.callback('◀️ Back', 'main_menu')]
-        ]);
-        return this.sendOrEditMenu(ctx, '🔍 You haven\'t tracked any NFTs yet!', keyboard);
-      }
-
-      // Resolve context labels
-      const tokensWithContext = await this.resolveTokenContexts(tokens, ctx);
-
-      let message = `🌐 <b>All Tracked NFTs</b> (${tokens.length})\n\n`;
-      const keyboard = [];
-
-      // Group by chain
-      const byChain = {};
-      tokensWithContext.forEach(token => {
-        const chain = token.chain_name || 'ethereum';
-        if (!byChain[chain]) byChain[chain] = [];
-        byChain[chain].push(token);
-      });
-
-      for (const [chainName, chainTokens] of Object.entries(byChain)) {
-        const chainConfig = this.chainManager.getChain(chainName);
-        message += `${chainConfig.emoji} <b>${chainConfig.displayName}</b>\n`;
-
-        chainTokens.forEach((token, i) => {
-          message += `  ${i + 1}. <b>${token.token_name || 'Unknown'}</b>\n`;
-          message += `     📮 <code>${token.contract_address.substring(0, 10)}...</code>\n`;
-          message += `     ${token.contextLabel}\n\n`;
-
-          keyboard.push([
-            Markup.button.callback(
-              `🗑️ ${token.token_name} (${token.contextLabel})`,
-              `remove_ctx_${token.id}_${token.chat_id}`
-            )
-          ]);
-        });
-      }
-
-      keyboard.push([Markup.button.callback('◀️ Back', 'main_menu')]);
-
-      await this.sendOrEditMenu(ctx, message, Markup.inlineKeyboard(keyboard));
-    } catch (error) {
-      logger.error('Error in showTokensAllContexts:', error);
-      await ctx.reply('❌ Error loading tokens.');
-    }
-  }
-
-  /**
-   * Show tokens from PRIVATE context only
-   */
-  async showTokensPrivateOnly(ctx) {
-    try {
-      const user = await this.db.getUser(ctx.from.id.toString());
-      if (!user) {
-        return ctx.reply('Please start the bot first with /startminty');
-      }
-
-      // Get tokens tracked in private chat (chat_id = user's telegram_id)
-      const tokens = await this.db.getUserTrackedTokens(user.id, user.telegram_id);
-
-      if (tokens.length === 0) {
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('➕ Add NFT', 'add_token_start')],
-          [Markup.button.callback('◀️ Back', 'main_menu')]
-        ]);
-        return this.sendOrEditMenu(ctx, '🔍 You haven\'t tracked any NFTs privately yet!', keyboard);
-      }
-
-      let message = `📱 <b>Private NFTs</b> (${tokens.length})\n\n`;
-      const keyboard = [];
-
-      // Group by chain
-      const byChain = {};
-      tokens.forEach(token => {
-        const chain = token.chain_name || 'ethereum';
-        if (!byChain[chain]) byChain[chain] = [];
-        byChain[chain].push(token);
-      });
-
-      for (const [chainName, chainTokens] of Object.entries(byChain)) {
-        const chainConfig = this.chainManager.getChain(chainName);
-        message += `${chainConfig.emoji} <b>${chainConfig.displayName}</b>\n`;
-
-        chainTokens.forEach((token, i) => {
-          message += `  ${i + 1}. <b>${token.token_name || 'Unknown'}</b>\n`;
-          message += `     📮 <code>${token.contract_address.substring(0, 10)}...</code>\n`;
-          message += `     📊 Tracking: ✅ Active\n\n`;
-
-          keyboard.push([
-            Markup.button.callback(
-              `🗑️ Remove ${token.token_name}`,
-              `remove_${token.id}`
-            )
-          ]);
-        });
-      }
-
-      keyboard.push([Markup.button.callback('◀️ Back', 'main_menu')]);
-
-      await this.sendOrEditMenu(ctx, message, Markup.inlineKeyboard(keyboard));
-    } catch (error) {
-      logger.error('Error in showTokensPrivateOnly:', error);
-      await ctx.reply('❌ Error loading tokens.');
-    }
-  }
-
-  /**
-   * Show tokens from GROUPS only
-   */
-  async showTokensGroupsOnly(ctx) {
-    try {
-      const user = await this.db.getUser(ctx.from.id.toString());
-      if (!user) {
-        return ctx.reply('Please start the bot first with /startminty');
-      }
-
-      const tokens = await this.db.getUserTrackedTokensGroupsOnly(user.id);
-
-      if (tokens.length === 0) {
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('◀️ Back', 'main_menu')]
-        ]);
-        return this.sendOrEditMenu(ctx, '🔍 No NFTs tracked in groups yet!', keyboard);
-      }
-
-      // Resolve group names
-      const tokensWithContext = await this.resolveTokenContexts(tokens, ctx);
-
-      let message = `👥 <b>Group NFTs</b> (${tokens.length})\n\n`;
-      const keyboard = [];
-
-      // Group by chain
-      const byChain = {};
-      tokensWithContext.forEach(token => {
-        const chain = token.chain_name || 'ethereum';
-        if (!byChain[chain]) byChain[chain] = [];
-        byChain[chain].push(token);
-      });
-
-      for (const [chainName, chainTokens] of Object.entries(byChain)) {
-        const chainConfig = this.chainManager.getChain(chainName);
-        message += `${chainConfig.emoji} <b>${chainConfig.displayName}</b>\n`;
-
-        chainTokens.forEach((token, i) => {
-          message += `  ${i + 1}. <b>${token.token_name || 'Unknown'}</b>\n`;
-          message += `     📮 <code>${token.contract_address.substring(0, 10)}...</code>\n`;
-          message += `     ${token.contextLabel}\n\n`;
-
-          keyboard.push([
-            Markup.button.callback(
-              `🗑️ ${token.token_name} (${token.contextLabel})`,
-              `remove_ctx_${token.id}_${token.chat_id}`
-            )
-          ]);
-        });
-      }
-
-      keyboard.push([Markup.button.callback('◀️ Back', 'main_menu')]);
-
-      await this.sendOrEditMenu(ctx, message, Markup.inlineKeyboard(keyboard));
-    } catch (error) {
-      logger.error('Error in showTokensGroupsOnly:', error);
-      await ctx.reply('❌ Error loading tokens.');
-    }
-  }
-
 
   async handleContractAddress(ctx, contractAddress) {
     try {
@@ -2285,15 +2039,14 @@ You can try again with a different transaction hash or contact support.`;
     }
   }
 
-  async handleRemoveToken(ctx, tokenId, chatId = null) {
+  async handleRemoveToken(ctx, tokenId) {
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
         return ctx.reply('❌ User not found. Please start the bot first with /startminty');
       }
 
-      // Use provided chatId (from context-aware removal) or detect from current context
-      const targetChatId = chatId || this.normalizeChatContext(ctx);
+      const chatId = this.normalizeChatContext(ctx);
 
       // Get token info for the success message
       const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = $1', [tokenId]);
@@ -2304,7 +2057,7 @@ You can try again with a different transaction hash or contact support.`;
       // Check if user has subscription in this chat context
       const subscription = await this.db.get(
         'SELECT * FROM user_subscriptions WHERE user_id = $1 AND token_id = $2 AND chat_id = $3',
-        [user.id, tokenId, targetChatId]
+        [user.id, tokenId, chatId]
       );
 
       if (!subscription) {
@@ -2312,8 +2065,8 @@ You can try again with a different transaction hash or contact support.`;
       }
 
       // Remove subscription from this specific chat context
-      const unsubscribeResult = await this.db.unsubscribeUserFromToken(user.id, tokenId, targetChatId);
-      logger.info(`🔄 REMOVE_TOKEN DEBUG: Unsubscribed user ${user.id} from token ${tokenId} in chat ${targetChatId}, removed ${unsubscribeResult.changes} subscription(s)`);
+      const unsubscribeResult = await this.db.unsubscribeUserFromToken(user.id, tokenId, chatId);
+      logger.info(`🔄 REMOVE_TOKEN DEBUG: Unsubscribed user ${user.id} from token ${tokenId} in chat ${chatId}, removed ${unsubscribeResult.changes} subscription(s)`);
 
       // Check if there are any remaining subscriptions for this NFT
       const remainingSubscriptions = await this.db.all(
@@ -2341,7 +2094,7 @@ You can try again with a different transaction hash or contact support.`;
           return ctx.reply('❌ Error completing token removal. Please try again.');
         }
 
-        const contextName = targetChatId === 'private' ? 'private messages' : `group chat (${targetChatId})`;
+        const contextName = chatId === 'private' ? 'private messages' : `group chat (${chatId})`;
         const successMessage = `✅ <b>Token Removed Successfully</b>
 
 🗑️ <b>${token.token_name || 'Unknown Collection'}</b> has been completely removed from tracking.
@@ -2357,7 +2110,7 @@ This token has been properly cleaned up with all associated data and OpenSea sub
         logger.info(`🔄 REMOVE_TOKEN DEBUG: NOT calling tokenTracker.removeToken() - token still has ${subscriptionCount} remaining subscriptions`);
       }
 
-      const contextName = targetChatId === 'private' ? 'private messages' : `group chat (${targetChatId})`;
+      const contextName = chatId === 'private' ? 'private messages' : `group chat (${chatId})`;
       const successMessage = `✅ <b>Token Removed Successfully</b>
 
 🗑️ <b>${token.token_name || 'Unknown Collection'}</b> has been removed from your tracking list in ${contextName}.
@@ -2367,7 +2120,7 @@ This token has been properly cleaned up with all associated data and OpenSea sub
 You will no longer receive notifications for this NFT in this chat context.`;
 
       await ctx.replyWithHTML(successMessage);
-      logger.info(`Token subscription removed: ${token.contract_address} by user ${user.id} in chat ${targetChatId}`);
+      logger.info(`Token subscription removed: ${token.contract_address} by user ${user.id} in chat ${chatId}`);
 
     } catch (error) {
       logger.error('Error removing token:', error);

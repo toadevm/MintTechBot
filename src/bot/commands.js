@@ -2432,7 +2432,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
-    return ctx.replyWithHTML(message, keyboard);
+    return this.sendOrEditMenu(ctx, message, keyboard);
   }
 
   async showImagesMenu(ctx) {

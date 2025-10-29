@@ -145,6 +145,70 @@ class BotCommands {
     return chatId;
   }
 
+  // ============================================================================
+  // SESSION MANAGEMENT METHODS
+  // ============================================================================
+
+  /**
+   * Set user session value
+   * @param {number} userId - User ID
+   * @param {string} key - Session key
+   * @param {*} value - Session value
+   */
+  setUserSession(userId, key, value) {
+    const sessionKey = `${userId}_session_${key}`;
+    this.userStates.set(sessionKey, value);
+  }
+
+  /**
+   * Get user session value
+   * @param {number} userId - User ID
+   * @param {string} key - Session key
+   * @returns {*} Session value or undefined
+   */
+  getUserSession(userId, key) {
+    const sessionKey = `${userId}_session_${key}`;
+    return this.userStates.get(sessionKey);
+  }
+
+  /**
+   * Clear user session
+   * @param {number} userId - User ID
+   * @param {string|null} key - Specific key to clear, or null to clear all
+   */
+  clearUserSession(userId, key = null) {
+    if (key) {
+      this.userStates.delete(`${userId}_session_${key}`);
+    } else {
+      // Clear all sessions for user
+      for (const [k] of this.userStates) {
+        if (k.startsWith(`${userId}_session_`)) {
+          this.userStates.delete(k);
+        }
+      }
+    }
+  }
+
+  // ============================================================================
+  // GROUP MANAGEMENT HELPERS
+  // ============================================================================
+
+  /**
+   * Check if user is admin in a group
+   * @param {number} userId - User's Telegram ID
+   * @param {string} groupChatId - Group chat ID
+   * @returns {boolean} True if user is admin
+   */
+  async isUserGroupAdmin(userId, groupChatId) {
+    try {
+      const admins = await this.bot.telegram.getChatAdministrators(groupChatId);
+      return admins.some(admin => admin.user.id === userId);
+    } catch (error) {
+      logger.error('Error checking admin status:', error);
+      return false;
+    }
+  }
+
   /**
    * Check if bot should respond to a message in a group
    * Bot responds in groups only when:
@@ -198,8 +262,15 @@ class BotCommands {
   async setupCommands(bot) {
 
     bot.command('startminty', async (ctx) => {
-      const user = ctx.from;
+      const chatType = ctx.chat.type;
 
+      // Handle group/supergroup context
+      if (chatType === 'group' || chatType === 'supergroup') {
+        return this.handleGroupStart(ctx);
+      }
+
+      // Handle private chat context (existing behavior)
+      const user = ctx.from;
       await this.db.createUser(user.id.toString(), user.username, user.first_name);
       const welcomeMessage = helpers.formatWelcomeMessage();
       const keyboard = helpers.buildMainMenuKeyboard();
@@ -215,6 +286,13 @@ class BotCommands {
 
       // Check for start parameters (deep links)
       const startPayload = ctx.startPayload;
+
+      // Handle group setup deep link
+      if (startPayload && startPayload.startsWith('group_')) {
+        const setupToken = startPayload.replace('group_', '');
+        logger.info(`User started bot with group setup token: ${user.id} (${user.username})`);
+        return this.handleGroupSetupFlow(ctx, setupToken);
+      }
 
       if (startPayload === 'buy_footer') {
         // Direct user to footer ads menu when clicking "Buy Ad spot" link
@@ -622,6 +700,15 @@ Choose your trending boost option:`;
         if (data === 'main_menu') {
           await ctx.answerCbQuery();
           return this.showMainMenu(ctx);
+        }
+
+        // Cancel group setup
+        if (data === 'cancel_group_setup') {
+          await ctx.answerCbQuery();
+          this.clearUserSession(ctx.from.id);
+          this.clearUserState(ctx.from.id);
+          await ctx.editMessageText('❌ Group setup cancelled. Run /startminty in the group to start again.');
+          return;
         }
 
         // Chain selection handlers for multi-chain support
@@ -1607,6 +1694,100 @@ Simple and focused - boost your NFTs easily! 🚀`;
     logger.info('Bot commands setup completed');
   }
 
+  // ============================================================================
+  // GROUP SETUP METHODS
+  // ============================================================================
+
+  /**
+   * Handle /startminty command in group context
+   * Generates deep link for private configuration
+   */
+  async handleGroupStart(ctx) {
+    try {
+      const groupId = ctx.chat.id.toString();
+      const groupTitle = ctx.chat.title || 'this group';
+      const userId = ctx.from.id;
+
+      // Check if user is admin
+      const isAdmin = await this.isUserGroupAdmin(userId, groupId);
+      if (!isAdmin) {
+        return ctx.reply('⚠️ Only group admins can configure NFT tracking.');
+      }
+
+      // Ensure user exists in database
+      await this.db.createUser(ctx.from.id.toString(), ctx.from.username, ctx.from.first_name);
+      const user = await this.db.getUser(ctx.from.id.toString());
+
+      // Generate unique setup token
+      const crypto = require('crypto');
+      const setupToken = crypto.randomBytes(16).toString('hex');
+
+      // Save group context
+      await this.db.createGroupContext(groupId, groupTitle, setupToken, user.id);
+
+      // Create deep link
+      const botUsername = ctx.botInfo.username;
+      const deepLink = `https://t.me/${botUsername}?start=group_${setupToken}`;
+
+      const message = `🎉 <b>Welcome to MintyRush NFT Tracker!</b>
+
+To configure NFT tracking for "<b>${groupTitle}</b>":
+👉 <a href="${deepLink}">Click here to set up privately</a>
+
+Once configured, all group members will receive NFT notifications here.`;
+
+      await ctx.replyWithHTML(message, { disable_web_page_preview: true });
+      logger.info(`Group setup link generated for group ${groupId} by user ${userId}`);
+    } catch (error) {
+      logger.error('Error in handleGroupStart:', error);
+      await ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  /**
+   * Handle deep link for group setup
+   * Shows NFT configuration UI for specific group
+   */
+  async handleGroupSetupFlow(ctx, setupToken) {
+    try {
+      // Validate setup token and get group context
+      const groupContext = await this.db.getGroupContextByToken(setupToken);
+
+      if (!groupContext) {
+        return ctx.reply('❌ Invalid or expired setup link. Please run /startminty in the group again.');
+      }
+
+      const userId = ctx.from.id;
+
+      // Verify user is still admin
+      const isAdmin = await this.isUserGroupAdmin(userId, groupContext.group_chat_id);
+      if (!isAdmin) {
+        return ctx.reply('⚠️ Only group admins can configure tracking.');
+      }
+
+      // Store group context in user session
+      this.setUserSession(userId, 'configuring_group', groupContext.group_chat_id);
+      this.setUserSession(userId, 'group_title', groupContext.group_title);
+
+      // Show chain selection menu for group configuration
+      const message = `🎯 <b>Configure NFT Tracking for:</b>
+${groupContext.group_title}
+
+Add NFT contracts to track. All group members will receive notifications in the group.
+
+<b>Choose a blockchain:</b>`;
+
+      const keyboard = this.chainManager.getChainSelectionKeyboard();
+      keyboard.push([Markup.button.callback('❌ Cancel', 'cancel_group_setup')]);
+
+      await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+      logger.info(`User ${userId} starting group setup for ${groupContext.group_title}`);
+    } catch (error) {
+      logger.error('Error in handleGroupSetupFlow:', error);
+      await ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
 
   async handleContractAddress(ctx, contractAddress) {
     try {
@@ -1641,7 +1822,19 @@ Simple and focused - boost your NFTs easily! 🚀`;
       // Clear the selected chain from session data
       this.userStates.delete(ctx.from.id.toString() + '_selected_chain');
 
-      const chatId = this.normalizeChatContext(ctx);
+      // Check if user is configuring for a group
+      const configuringGroupId = this.getUserSession(ctx.from.id, 'configuring_group');
+
+      // Determine chat context
+      let chatId;
+      if (configuringGroupId) {
+        // User is configuring for a group via deep link
+        chatId = configuringGroupId;
+      } else {
+        // Normal flow - use current chat context
+        chatId = this.normalizeChatContext(ctx);
+      }
+
       const result = await this.tokenTracker.addToken(
         contractAddress,
         user.id,
@@ -1653,6 +1846,42 @@ Simple and focused - boost your NFTs easily! 🚀`;
       logger.info(`Token addition result for user ${user.id}:`, result.success);
 
       if (result.success) {
+        // Check if this was a group configuration
+        if (configuringGroupId) {
+          const groupTitle = this.getUserSession(ctx.from.id, 'group_title');
+
+          // Clear group session after successful addition
+          this.clearUserSession(ctx.from.id, 'configuring_group');
+          this.clearUserSession(ctx.from.id, 'group_title');
+
+          const keyboard = {
+            inline_keyboard: [
+              [
+                {
+                  text: '➕ Add Another NFT',
+                  callback_data: 'add_token_start'
+                }
+              ],
+              [
+                {
+                  text: '✅ Done',
+                  callback_data: 'main_menu'
+                }
+              ]
+            ]
+          };
+
+          const groupSuccessMessage = `✅ <b>${result.token.token_name || 'NFT'}</b> added to <b>${groupTitle}</b>!\n\n👥 Group members will now receive notifications when there's activity.`;
+
+          await ctx.replyWithHTML(groupSuccessMessage, {
+            reply_markup: keyboard
+          });
+
+          logger.info(`Token ${contractAddress} added to group ${configuringGroupId} by user ${user.id}`);
+          return;
+        }
+
+        // Regular private chat flow
         const keyboard = {
           inline_keyboard: [
             [

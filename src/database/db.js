@@ -253,6 +253,16 @@ class Database {
         FOREIGN KEY (added_by_user_id) REFERENCES users (id)
       )`,
 
+      `CREATE TABLE IF NOT EXISTS group_contexts (
+        id SERIAL PRIMARY KEY,
+        group_chat_id VARCHAR(255) UNIQUE NOT NULL,
+        group_title VARCHAR(255),
+        setup_token VARCHAR(255) UNIQUE NOT NULL,
+        created_by_user_id INTEGER,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        FOREIGN KEY (created_by_user_id) REFERENCES users (id)
+      )`,
+
       `CREATE TABLE IF NOT EXISTS webhook_logs (
         id SERIAL PRIMARY KEY,
         webhook_type VARCHAR(255) NOT NULL,
@@ -1075,6 +1085,100 @@ class Database {
       logger.error('❌ Error during orphaned token cleanup:', error);
       throw error;
     }
+  }
+
+  // ============================================================================
+  // GROUP CONTEXT MANAGEMENT
+  // ============================================================================
+
+  /**
+   * Create or update group context for deep link setup
+   * @param {string} groupChatId - Group chat ID
+   * @param {string} groupTitle - Group title/name
+   * @param {string} setupToken - Unique setup token for deep link
+   * @param {number} createdByUserId - User ID who created the setup
+   * @returns {Object} Created group context record
+   */
+  async createGroupContext(groupChatId, groupTitle, setupToken, createdByUserId) {
+    const sql = `INSERT INTO group_contexts
+      (group_chat_id, group_title, setup_token, created_by_user_id)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (group_chat_id) DO UPDATE SET
+        setup_token = EXCLUDED.setup_token,
+        group_title = EXCLUDED.group_title,
+        created_at = NOW()
+      RETURNING id`;
+    const result = await this.query(sql, [groupChatId, groupTitle, setupToken, createdByUserId]);
+    return result.rows[0];
+  }
+
+  /**
+   * Get group context by setup token
+   * @param {string} setupToken - Setup token from deep link
+   * @returns {Object|null} Group context or null
+   */
+  async getGroupContextByToken(setupToken) {
+    const sql = `SELECT * FROM group_contexts WHERE setup_token = $1`;
+    const result = await this.query(sql, [setupToken]);
+    return result.rows[0] || null;
+  }
+
+  // ============================================================================
+  // CONTEXT-AWARE TOKEN QUERIES
+  // ============================================================================
+
+  /**
+   * Get user's tracked tokens across ALL contexts (private + all groups)
+   * @param {number} userId - User database ID
+   * @param {string|null} chainName - Optional chain filter
+   * @returns {Array} All tracked tokens with chat_id
+   */
+  async getUserTrackedTokensAllContexts(userId, chainName = null) {
+    let sql = `
+      SELECT tt.*, us.notification_enabled, us.chat_id
+      FROM tracked_tokens tt
+      JOIN user_subscriptions us ON tt.id = us.token_id
+      WHERE us.user_id = $1
+        AND tt.is_active = true
+    `;
+
+    const params = [userId];
+
+    if (chainName) {
+      sql += ` AND tt.chain_name = $2`;
+      params.push(chainName);
+    }
+
+    sql += ` ORDER BY tt.created_at DESC`;
+    return await this.all(sql, params);
+  }
+
+  /**
+   * Get user's tracked tokens in groups only
+   * @param {number} userId - User database ID
+   * @param {string|null} chainName - Optional chain filter
+   * @returns {Array} Group-tracked tokens only
+   */
+  async getUserTrackedTokensGroupsOnly(userId, chainName = null) {
+    let sql = `
+      SELECT tt.*, us.notification_enabled, us.chat_id
+      FROM tracked_tokens tt
+      JOIN user_subscriptions us ON tt.id = us.token_id
+      JOIN users u ON us.user_id = u.id
+      WHERE us.user_id = $1
+        AND tt.is_active = true
+        AND us.chat_id != u.telegram_id
+    `;
+
+    const params = [userId];
+
+    if (chainName) {
+      sql += ` AND tt.chain_name = $2`;
+      params.push(chainName);
+    }
+
+    sql += ` ORDER BY tt.created_at DESC`;
+    return await this.all(sql, params);
   }
 
   async close() {

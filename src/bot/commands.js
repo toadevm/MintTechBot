@@ -1567,7 +1567,16 @@ Simple and focused - boost your NFTs easily! 🚀`;
       if (selectedChain === 'solana') {
         validationMessage = `◎ Validating Solana NFT via Magic Eden...`;
       }
-      ctx.reply(validationMessage);
+      const validatingMsg = await ctx.reply(validationMessage);
+
+      // Auto-delete validation message after 1 minute
+      setTimeout(() => {
+        try {
+          ctx.deleteMessage(validatingMsg.message_id).catch(() => {});
+        } catch (error) {
+          // Ignore deletion errors
+        }
+      }, 60000);
 
       this.clearUserState(ctx.from.id);
       // Clear the selected chain from session data
@@ -1602,10 +1611,19 @@ Simple and focused - boost your NFTs easily! 🚀`;
           ]
         };
 
-        await ctx.replyWithMarkdown(result.message, {
+        const successMsg = await ctx.replyWithMarkdown(result.message, {
           reply_markup: keyboard
         });
         logger.info(`Token added: ${contractAddress} by user ${user.id}`);
+
+        // Auto-delete success message after 1 minute
+        setTimeout(() => {
+          try {
+            ctx.deleteMessage(successMsg.message_id).catch(() => {});
+          } catch (error) {
+            // Ignore deletion errors
+          }
+        }, 60000);
 
         // Immediately verify the token appears in user's list for better UX
         setTimeout(async () => {
@@ -1615,7 +1633,16 @@ Simple and focused - boost your NFTs easily! 🚀`;
             if (addedToken) {
               const successMessage = '✅ Verification: Token is now in your tracking list!';
               const keyboard = Markup.inlineKeyboard([[Markup.button.callback('👁️ View My NFTs', 'my_tokens')]]);
-              await ctx.replyWithHTML(successMessage, keyboard);
+              const verifyMsg = await ctx.replyWithHTML(successMessage, keyboard);
+
+              // Auto-delete verification message after 1 minute
+              setTimeout(() => {
+                try {
+                  ctx.deleteMessage(verifyMsg.message_id).catch(() => {});
+                } catch (error) {
+                  // Ignore deletion errors
+                }
+              }, 60000);
             } else {
               // Token added successfully - no warning message needed
             }

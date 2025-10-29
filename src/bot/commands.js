@@ -2099,9 +2099,7 @@ You can try again with a different transaction hash or contact support.`;
 
 🗑️ <b>${token.token_name || 'Unknown Collection'}</b> has been completely removed from tracking.
 
-📮 Contract: <code>${token.contract_address}</code>
-
-This token has been properly cleaned up with all associated data and OpenSea subscriptions.`;
+📮 Contract: <code>${token.contract_address}</code>`;
 
         await ctx.replyWithHTML(successMessage);
         logger.info(`Token completely removed via tokenTracker: ${token.contract_address} by user ${user.id}`);
@@ -3060,7 +3058,9 @@ You will no longer receive notifications for this NFT in this chat context.`;
 
       for (const [chainName, chainTokens] of Object.entries(tokensByChain)) {
         const chainConfig = this.chainManager ? this.chainManager.getChain(chainName) : null;
-        const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : chainName;
+        // Use custom emoji if available
+        const chainEmoji = this.chainManager ? this.chainManager.getChainEmoji(chainName) : '🔗';
+        const chainDisplay = chainConfig ? `${chainEmoji} ${chainConfig.displayName}` : chainName;
 
         message += `🔗 <b>${chainDisplay}</b> (${chainTokens.length})\n`;
 
@@ -3933,7 +3933,9 @@ Select trending duration:`;
 
       for (const [chainName, chainTokens] of Object.entries(tokensByChain)) {
         const chainConfig = this.chainManager ? this.chainManager.getChain(chainName) : null;
-        const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : chainName;
+        // Use custom emoji if available
+        const chainEmoji = this.chainManager ? this.chainManager.getChainEmoji(chainName) : '🔗';
+        const chainDisplay = chainConfig ? `${chainEmoji} ${chainConfig.displayName}` : chainName;
 
         message += `🔗 <b>${chainDisplay}</b> (${chainTokens.length})\n`;
 

@@ -33,6 +33,7 @@ class ChainManager {
           displayName: 'Ethereum',
           currencySymbol: 'ETH',
           emoji: '🔷',
+          customEmojiId: '5368324170671202286', // Premium Ethereum emoji
           isTestnet: false,
           isActive: true,
           openSeaSupported: true,
@@ -257,6 +258,25 @@ class ChainManager {
 
   getBitcoinChains() {
     return Array.from(this.chains.values()).filter(chain => chain.isBitcoin);
+  }
+
+  /**
+   * Get formatted emoji for a chain (custom or fallback)
+   * @param {string} chainName - Chain name
+   * @param {boolean} useCustom - Use custom emoji if available (default: true)
+   * @returns {string} Formatted emoji string
+   */
+  getChainEmoji(chainName, useCustom = true) {
+    const chain = this.getChain(chainName);
+    if (!chain) return '🔗';
+
+    // If custom emoji is available and requested, return formatted custom emoji
+    if (useCustom && chain.customEmojiId) {
+      return `<tg-emoji id="${chain.customEmojiId}">${chain.emoji}</tg-emoji>`;
+    }
+
+    // Otherwise return regular emoji
+    return chain.emoji;
   }
 
   // User chain preference methods

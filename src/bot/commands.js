@@ -2388,9 +2388,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
 
   // Menu Navigation Functions
   async showMainMenu(ctx) {
-    const welcomeMessage = `🚀 <b>Minty Rush Main Menu</b> 🚀
-
-<b>Choose a category to get started:</b>`;
+    const welcomeMessage = helpers.formatWelcomeMessage();
     const keyboard = helpers.buildMainMenuKeyboard();
 
     // Check if this is called from a start command (deep link) or callback query

@@ -506,23 +506,9 @@ Choose your trending boost option:`;
           }]);
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
 
-          try {
-            await ctx.editMessageText(
-              '🔗 <b>Select Blockchain Network</b>\n\nChoose the blockchain where your NFT collection exists:',
-              {
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: chainKeyboard }
-              }
-            );
-          } catch (error) {
-            await ctx.reply(
-              '🔗 <b>Select Blockchain Network</b>\n\nChoose the blockchain where your NFT collection exists:',
-              {
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: chainKeyboard }
-              }
-            );
-          }
+          const message = '🔗 <b>Select Blockchain Network</b>\n\nChoose the blockchain where your NFT collection exists:';
+          const keyboard = Markup.inlineKeyboard(chainKeyboard);
+          await this.sendOrEditMenu(ctx, message, keyboard);
           return;
         }
         if (data === 'boost_trending') {
@@ -632,11 +618,7 @@ Choose your trending boost option:`;
               [Markup.button.callback('◀️ Back to Chain Selection', 'back_to_chain_selection')]
             ]);
 
-            try {
-              return ctx.editMessageText(message, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
-            } catch (error) {
-              return ctx.replyWithHTML(message, keyboard);
-            }
+            return this.sendOrEditMenu(ctx, message, keyboard);
 
           } else if (userState === this.STATE_EXPECTING_CHAIN_FOR_VIEW) {
             // User selected chain for viewing tokens

@@ -1322,6 +1322,17 @@ Choose your trending boost option:`;
         }
 
 
+        // Handle context-aware removal (from All Contexts or Groups Only views)
+        if (data.startsWith('remove_ctx_')) {
+          await ctx.answerCbQuery();
+          // Format: remove_ctx_${tokenId}_${chatId}
+          const parts = data.replace('remove_ctx_', '').split('_');
+          const tokenId = parts[0];
+          const chatId = parts.slice(1).join('_'); // Handle negative chat IDs with underscores
+          await this.handleRemoveToken(ctx, tokenId, chatId);
+          return;
+        }
+
         if (data.startsWith('remove_')) {
           const tokenId = data.replace('remove_', '');
           await ctx.answerCbQuery();
@@ -1777,12 +1788,10 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
       logger.info(`[GROUP_START] Deep link created: ${deepLink}`);
 
-      const message = `🎉 <b>Welcome to MintyRush NFT Tracker!</b>
+      const message = `🎉 <b>Welcome to MintyRush!</b>
 
-To configure NFT tracking for "<b>${groupTitle}</b>":
-👉 <a href="${deepLink}">Click here to set up privately</a>
-
-Once configured, all group members will receive NFT notifications here.`;
+To configure bot for <b>${groupTitle}</b>
+👉 <a href="${deepLink}">Click here</a>`;
 
       await ctx.replyWithHTML(message, { disable_web_page_preview: true });
       logger.info(`[GROUP_START] ✅ Setup link sent to group ${groupId}`);
@@ -2276,14 +2285,15 @@ You can try again with a different transaction hash or contact support.`;
     }
   }
 
-  async handleRemoveToken(ctx, tokenId) {
+  async handleRemoveToken(ctx, tokenId, chatId = null) {
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
         return ctx.reply('❌ User not found. Please start the bot first with /startminty');
       }
 
-      const chatId = this.normalizeChatContext(ctx);
+      // Use provided chatId (from context-aware removal) or detect from current context
+      const targetChatId = chatId || this.normalizeChatContext(ctx);
 
       // Get token info for the success message
       const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = $1', [tokenId]);
@@ -2294,7 +2304,7 @@ You can try again with a different transaction hash or contact support.`;
       // Check if user has subscription in this chat context
       const subscription = await this.db.get(
         'SELECT * FROM user_subscriptions WHERE user_id = $1 AND token_id = $2 AND chat_id = $3',
-        [user.id, tokenId, chatId]
+        [user.id, tokenId, targetChatId]
       );
 
       if (!subscription) {
@@ -2302,8 +2312,8 @@ You can try again with a different transaction hash or contact support.`;
       }
 
       // Remove subscription from this specific chat context
-      const unsubscribeResult = await this.db.unsubscribeUserFromToken(user.id, tokenId, chatId);
-      logger.info(`🔄 REMOVE_TOKEN DEBUG: Unsubscribed user ${user.id} from token ${tokenId} in chat ${chatId}, removed ${unsubscribeResult.changes} subscription(s)`);
+      const unsubscribeResult = await this.db.unsubscribeUserFromToken(user.id, tokenId, targetChatId);
+      logger.info(`🔄 REMOVE_TOKEN DEBUG: Unsubscribed user ${user.id} from token ${tokenId} in chat ${targetChatId}, removed ${unsubscribeResult.changes} subscription(s)`);
 
       // Check if there are any remaining subscriptions for this NFT
       const remainingSubscriptions = await this.db.all(
@@ -2331,7 +2341,7 @@ You can try again with a different transaction hash or contact support.`;
           return ctx.reply('❌ Error completing token removal. Please try again.');
         }
 
-        const contextName = chatId === 'private' ? 'private messages' : `group chat (${chatId})`;
+        const contextName = targetChatId === 'private' ? 'private messages' : `group chat (${targetChatId})`;
         const successMessage = `✅ <b>Token Removed Successfully</b>
 
 🗑️ <b>${token.token_name || 'Unknown Collection'}</b> has been completely removed from tracking.
@@ -2347,7 +2357,7 @@ This token has been properly cleaned up with all associated data and OpenSea sub
         logger.info(`🔄 REMOVE_TOKEN DEBUG: NOT calling tokenTracker.removeToken() - token still has ${subscriptionCount} remaining subscriptions`);
       }
 
-      const contextName = chatId === 'private' ? 'private messages' : `group chat (${chatId})`;
+      const contextName = targetChatId === 'private' ? 'private messages' : `group chat (${targetChatId})`;
       const successMessage = `✅ <b>Token Removed Successfully</b>
 
 🗑️ <b>${token.token_name || 'Unknown Collection'}</b> has been removed from your tracking list in ${contextName}.
@@ -2357,7 +2367,7 @@ This token has been properly cleaned up with all associated data and OpenSea sub
 You will no longer receive notifications for this NFT in this chat context.`;
 
       await ctx.replyWithHTML(successMessage);
-      logger.info(`Token subscription removed: ${token.contract_address} by user ${user.id} in chat ${chatId}`);
+      logger.info(`Token subscription removed: ${token.contract_address} by user ${user.id} in chat ${targetChatId}`);
 
     } catch (error) {
       logger.error('Error removing token:', error);

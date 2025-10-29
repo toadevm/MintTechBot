@@ -2609,7 +2609,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
       this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TICKER);
       this.userStates.set(ctx.from.id.toString() + '_validation_type', 'footer');
 
-      return ctx.replyWithHTML(message, keyboard);
+      return this.sendOrEditMenu(ctx, message, keyboard);
     } catch (error) {
       logger.error('Error showing footer ticker input:', error);
       ctx.reply('❌ Error showing ticker input. Please try again.');
@@ -3803,14 +3803,7 @@ Select trending duration:`;
       // Set user state (preserve existing session with chain)
       this.setUserState(ctx.from.id, this.STATE_FOOTER_DURATION_SELECT);
 
-      try {
-        await ctx.editMessageText(message, {
-          parse_mode: 'HTML',
-          reply_markup: keyboard.reply_markup
-        });
-      } catch (error) {
-        await ctx.replyWithHTML(message, keyboard);
-      }
+      await this.sendOrEditMenu(ctx, message, keyboard);
     } catch (error) {
       logger.error('Error showing footer duration selection:', error);
       ctx.reply('❌ Error showing duration options. Please try again.');
@@ -3877,7 +3870,7 @@ Select trending duration:`;
       const stateKey = paymentType === 'image' ? this.STATE_IMAGE_CHAIN_SELECT : this.STATE_FOOTER_CHAIN_SELECT;
       this.setUserState(ctx.from.id, stateKey);
 
-      await ctx.replyWithHTML(message, keyboard);
+      await this.sendOrEditMenu(ctx, message, keyboard);
     } catch (error) {
       logger.error('Error showing chain selection:', error);
       ctx.reply('❌ Error showing chain selection. Please try again.');
@@ -3924,7 +3917,7 @@ Select trending duration:`;
       const stateKey = paymentType === 'image' ? this.STATE_IMAGE_CONTRACT_INPUT : this.STATE_FOOTER_CONTRACT_INPUT;
       this.setUserState(ctx.from.id, stateKey);
 
-      await ctx.replyWithHTML(message, keyboard);
+      await this.sendOrEditMenu(ctx, message, keyboard);
     } catch (error) {
       logger.error('Error showing contract input:', error);
       ctx.reply('❌ Error showing contract input. Please try again.');
@@ -4028,7 +4021,7 @@ Select trending duration:`;
       ]);
 
       this.setUserState(ctx.from.id, this.STATE_FOOTER_LINK_INPUT);
-      await ctx.replyWithHTML(message, keyboard);
+      await this.sendOrEditMenu(ctx, message, keyboard);
     } catch (error) {
       logger.error('Error showing link input:', error);
       ctx.reply('❌ Error showing link input. Please try again.');
@@ -4051,7 +4044,7 @@ Select trending duration:`;
       ]);
 
       this.setUserState(ctx.from.id, this.STATE_FOOTER_TICKER_INPUT);
-      await ctx.replyWithHTML(message, keyboard);
+      await this.sendOrEditMenu(ctx, message, keyboard);
     } catch (error) {
       logger.error('Error showing ticker input:', error);
       ctx.reply('❌ Error showing ticker input. Please try again.');

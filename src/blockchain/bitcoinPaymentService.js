@@ -1,5 +1,15 @@
 const axios = require('axios');
 const logger = require('../services/logger');
+const addresses = require('../config/addresses');
+const {
+  convertBTCToSats,
+  convertSatsToBTC,
+  formatBTC,
+  shortenHash,
+  isValidBitcoinAddress,
+  getBitcoinExplorerUrl,
+  handleApiError
+} = require('./utils');
 
 /**
  * Bitcoin Payment Verification Service
@@ -13,8 +23,8 @@ const logger = require('../services/logger');
  */
 class BitcoinPaymentService {
   constructor(paymentAddress = null) {
-    // Your BTC payment receiver address
-    this.paymentAddress = paymentAddress || process.env.BITCOIN_PAYMENT_ADDRESS;
+    // Your BTC payment receiver address (from centralized config)
+    this.paymentAddress = paymentAddress || addresses.bitcoin.paymentWallet;
 
     // Blockstream API (free, reliable)
     this.apiUrl = 'https://blockstream.info/api';
@@ -210,21 +220,21 @@ class BitcoinPaymentService {
   }
 
   /**
-   * Convert BTC to satoshis
+   * Convert BTC to satoshis (delegates to shared utility)
    * @param {number} btc - Amount in BTC
    * @returns {number} Amount in satoshis
    */
   convertBTCToSats(btc) {
-    return Math.round(btc * this.SATS_PER_BTC);
+    return convertBTCToSats(btc);
   }
 
   /**
-   * Convert satoshis to BTC
+   * Convert satoshis to BTC (delegates to shared utility)
    * @param {number} sats - Amount in satoshis
    * @returns {number} Amount in BTC
    */
   convertSatsToBTC(sats) {
-    return sats / this.SATS_PER_BTC;
+    return convertSatsToBTC(sats);
   }
 
   /**
@@ -267,52 +277,48 @@ class BitcoinPaymentService {
   }
 
   /**
-   * Format transaction ID for display (shortened)
+   * Format transaction ID for display (shortened) - delegates to shared utility
    * @param {string} txid - Full transaction ID
    * @returns {string} Shortened txid
    */
   shortenTxid(txid) {
-    if (!txid || txid.length < 16) return txid;
-    return `${txid.slice(0, 8)}...${txid.slice(-8)}`;
+    return shortenHash(txid);
   }
 
   /**
-   * Get Blockstream Explorer URL for transaction
+   * Get Blockstream Explorer URL for transaction - delegates to shared utility
    * @param {string} txid - Transaction ID
    * @returns {string} Explorer URL
    */
   getExplorerUrl(txid) {
-    return `https://blockstream.info/tx/${txid}`;
+    return getBitcoinExplorerUrl(txid, 'blockstream');
   }
 
   /**
-   * Get Blockchain.com Explorer URL for transaction (alternative)
+   * Get Blockchain.com Explorer URL for transaction (alternative) - delegates to shared utility
    * @param {string} txid - Transaction ID
    * @returns {string} Blockchain.com URL
    */
   getBlockchainComUrl(txid) {
-    return `https://www.blockchain.com/btc/tx/${txid}`;
+    return getBitcoinExplorerUrl(txid, 'blockchain');
   }
 
   /**
-   * Get Mempool.space Explorer URL for transaction (alternative)
+   * Get Mempool.space Explorer URL for transaction (alternative) - delegates to shared utility
    * @param {string} txid - Transaction ID
    * @returns {string} Mempool.space URL
    */
   getMempoolSpaceUrl(txid) {
-    return `https://mempool.space/tx/${txid}`;
+    return getBitcoinExplorerUrl(txid, 'mempool');
   }
 
   /**
-   * Validate address format
+   * Validate address format - delegates to shared utility
    * @param {string} address - Bitcoin address
    * @returns {boolean} True if valid format
    */
   isValidAddress(address) {
-    // Basic validation for Bitcoin addresses
-    // bc1 (bech32), 1 (P2PKH), 3 (P2SH)
-    const regex = /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,87}$/;
-    return regex.test(address);
+    return isValidBitcoinAddress(address);
   }
 }
 

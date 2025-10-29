@@ -1,5 +1,10 @@
 const axios = require('axios');
 const logger = require('../services/logger');
+const {
+  formatBTC,
+  convertBTCToSats,
+  handleApiError
+} = require('./utils');
 
 class MagicEdenOrdinalsService {
   constructor() {
@@ -239,31 +244,21 @@ class MagicEdenOrdinalsService {
   }
 
   /**
-   * Format satoshis to BTC with proper decimals
+   * Format satoshis to BTC with proper decimals - delegates to shared utility
    * @param {number} satoshis - Amount in satoshis
    * @returns {string} Formatted BTC amount
    */
   formatSatsToBTC(satoshis) {
-    if (!satoshis || satoshis === 0) return '0 BTC';
-
-    const btc = satoshis / 100000000; // 1 BTC = 100,000,000 satoshis
-
-    if (btc >= 1) {
-      return `${btc.toFixed(4)} BTC`;
-    } else if (btc >= 0.001) {
-      return `${btc.toFixed(6)} BTC`;
-    } else {
-      return `${btc.toFixed(8)} BTC`;
-    }
+    return formatBTC(satoshis);
   }
 
   /**
-   * Convert BTC to satoshis
+   * Convert BTC to satoshis - delegates to shared utility
    * @param {number} btc - Amount in BTC
    * @returns {number} Amount in satoshis
    */
   convertBTCToSats(btc) {
-    return Math.round(btc * 100000000);
+    return convertBTCToSats(btc);
   }
 
   /**

@@ -775,41 +775,40 @@ class Database {
     return result && result.count > 0;
   }
 
+  // Generic helper for checking active features by contract address
+  async _hasActiveFeature(tableName, contractAddress, useJoin = false) {
+    let sql;
+    if (useJoin) {
+      // For tables that need to join with tracked_tokens (e.g., trending_payments)
+      sql = `
+        SELECT COUNT(*) as count
+        FROM ${tableName} feature
+        JOIN tracked_tokens tt ON feature.token_id = tt.id
+        WHERE LOWER(tt.contract_address) = LOWER($1)
+        AND feature.is_active = true AND feature.end_time > NOW()
+      `;
+    } else {
+      // For tables that have contract_address directly
+      sql = `
+        SELECT COUNT(*) as count
+        FROM ${tableName}
+        WHERE LOWER(contract_address) = LOWER($1)
+        AND is_active = true AND end_time > NOW()
+      `;
+    }
+    const result = await this.get(sql, [contractAddress]);
+    return result && result.count > 0;
+  }
+
   async hasActivePremiumFeatures(contractAddress) {
-    // Check for active trending payments
-    const trendingResult = await this.get(`
-      SELECT COUNT(*) as count
-      FROM trending_payments tp
-      JOIN tracked_tokens tt ON tp.token_id = tt.id
-      WHERE LOWER(tt.contract_address) = LOWER($1)
-      AND tp.is_active = true AND tp.end_time > NOW()
-    `, [contractAddress]);
+    // Check all premium features in parallel for efficiency
+    const [hasTrending, hasImage, hasFooter] = await Promise.all([
+      this._hasActiveFeature('trending_payments', contractAddress, true),
+      this._hasActiveFeature('image_fee_payments', contractAddress, false),
+      this._hasActiveFeature('footer_ads', contractAddress, false)
+    ]);
 
-    if (trendingResult && trendingResult.count > 0) {
-      return true;
-    }
-
-    // Check for active image fee payments
-    const imageResult = await this.get(`
-      SELECT COUNT(*) as count
-      FROM image_fee_payments
-      WHERE LOWER(contract_address) = LOWER($1)
-      AND is_active = true AND end_time > NOW()
-    `, [contractAddress]);
-
-    if (imageResult && imageResult.count > 0) {
-      return true;
-    }
-
-    // Check for active footer ads
-    const footerResult = await this.get(`
-      SELECT COUNT(*) as count
-      FROM footer_ads
-      WHERE LOWER(contract_address) = LOWER($1)
-      AND is_active = true AND end_time > NOW()
-    `, [contractAddress]);
-
-    return footerResult && footerResult.count > 0;
+    return hasTrending || hasImage || hasFooter;
   }
 
   async createPendingPayment(userId, tokenId, expectedAmount, durationHours, chain = 'ethereum') {
@@ -896,12 +895,17 @@ class Database {
     return await this.all(sql);
   }
 
-  async expireTrendingPayments() {
-    const sql = `UPDATE trending_payments
+  // Generic helper method for expiring premium features
+  async _expireFeature(tableName) {
+    const sql = `UPDATE ${tableName}
                  SET is_active = false
                  WHERE is_active = true AND end_time <= NOW()`;
     const result = await this.query(sql);
     return { changes: result.rowCount };
+  }
+
+  async expireTrendingPayments() {
+    return await this._expireFeature('trending_payments');
   }
 
   async logNFTActivity(activityData) {
@@ -957,29 +961,26 @@ class Database {
     return { id: result.rows[0]?.id };
   }
 
-  async isImageFeeActive(contractAddress) {
-    const sql = `SELECT * FROM image_fee_payments
-                 WHERE LOWER(contract_address) = LOWER($1)
-                 AND is_active = true AND end_time > NOW()
-                 ORDER BY created_at DESC LIMIT 1`;
-    const result = await this.get(sql, [contractAddress]);
-    return !!result;
-  }
-
-  async getImageFeePayment(contractAddress) {
-    const sql = `SELECT * FROM image_fee_payments
+  // Generic helper for retrieving active feature by contract address
+  async _getActiveFeature(tableName, contractAddress) {
+    const sql = `SELECT * FROM ${tableName}
                  WHERE LOWER(contract_address) = LOWER($1)
                  AND is_active = true AND end_time > NOW()
                  ORDER BY created_at DESC LIMIT 1`;
     return await this.get(sql, [contractAddress]);
   }
 
+  async isImageFeeActive(contractAddress) {
+    const result = await this._getActiveFeature('image_fee_payments', contractAddress);
+    return !!result;
+  }
+
+  async getImageFeePayment(contractAddress) {
+    return await this._getActiveFeature('image_fee_payments', contractAddress);
+  }
+
   async expireImageFeePayments() {
-    const sql = `UPDATE image_fee_payments
-                 SET is_active = false
-                 WHERE is_active = true AND end_time <= NOW()`;
-    const result = await this.query(sql);
-    return { changes: result.rowCount };
+    return await this._expireFeature('image_fee_payments');
   }
 
   async addFooterAd(userId, contractAddress, tokenSymbol, customLink, paymentAmount, transactionHash, payerAddress, durationDays = 30, tickerSymbol = null) {
@@ -1001,11 +1002,7 @@ class Database {
   }
 
   async getFooterAd(contractAddress) {
-    const sql = `SELECT * FROM footer_ads
-                 WHERE LOWER(contract_address) = LOWER($1)
-                 AND is_active = true AND end_time > NOW()
-                 ORDER BY created_at DESC LIMIT 1`;
-    return await this.get(sql, [contractAddress]);
+    return await this._getActiveFeature('footer_ads', contractAddress);
   }
 
   async getUserFooterAds(userId) {
@@ -1017,11 +1014,7 @@ class Database {
   }
 
   async expireFooterAds() {
-    const sql = `UPDATE footer_ads
-                 SET is_active = false
-                 WHERE is_active = true AND end_time <= NOW()`;
-    const result = await this.query(sql);
-    return { changes: result.rowCount };
+    return await this._expireFeature('footer_ads');
   }
 
   async cleanupOrphanedTokens() {

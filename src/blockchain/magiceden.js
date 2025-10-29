@@ -1,5 +1,10 @@
 const axios = require('axios');
 const logger = require('../services/logger');
+const {
+  formatSOL,
+  handleApiError,
+  validateCollectionSlug
+} = require('./utils');
 
 class MagicEdenService {
   constructor() {
@@ -211,30 +216,15 @@ class MagicEdenService {
   }
 
   /**
-   * Validate collection slug format
+   * Validate collection slug format - delegates to shared utility
    * @param {string} collectionSlug - Collection slug/symbol
    * @returns {Object} Validation result
    */
   validateCollectionSlug(collectionSlug) {
-    try {
-      if (!collectionSlug || typeof collectionSlug !== 'string') {
-        return { isValid: false, reason: 'Invalid collection slug format' };
-      }
-
-      // Magic Eden collection slugs are typically alphanumeric with underscores
-      if (!/^[a-zA-Z0-9_-]+$/.test(collectionSlug)) {
-        return { isValid: false, reason: 'Collection slug contains invalid characters' };
-      }
-
-      return {
-        isValid: true,
-        collectionSlug,
-        note: 'Collection slug format is valid'
-      };
-    } catch (error) {
-      logger.error(`Failed to validate collection slug ${collectionSlug}:`, error);
-      return { isValid: false, reason: error.message };
-    }
+    // Magic Eden collection slugs are alphanumeric with underscores and hyphens
+    return validateCollectionSlug(collectionSlug, {
+      pattern: /^[a-zA-Z0-9_-]+$/
+    });
   }
 
   /**
@@ -289,22 +279,12 @@ class MagicEdenService {
   }
 
   /**
-   * Format lamports to SOL with proper decimals
+   * Format lamports to SOL with proper decimals - delegates to shared utility
    * @param {number} lamports - Amount in lamports
    * @returns {string} Formatted SOL amount
    */
   formatLamportsToSol(lamports) {
-    if (!lamports || lamports === 0) return '0 SOL';
-
-    const sol = lamports / 1e9;
-
-    if (sol >= 1) {
-      return `${sol.toFixed(2)} SOL`;
-    } else if (sol >= 0.001) {
-      return `${sol.toFixed(3)} SOL`;
-    } else {
-      return `${sol.toFixed(4)} SOL`;
-    }
+    return formatSOL(lamports);
   }
 
   /**

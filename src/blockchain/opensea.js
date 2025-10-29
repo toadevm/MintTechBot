@@ -3,6 +3,11 @@ const WebSocket = require('ws');
 const { LocalStorage } = require('node-localstorage');
 const logger = require('../services/logger');
 const PriceService = require('../services/priceService');
+const {
+  isValidEthereumAddress,
+  validateCollectionSlug,
+  handleApiError
+} = require('./utils');
 
 class OpenSeaService {
   constructor() {
@@ -382,8 +387,8 @@ class OpenSeaService {
         return { isValid: false, reason: 'Invalid contract address format' };
       }
 
-      // Basic format validation for Ethereum address
-      if (!/^0x[a-fA-F0-9]{40}$/.test(contractAddress)) {
+      // Basic format validation for Ethereum address using shared utility
+      if (!isValidEthereumAddress(contractAddress)) {
         return { isValid: false, reason: 'Invalid Ethereum address format' };
       }
 
@@ -501,18 +506,18 @@ class OpenSeaService {
 
   async validateCollection(collectionSlug) {
     try {
-      // Basic validation - check if collection slug format is valid
-      if (!collectionSlug || typeof collectionSlug !== 'string') {
-        return { isValid: false, reason: 'Invalid collection slug format' };
-      }
+      // Validate using shared utility - OpenSea slugs don't allow spaces or slashes
+      const result = validateCollectionSlug(collectionSlug, {
+        allowSpaces: false,
+        allowSlashes: false
+      });
 
-      if (collectionSlug.includes(' ') || collectionSlug.includes('/')) {
-        return { isValid: false, reason: 'Collection slug contains invalid characters' };
+      if (!result.isValid) {
+        return result;
       }
 
       return {
-        isValid: true,
-        collectionSlug,
+        ...result,
         note: 'Collection slug format is valid. Real validation requires OpenSea API call.'
       };
     } catch (error) {

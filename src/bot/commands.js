@@ -1,6 +1,8 @@
 const { Markup } = require('telegraf');
 const logger = require('../services/logger');
 const { ethers } = require('ethers');
+const addresses = require('../config/addresses');
+const helpers = require('./helpers');
 
 class BotCommands {
   constructor(database, tokenTracker, trendingService, channelService, secureTrendingService = null, chainManager = null) {
@@ -76,10 +78,38 @@ class BotCommands {
 
   // Helper function to truncate address for display
   truncateAddress(address, startChars = 6, endChars = 4) {
-    if (!address || address.length <= startChars + endChars) {
-      return address;
+    return helpers.truncateAddress(address, startChars, endChars);
+  }
+
+  // Wrapper for command error handling
+  async handleCommandWithErrorWrapper(ctx, commandName, handler) {
+    try {
+      await handler();
+    } catch (error) {
+      logger.error(`Error in ${commandName}:`, error);
+      await ctx.reply('❌ An error occurred. Please try again.');
     }
-    return `${address.substring(0, startChars)}...${address.substring(address.length - endChars)}`;
+  }
+
+  // Helper to send/edit menu messages with fallback
+  async sendOrEditMenu(ctx, message, keyboard) {
+    try {
+      return await ctx.editMessageText(message, {
+        parse_mode: 'HTML',
+        reply_markup: keyboard.reply_markup
+      });
+    } catch (error) {
+      return await ctx.replyWithHTML(message, keyboard);
+    }
+  }
+
+  // Helper for callback query answers
+  async answerCallback(ctx, message = null) {
+    try {
+      await ctx.answerCbQuery(message);
+    } catch (error) {
+      logger.debug('Error answering callback query:', error.message);
+    }
   }
 
   clearUserSessionData(userId, type) {
@@ -121,21 +151,8 @@ class BotCommands {
       const user = ctx.from;
 
       await this.db.createUser(user.id.toString(), user.username, user.first_name);
-      const welcomeMessage = `🚀 <b>Welcome to Minty Rush!</b> 🚀
-
-I help you track NFT collections and get real-time alerts for:
-• New mints and transfers
-• Sales and price updates
-• Trending collections
-• Custom NFT monitoring
-
-<b>Get started by choosing from the menu below:</b>`;
-      const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('📊 Manage NFTs', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
-        [Markup.button.callback('🖼️ Display NFT Image', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
-        [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')],
-        [Markup.button.callback('❓ Help & Contact', 'help_contact')]
-      ]);
+      const welcomeMessage = helpers.formatWelcomeMessage();
+      const keyboard = helpers.buildMainMenuKeyboard();
 
       await ctx.replyWithHTML(welcomeMessage, keyboard);
       logger.info(`New user started bot: ${user.id} (${user.username})`);
@@ -156,51 +173,15 @@ I help you track NFT collections and get real-time alerts for:
       }
 
       // Default start behavior - show main menu
-      const welcomeMessage = `🚀 <b>Welcome to Minty Rush!</b> 🚀
-
-I help you track NFT collections and get real-time alerts for:
-• New mints and transfers
-• Sales and price updates
-• Trending collections
-• Custom NFT monitoring
-
-<b>Get started by choosing from the menu below:</b>`;
-      const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('📊 Manage NFTs', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
-        [Markup.button.callback('🖼️ Display NFT Image', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
-        [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')],
-        [Markup.button.callback('❓ Help & Contact', 'help_contact')]
-      ]);
+      const welcomeMessage = helpers.formatWelcomeMessage();
+      const keyboard = helpers.buildMainMenuKeyboard();
 
       await ctx.replyWithHTML(welcomeMessage, keyboard);
       logger.info(`New user started bot: ${user.id} (${user.username})`);
     });
 
     bot.help(async (ctx) => {
-      const helpMessage = `📋 <b>MintyRushBot Commands</b>
-
-🎯 <b>NFT Management:</b>
-• /add_token - Add NFT collection to track
-• /remove_token - Remove tracked NFT  
-• /my_tokens - View your tracked NFTs
-
-💰 <b>Trending &amp; Boost:</b>
-• /trending - View trending collections
-• /buy_trending - Boost NFT trending
-• /validate &lt;txhash&gt; - Validate trending payment
-• /buy_image &lt;contract&gt; - Pay fee for real NFT images
-• /validate_image &lt;contract&gt; &lt;txhash&gt; - Validate image fee
-• /buy_footer &lt;contract&gt; - Pay fee for footer advertisement
-• /validate_footer &lt;contract&gt; &lt;txhash&gt; &lt;link&gt; - Validate footer ad
-
-📺 <b>Channel Commands:</b>
-• /add_channel - Add bot to channel
-• /channel_settings - Configure channel alerts
-
-• /startminty - Welcome message
-• /help - Show this help
-
-Simple and focused - boost your NFTs easily! 🚀`;
+      const helpMessage = helpers.formatHelpMessage();
       await ctx.replyWithHTML(helpMessage);
     });
 
@@ -1265,7 +1246,7 @@ Choose your trending boost option:`;
           const chainConfig = this.chainManager ? this.chainManager.getChain(chain) : null;
           const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : chain.charAt(0).toUpperCase() + chain.slice(1);
           const currencySymbol = chainConfig ? chainConfig.currencySymbol : 'ETH';
-          const contractAddress = chainConfig ? chainConfig.paymentContract : process.env.SIMPLE_PAYMENT_CONTRACT_ADDRESS || '0x4704eaF9d285a1388c0370Bc7d05334d313f92Be';
+          const contractAddress = chainConfig ? chainConfig.paymentContract : addresses.ethereum.paymentContract;
 
           const message = `📝 **Submit Transaction Hash**
 
@@ -2012,23 +1993,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
     }
   }
 
-  async showMainMenu(ctx) {
-    const keyboard = [
-      [Markup.button.callback('🔥 View Trending', 'view_trending')],
-      [Markup.button.callback('➕ Add NFT', 'add_token_start')],
-      [Markup.button.callback('📊 My Tokens', 'my_tokens')],
-      [Markup.button.callback('🚀 Boost Token', 'promote_token')]
-    ];
-
-    const message = `🚀 *Minty Rush Main Menu*
-
-Choose an option:`;
-
-    return ctx.reply(message, {
-      parse_mode: 'Markdown',
-      reply_markup: Markup.inlineKeyboard(keyboard)
-    });
-  }
+  // Duplicate showMainMenu removed - using the complete version at line 2047
 
   async showPaymentInstructions(ctx, tokenId, duration, isPremium = false, chain = 'ethereum') {
     try {
@@ -2046,7 +2011,7 @@ Choose an option:`;
       const chainConfig = this.chainManager ? this.chainManager.getChain(chain) : null;
       const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : chain.charAt(0).toUpperCase() + chain.slice(1);
       const currencySymbol = chainConfig ? chainConfig.currencySymbol : 'ETH';
-      const paymentContract = chainConfig ? chainConfig.paymentContract : process.env.SIMPLE_PAYMENT_CONTRACT_ADDRESS || '0x4704eaF9d285a1388c0370Bc7d05334d313f92Be';
+      const paymentContract = chainConfig ? chainConfig.paymentContract : addresses.ethereum.paymentContract;
       const truncatedAddress = this.truncateAddress(paymentContract);
 
       // Use secure trending service with fallback to old service
@@ -2098,11 +2063,7 @@ Choose an option:`;
     const welcomeMessage = `🚀 <b>Minty Rush Main Menu</b> 🚀
 
 <b>Choose a category to get started:</b>`;
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('📊 Manage NFTs', 'menu_tokens'), Markup.button.callback('🔥 Trending & Boost', 'menu_trending')],
-      [Markup.button.callback('🖼️ Display NFT Image', 'menu_images'), Markup.button.callback('🔗 Buy Footer Ads', 'menu_footer')],
-      [Markup.button.callback('📺 Channel Settings', 'menu_channels'), Markup.button.callback('✅ Verify Payments', 'menu_verify')]
-    ]);
+    const keyboard = helpers.buildMainMenuKeyboard();
 
     // Check if this is called from a start command (deep link) or callback query
     // If it's from start command, there's no message to edit, so use reply directly
@@ -2131,14 +2092,7 @@ Choose an option:`;
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
-    try {
-      return ctx.editMessageText(message, {
-        parse_mode: 'HTML',
-        reply_markup: keyboard.reply_markup
-      });
-    } catch (error) {
-      return ctx.replyWithHTML(message, keyboard);
-    }
+    return this.sendOrEditMenu(ctx, message, keyboard);
   }
 
   async showTrendingMenu(ctx) {
@@ -2162,14 +2116,7 @@ Choose an option:`;
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
-    try {
-      return ctx.editMessageText(message, {
-        parse_mode: 'HTML',
-        reply_markup: keyboard.reply_markup
-      });
-    } catch (error) {
-      return ctx.replyWithHTML(message, keyboard);
-    }
+    return this.sendOrEditMenu(ctx, message, keyboard);
   }
 
   async showImageTokenSelection(ctx) {
@@ -2426,20 +2373,11 @@ Choose an option:`;
     ]);
 
     // Check if this is called from a start command (deep link) or callback query
-    // If it's from start command, there's no message to edit, so use reply directly
     if (ctx.startPayload || !ctx.callbackQuery) {
       return ctx.replyWithHTML(message, keyboard);
     }
 
-    // Otherwise, try to edit the existing message
-    try {
-      return ctx.editMessageText(message, {
-        parse_mode: 'HTML',
-        reply_markup: keyboard.reply_markup
-      });
-    } catch (error) {
-      return ctx.replyWithHTML(message, keyboard);
-    }
+    return this.sendOrEditMenu(ctx, message, keyboard);
   }
 
   async showChannelsMenu(ctx) {
@@ -2452,14 +2390,7 @@ Choose an option:`;
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
     ]);
 
-    try {
-      return ctx.editMessageText(message, {
-        parse_mode: 'HTML',
-        reply_markup: keyboard.reply_markup
-      });
-    } catch (error) {
-      return ctx.replyWithHTML(message, keyboard);
-    }
+    return this.sendOrEditMenu(ctx, message, keyboard);
   }
 
   async showVerifyMenu(ctx) {

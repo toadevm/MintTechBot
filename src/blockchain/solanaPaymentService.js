@@ -1,5 +1,12 @@
 const { Connection, PublicKey, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const logger = require('../services/logger');
+const addresses = require('../config/addresses');
+const {
+  convertSolToLamports,
+  convertLamportsToSol,
+  shortenHash,
+  getSolanaExplorerUrl
+} = require('./utils');
 
 /**
  * Solana Payment Verification Service
@@ -16,8 +23,8 @@ class SolanaPaymentService {
     // Use Helius RPC if available, otherwise public RPC
     this.rpcUrl = rpcUrl || process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 
-    // Your SOL payment receiver address
-    this.paymentAddress = paymentAddress || '5dBMD7r6UrS6FA7oNLMEn5isMdXYnZqWb9kxUp3kUSzm';
+    // Your SOL payment receiver address (from centralized config)
+    this.paymentAddress = paymentAddress || addresses.solana.paymentWallet;
 
     // Initialize Solana connection
     this.connection = null;
@@ -163,21 +170,21 @@ class SolanaPaymentService {
   }
 
   /**
-   * Convert SOL to lamports
+   * Convert SOL to lamports - delegates to shared utility
    * @param {number} sol - Amount in SOL
    * @returns {number} Amount in lamports
    */
   convertSolToLamports(sol) {
-    return Math.round(sol * LAMPORTS_PER_SOL);
+    return convertSolToLamports(sol);
   }
 
   /**
-   * Convert lamports to SOL
+   * Convert lamports to SOL - delegates to shared utility
    * @param {number} lamports - Amount in lamports
    * @returns {number} Amount in SOL
    */
   convertLamportsToSol(lamports) {
-    return lamports / LAMPORTS_PER_SOL;
+    return convertLamportsToSol(lamports);
   }
 
   /**
@@ -212,32 +219,31 @@ class SolanaPaymentService {
   }
 
   /**
-   * Format transaction signature for display (shortened)
+   * Format transaction signature for display (shortened) - delegates to shared utility
    * @param {string} signature - Full transaction signature
    * @returns {string} Shortened signature
    */
   shortenSignature(signature) {
-    if (!signature || signature.length < 16) return signature;
-    return `${signature.slice(0, 8)}...${signature.slice(-8)}`;
+    return shortenHash(signature);
   }
 
   /**
-   * Get Solana Explorer URL for transaction
+   * Get Solana Explorer URL for transaction - delegates to shared utility
    * @param {string} signature - Transaction signature
    * @param {string} cluster - Network cluster (mainnet-beta, devnet, testnet)
    * @returns {string} Explorer URL
    */
   getExplorerUrl(signature, cluster = 'mainnet-beta') {
-    return `https://explorer.solana.com/tx/${signature}${cluster !== 'mainnet-beta' ? `?cluster=${cluster}` : ''}`;
+    return getSolanaExplorerUrl(signature, 'solana', cluster);
   }
 
   /**
-   * Get Solscan URL for transaction (alternative explorer)
+   * Get Solscan URL for transaction (alternative explorer) - delegates to shared utility
    * @param {string} signature - Transaction signature
    * @returns {string} Solscan URL
    */
   getSolscanUrl(signature) {
-    return `https://solscan.io/tx/${signature}`;
+    return getSolanaExplorerUrl(signature, 'solscan');
   }
 }
 

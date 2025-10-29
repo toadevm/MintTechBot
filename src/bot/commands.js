@@ -145,6 +145,56 @@ class BotCommands {
     return chatId;
   }
 
+  /**
+   * Check if bot should respond to a message in a group
+   * Bot responds in groups only when:
+   * 1. Message is a reply to the bot's message
+   * 2. Message mentions/tags the bot (@botname)
+   * @param {Object} ctx - Telegram context
+   * @returns {boolean} True if bot should respond, false if should ignore
+   */
+  shouldRespondInGroup(ctx) {
+    // If message is a reply to the bot's message, respond
+    if (ctx.message.reply_to_message && ctx.message.reply_to_message.from.is_bot) {
+      logger.debug(`Group message is reply to bot - will respond`);
+      return true;
+    }
+
+    // Check if bot is mentioned in the message
+    if (ctx.message.entities) {
+      const botUsername = ctx.botInfo.username;
+
+      for (const entity of ctx.message.entities) {
+        // Check for mention entity type
+        if (entity.type === 'mention') {
+          const mention = ctx.message.text.substring(entity.offset, entity.offset + entity.length);
+          if (mention === `@${botUsername}`) {
+            logger.debug(`Group message mentions bot @${botUsername} - will respond`);
+            return true;
+          }
+        }
+
+        // Check for text_mention entity type (for users without username)
+        if (entity.type === 'text_mention' && entity.user && entity.user.is_bot) {
+          logger.debug(`Group message has text_mention of bot - will respond`);
+          return true;
+        }
+      }
+    }
+
+    // Also check message text for @botname (fallback)
+    if (ctx.message.text && ctx.botInfo && ctx.botInfo.username) {
+      const botUsername = ctx.botInfo.username;
+      if (ctx.message.text.includes(`@${botUsername}`)) {
+        logger.debug(`Group message contains @${botUsername} - will respond`);
+        return true;
+      }
+    }
+
+    logger.debug(`Group message has no reply/mention - will ignore`);
+    return false;
+  }
+
   async setupCommands(bot) {
 
     bot.command('startminty', async (ctx) => {
@@ -1338,6 +1388,15 @@ Choose your trending boost option:`;
       const userId = ctx.from.id;
       const userState = this.getUserState(userId);
 
+      // In groups/supergroups, only respond to replies or mentions
+      const chatType = ctx.chat.type;
+      if (chatType === 'group' || chatType === 'supergroup') {
+        if (!this.shouldRespondInGroup(ctx)) {
+          // Silently ignore messages that aren't replies or mentions
+          return;
+        }
+      }
+
       // Handle cancel command first
       if (text.toLowerCase() === 'cancel' || text.toLowerCase() === '/cancel') {
         this.clearUserState(userId);
@@ -1435,10 +1494,10 @@ Choose your trending boost option:`;
         if (text.startsWith('/')) {
 
           command = text.split(' ')[0].replace('/', '');
-        } else if (text.includes('@testcandybot')) {
+        } else if (ctx.botInfo && ctx.botInfo.username && text.includes(`@${ctx.botInfo.username}`)) {
 
           const parts = text.split(' ');
-          const mentionedCommand = parts.find(part => part.includes('@testcandybot'));
+          const mentionedCommand = parts.find(part => part.includes(`@${ctx.botInfo.username}`));
           if (mentionedCommand && mentionedCommand.startsWith('/')) {
             command = mentionedCommand.split('@')[0].replace('/', '');
           }

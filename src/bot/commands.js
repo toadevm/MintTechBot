@@ -197,12 +197,19 @@ class BotCommands {
    * Check if user is admin in a group
    * @param {number} userId - User's Telegram ID
    * @param {string} groupChatId - Group chat ID
+   * @param {Object} ctx - Telegram context
    * @returns {boolean} True if user is admin
    */
-  async isUserGroupAdmin(userId, groupChatId) {
+  async isUserGroupAdmin(userId, groupChatId, ctx) {
     try {
-      const admins = await this.bot.telegram.getChatAdministrators(groupChatId);
-      return admins.some(admin => admin.user.id === userId);
+      const admins = await ctx.telegram.getChatAdministrators(groupChatId);
+      logger.debug(`Checking admin status for user ${userId} in group ${groupChatId}`);
+      logger.debug(`Admins:`, admins.map(a => ({ id: a.user.id, username: a.user.username, status: a.status })));
+
+      const isAdmin = admins.some(admin => admin.user.id === userId);
+      logger.debug(`User ${userId} is admin: ${isAdmin}`);
+
+      return isAdmin;
     } catch (error) {
       logger.error('Error checking admin status:', error);
       return false;
@@ -1696,7 +1703,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
       const userId = ctx.from.id;
 
       // Check if user is admin
-      const isAdmin = await this.isUserGroupAdmin(userId, groupId);
+      const isAdmin = await this.isUserGroupAdmin(userId, groupId, ctx);
       if (!isAdmin) {
         return ctx.reply('⚠️ Only group admins can configure NFT tracking.');
       }
@@ -1747,7 +1754,7 @@ Once configured, all group members will receive NFT notifications here.`;
       const userId = ctx.from.id;
 
       // Verify user is still admin
-      const isAdmin = await this.isUserGroupAdmin(userId, groupContext.group_chat_id);
+      const isAdmin = await this.isUserGroupAdmin(userId, groupContext.group_chat_id, ctx);
       if (!isAdmin) {
         return ctx.reply('⚠️ Only group admins can configure tracking.');
       }

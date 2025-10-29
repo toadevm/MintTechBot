@@ -3026,19 +3026,22 @@ You will no longer receive notifications for this NFT in this chat context.`;
           [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')],
           [Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]
         ]);
-        try {
-          return ctx.editMessageText(
-            '🔍 You haven\'t added any tokens yet!\n\nUse the button below to start tracking NFT collections.',
-            {
+        const message = '🔍 You haven\'t added any tokens yet!\n\nUse the button below to start tracking NFT collections.';
+
+        // Check if this is a callback query (has callbackQuery) or command
+        if (ctx.callbackQuery) {
+          try {
+            return await ctx.editMessageText(message, {
               parse_mode: 'HTML',
               reply_markup: keyboard.reply_markup
-            }
-          );
-        } catch (error) {
-          return ctx.replyWithHTML(
-            '🔍 You haven\'t added any tokens yet!\n\nUse the button below to start tracking NFT collections.',
-            keyboard
-          );
+            });
+          } catch (error) {
+            // If edit fails, send new message
+            return ctx.replyWithHTML(message, keyboard);
+          }
+        } else {
+          // Direct command - send new message
+          return ctx.replyWithHTML(message, keyboard);
         }
       }
 
@@ -3084,12 +3087,18 @@ You will no longer receive notifications for this NFT in this chat context.`;
 
       keyboard.push([Markup.button.callback('➕ Add More NFTs', 'add_token_start'), Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]);
 
-      try {
-        await ctx.editMessageText(message, {
-          parse_mode: 'HTML',
-          reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
-        });
-      } catch (error) {
+      // Check if this is a callback query or command
+      if (ctx.callbackQuery) {
+        try {
+          await ctx.editMessageText(message, {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
+          });
+        } catch (error) {
+          await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+        }
+      } else {
+        // Direct command - send new message
         await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
       }
     } catch (error) {

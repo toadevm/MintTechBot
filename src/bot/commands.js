@@ -3017,7 +3017,9 @@ You will no longer receive notifications for this NFT in this chat context.`;
       }
 
       const chatId = this.normalizeChatContext(ctx);
+      logger.info(`[showMyTokens] User ${user.id}, ChatId: ${chatId}, ChatType: ${ctx.chat.type}`);
       const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
+      logger.info(`[showMyTokens] Found ${tokens.length} tokens for user ${user.id} in chat ${chatId}`);
 
       if (tokens.length === 0) {
         const keyboard = Markup.inlineKeyboard([

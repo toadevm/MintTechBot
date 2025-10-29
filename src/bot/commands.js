@@ -570,6 +570,9 @@ Choose your trending boost option:`;
         }
         if (data === 'menu_footer') {
           await ctx.answerCbQuery();
+          // Clear any footer flow state when returning to menu
+          this.clearUserState(ctx.from.id);
+          this.clearUserSession(ctx.from.id);
           return this.showFooterMenu(ctx);
         }
         if (data === 'menu_channels') {
@@ -3859,8 +3862,9 @@ Select trending duration:`;
 
       // Navigation buttons
       const backButtonText = paymentType === 'image' ? '◀️ Back to Duration Selection' : '◀️ Back to Footer Menu';
+      const backButtonCallback = paymentType === 'image' ? 'buy_image_menu' : 'menu_footer';
       chainOptions.push([
-        Markup.button.callback(backButtonText, paymentType === 'image' ? 'buy_image_menu' : 'buy_footer_menu'),
+        Markup.button.callback(backButtonText, backButtonCallback),
         Markup.button.callback('🏠 Main Menu', 'main_menu')
       ]);
 

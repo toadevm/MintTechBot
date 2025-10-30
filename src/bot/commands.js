@@ -231,12 +231,7 @@ class BotCommands {
    */
   async resolveContextLabel(chatId, ctx, userTelegramId) {
     try {
-      // Private context
-      if (chatId === userTelegramId) {
-        return 'Private';
-      }
-
-      // Group context - fetch group title
+      // Fetch group/channel title
       try {
         const chat = await ctx.telegram.getChat(chatId);
         return chat.title || 'Group';
@@ -737,31 +732,6 @@ Choose your trending boost option:`;
         }
 
         // Context selection handlers
-        if (data === 'context_select_private') {
-          await ctx.answerCbQuery();
-
-          // Clear any previous group configuration session
-          const userId = ctx.from.id.toString();
-          this.clearUserSession(userId, 'configuring_group');
-          this.clearUserSession(userId, 'group_title');
-
-          // Show chain selection
-          if (!this.chainManager) {
-            return ctx.reply('❌ Chain manager not available');
-          }
-
-          const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
-          chainKeyboard.push([{
-            text: '◀️ Back to Context Selection',
-            callback_data: 'add_token_start'
-          }]);
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
-
-          const message = '🔗 <b>Select Blockchain Network</b>\n\n📱 <b>Adding to: Private</b>\n\nChoose the blockchain where your NFT collection exists:';
-          const keyboard = Markup.inlineKeyboard(chainKeyboard);
-          return this.sendOrEditMenu(ctx, message, keyboard);
-        }
-
         if (data.startsWith('context_select_group_')) {
           await ctx.answerCbQuery();
 
@@ -2005,6 +1975,15 @@ select an option below:`;
       // Check if user selected a group context via context selection menu
       const configuringGroupId = this.getUserSession(ctx.from.id, 'configuring_group');
 
+      // Block private chat tracking - users must add tokens in groups/channels only
+      if (ctx.chat.type === 'private' && !configuringGroupId) {
+        return ctx.replyWithHTML(
+          '❌ <b>Private tracking is not available</b>\n\n' +
+          'Please add this bot to a group or channel and use the <b>Setup inside bot chat</b> button to track NFTs.\n\n' +
+          'You can still view your tracked NFTs from groups here in DM.'
+        );
+      }
+
       // Determine chat context
       const chatId = configuringGroupId || this.normalizeChatContext(ctx);
 
@@ -2577,9 +2556,6 @@ You will no longer receive notifications for this NFT in this chat context.`;
 
       // Build keyboard
       const keyboard = [];
-
-      // Always show Private option first
-      keyboard.push([Markup.button.callback('📱 Private', 'context_select_private')]);
 
       // Add group buttons (2 per row)
       for (let i = 0; i < pageGroups.length; i += 2) {
@@ -3256,14 +3232,9 @@ You will no longer receive notifications for this NFT in this chat context.`;
       grouped[contextLabel][chainName].push(token);
     });
 
-    // Sort contexts: Private first, then alphabetically
+    // Sort contexts alphabetically (groups only)
     const sortedGrouped = {};
-    if (grouped['Private']) {
-      sortedGrouped['Private'] = grouped['Private'];
-    }
-
     Object.keys(grouped)
-      .filter(key => key !== 'Private')
       .sort()
       .forEach(key => {
         sortedGrouped[key] = grouped[key];
@@ -3283,8 +3254,8 @@ You will no longer receive notifications for this NFT in this chat context.`;
     let section = '';
     const totalTokens = Object.values(chainTokens).reduce((sum, tokens) => sum + tokens.length, 0);
 
-    // Context header with emoji
-    const contextEmoji = contextLabel === 'Private' ? '📱' : '👥';
+    // Context header with emoji (groups/channels only)
+    const contextEmoji = '👥';
     section += `${contextEmoji} <b>${contextLabel}</b> (${totalTokens} token${totalTokens !== 1 ? 's' : ''})\n`;
 
     // Group by chain within this context

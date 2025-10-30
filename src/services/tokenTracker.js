@@ -189,6 +189,15 @@ class TokenTracker {
     try {
       logger.info(`Adding token ${contractAddress} for user ${userId} on chain ${chainName} with collection slug: ${collectionSlug}`);
 
+      // Block private tracking - users must add tokens in groups/channels only
+      if (chatId === telegramId) {
+        logger.warn(`Rejected private tracking attempt: user ${userId}, telegramId ${telegramId}, chatId ${chatId}`);
+        return {
+          success: false,
+          message: 'Private tracking is not available. Please add tokens in a group or channel.'
+        };
+      }
+
       // Branch logic based on chain type
       if (chainName === 'solana') {
         // Handle Solana NFT tracking

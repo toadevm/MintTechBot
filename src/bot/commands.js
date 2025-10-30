@@ -638,6 +638,26 @@ Choose your trending boost option:`;
     bot.on('callback_query', async (ctx) => {
       const data = ctx.callbackQuery.data;
       logger.info(`[CALLBACK_DEBUG] Received callback: ${data}`);
+
+      // Auto-cancel listening mode when user clicks any button
+      const userId = ctx.from.id.toString();
+      const userState = this.getUserState(ctx.from.id);
+      if (userState === this.STATE_EXPECTING_CONTRACT) {
+        // Cancel the timeout
+        const timeoutId = this.userStates.get(userId + '_listening_timeout');
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          this.userStates.delete(userId + '_listening_timeout');
+        }
+
+        // Clear all listening mode state
+        this.clearUserState(ctx.from.id);
+        this.userStates.delete(userId + '_selected_chain');
+        this.userStates.delete(userId + '_listening_chat');
+        this.userStates.delete(userId + '_chain_select_msg');
+        logger.info(`[LISTENING_MODE] Auto-cancelled for user ${ctx.from.id} - button clicked: ${data}`);
+      }
+
       try {
         if (data === 'view_trending') {
           await ctx.answerCbQuery();
@@ -887,6 +907,32 @@ Choose your trending boost option:`;
             // Store the selected chain in user session data
             this.userStates.set(ctx.from.id.toString() + '_selected_chain', chainName);
             this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);
+
+            // Enter listening mode - track chat context and set timeout
+            const userId = ctx.from.id.toString();
+            this.userStates.set(userId + '_listening_chat', ctx.chat.id);
+
+            // Set 10-minute timeout to auto-cancel listening mode
+            const timeoutId = setTimeout(() => {
+              const storedMsgId = this.userStates.get(userId + '_chain_select_msg');
+              if (storedMsgId) {
+                try {
+                  ctx.telegram.deleteMessage(ctx.chat.id, storedMsgId).catch(() => {});
+                } catch (error) {
+                  // Ignore deletion errors
+                }
+              }
+              // Clear all listening mode state
+              this.clearUserState(ctx.from.id);
+              this.userStates.delete(userId + '_selected_chain');
+              this.userStates.delete(userId + '_listening_chat');
+              this.userStates.delete(userId + '_chain_select_msg');
+              this.userStates.delete(userId + '_listening_timeout');
+              logger.info(`[LISTENING_MODE] Auto-cancelled for user ${ctx.from.id} after timeout`);
+            }, 600000); // 10 minutes
+
+            this.userStates.set(userId + '_listening_timeout', timeoutId);
+            logger.info(`[LISTENING_MODE] Activated for user ${ctx.from.id} in chat ${ctx.chat.id}`);
 
             // Customize message based on chain type
             let message;
@@ -1608,12 +1654,28 @@ Choose your trending boost option:`;
       const userId = ctx.from.id;
       const userState = this.getUserState(userId);
 
-      // In groups/supergroups, only respond to replies or mentions
+      // In groups/supergroups, check if we should respond
       const chatType = ctx.chat.type;
       if (chatType === 'group' || chatType === 'supergroup') {
-        if (!this.shouldRespondInGroup(ctx)) {
+        // Check if user is in listening mode for THIS chat
+        const isInListeningMode = userState === this.STATE_EXPECTING_CONTRACT;
+        const listeningChatId = this.userStates.get(userId + '_listening_chat');
+        const isListeningInThisChat = isInListeningMode && listeningChatId === ctx.chat.id;
+
+        // Bypass reply/mention requirement if in listening mode for this chat
+        if (!isListeningInThisChat && !this.shouldRespondInGroup(ctx)) {
           // Silently ignore messages that aren't replies or mentions
           return;
+        }
+
+        if (isListeningInThisChat) {
+          logger.info(`[LISTENING_MODE] Captured message from user ${ctx.from.id} in chat ${ctx.chat.id}`);
+        }
+      } else if (chatType === 'private') {
+        // In DMs, check if user is in listening mode (can send address in DM)
+        const isInListeningMode = userState === this.STATE_EXPECTING_CONTRACT;
+        if (isInListeningMode) {
+          logger.info(`[LISTENING_MODE] Captured message from user ${ctx.from.id} in DM`);
         }
       }
 
@@ -1678,20 +1740,7 @@ Choose your trending boost option:`;
         return;
       }
 
-      // Handle NFT addresses without specific state (fallback for add_token)
-      // EVM address pattern
-      if (text.match(/^0x[a-fA-F0-9]{40}$/)) {
-        await this.handleContractAddress(ctx, text);
-        return;
-      }
-
-      // Solana address pattern (base58, 32-44 characters)
-      if (text.match(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)) {
-        await this.handleContractAddress(ctx, text);
-        return;
-      }
-
-      // Magic Eden collection symbol or URL
+      // Magic Eden collection symbol or URL (only when in STATE_EXPECTING_CONTRACT)
       if (text.match(/^[a-zA-Z0-9_-]+$/) && text.length < 50 && this.getUserState(userId) === this.STATE_EXPECTING_CONTRACT) {
         await this.handleContractAddress(ctx, text);
         return;
@@ -1973,8 +2022,21 @@ select an option below:`;
       }, 60000);
 
       this.clearUserState(ctx.from.id);
-      // Clear the selected chain from session data
-      this.userStates.delete(ctx.from.id.toString() + '_selected_chain');
+
+      // Clear all listening mode state
+      const userId = ctx.from.id.toString();
+      this.userStates.delete(userId + '_selected_chain');
+      this.userStates.delete(userId + '_listening_chat');
+      this.userStates.delete(userId + '_chain_select_msg');
+
+      // Cancel listening mode timeout if it exists
+      const timeoutId = this.userStates.get(userId + '_listening_timeout');
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        this.userStates.delete(userId + '_listening_timeout');
+      }
+
+      logger.info(`[LISTENING_MODE] Cleared for user ${ctx.from.id} - address submitted`);
 
       // Check if user selected a group context via context selection menu
       const configuringGroupId = this.getUserSession(ctx.from.id, 'configuring_group');
@@ -2077,16 +2139,32 @@ select an option below:`;
           }
         }, 2000);
       } else {
+        // Clear all listening mode state on error
+        const userId = ctx.from.id.toString();
+
+        // Cancel timeout
+        const timeoutId = this.userStates.get(userId + '_listening_timeout');
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          this.userStates.delete(userId + '_listening_timeout');
+        }
+
         // Delete the chain selection message if it exists
-        const chainSelectMsgId = this.userStates.get(ctx.from.id.toString() + '_chain_select_msg');
+        const chainSelectMsgId = this.userStates.get(userId + '_chain_select_msg');
         if (chainSelectMsgId) {
           try {
             await ctx.deleteMessage(chainSelectMsgId).catch(() => {});
-            this.userStates.delete(ctx.from.id.toString() + '_chain_select_msg');
           } catch (error) {
             // Ignore deletion errors
           }
         }
+
+        // Clear all state
+        this.userStates.delete(userId + '_selected_chain');
+        this.userStates.delete(userId + '_listening_chat');
+        this.userStates.delete(userId + '_chain_select_msg');
+
+        logger.info(`[LISTENING_MODE] Cleared for user ${ctx.from.id} - validation failed`);
 
         await ctx.reply(`❌ ${result.message}\n\nIf you think this is a mistake, try again or contact support.`);
         logger.error(`Failed to add token ${contractAddress} for user ${user.id}: ${result.message}`);
@@ -2095,16 +2173,32 @@ select an option below:`;
       logger.error('Error handling NFT address:', error);
       this.clearUserState(ctx.from.id);
 
+      // Clear all listening mode state on exception
+      const userId = ctx.from.id.toString();
+
+      // Cancel timeout
+      const timeoutId = this.userStates.get(userId + '_listening_timeout');
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        this.userStates.delete(userId + '_listening_timeout');
+      }
+
       // Delete the chain selection message if it exists
-      const chainSelectMsgId = this.userStates.get(ctx.from.id.toString() + '_chain_select_msg');
+      const chainSelectMsgId = this.userStates.get(userId + '_chain_select_msg');
       if (chainSelectMsgId) {
         try {
           await ctx.deleteMessage(chainSelectMsgId).catch(() => {});
-          this.userStates.delete(ctx.from.id.toString() + '_chain_select_msg');
         } catch (error2) {
           // Ignore deletion errors
         }
       }
+
+      // Clear all state
+      this.userStates.delete(userId + '_selected_chain');
+      this.userStates.delete(userId + '_listening_chat');
+      this.userStates.delete(userId + '_chain_select_msg');
+
+      logger.info(`[LISTENING_MODE] Cleared for user ${ctx.from.id} - exception occurred`);
 
       ctx.reply('❌ Error adding token. Please check the NFT address and try again.');
     }

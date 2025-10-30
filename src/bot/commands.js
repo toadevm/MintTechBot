@@ -785,14 +785,7 @@ Choose your trending boost option:`;
           return this.showMainMenu(ctx);
         }
 
-        // Cancel group setup
-        if (data === 'cancel_group_setup') {
-          await ctx.answerCbQuery();
-          this.clearUserSession(ctx.from.id);
-          this.clearUserState(ctx.from.id);
-          await ctx.editMessageText('❌ Group setup cancelled. Run /startminty in the group to start again.');
-          return;
-        }
+        // Cancel group setup - removed duplicate handler, see line ~894 for current implementation
 
         // Public configuration (in-group setup)
         if (data.startsWith('public_config_')) {

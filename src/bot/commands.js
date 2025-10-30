@@ -675,22 +675,21 @@ Choose your trending boost option:`;
                 logger.info(`[ADD_TOKEN] Auto-detected group: ${groupContext.group_title} (${groupContext.group_chat_id})`);
 
                 // Show chain selection with group indicator and escape hatch
+                if (!this.chainManager) {
+                  return ctx.reply('❌ Chain manager not available');
+                }
+
                 const message = `🎯 <b>Adding NFT to:</b> ${groupContext.group_title}\n\n` +
                   `Please select the blockchain chain:`;
 
-                const keyboard = Markup.inlineKeyboard([
-                  [Markup.button.callback('⚡ Solana', 'add_token_chain_solana')],
-                  [Markup.button.callback('🟣 Polygon', 'add_token_chain_polygon')],
-                  [Markup.button.callback('🔵 Ethereum', 'add_token_chain_ethereum')],
-                  [Markup.button.callback('🔗 Base', 'add_token_chain_base')],
-                  [Markup.button.callback('🌊 Sei', 'add_token_chain_sei')],
-                  [Markup.button.callback('🟠 Arbitrum', 'add_token_chain_arbitrum')],
-                  [Markup.button.callback('🟡 Optimism', 'add_token_chain_optimism')],
-                  [Markup.button.callback('🔴 Avalanche', 'add_token_chain_avalanche')],
-                  [Markup.button.callback('🔄 Switch Group', 'switch_group_context')],
-                  [Markup.button.callback('🏠 Main Menu', 'main_menu')]
+                // Use dynamic chain manager for all chains
+                const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
+                chainKeyboard.push([
+                  { text: '🔄 Switch Group', callback_data: 'switch_group_context' },
+                  { text: '🏠 Main Menu', callback_data: 'main_menu' }
                 ]);
 
+                const keyboard = Markup.inlineKeyboard(chainKeyboard);
                 this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
                 return ctx.replyWithHTML(message, keyboard);
               } else {

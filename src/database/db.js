@@ -555,6 +555,19 @@ class Database {
     return await this.all(sql, [userId]);
   }
 
+  /**
+   * Get user's tracked tokens across ALL contexts with context info
+   * Used for DM view to show all tokens (private + all groups)
+   */
+  async getUserTrackedTokensWithContext(userId) {
+    const sql = `SELECT tt.*, us.notification_enabled, us.chat_id
+                 FROM tracked_tokens tt
+                 JOIN user_subscriptions us ON tt.id = us.token_id
+                 WHERE us.user_id = $1 AND tt.is_active = true
+                 ORDER BY us.chat_id, tt.created_at DESC`;
+    return await this.all(sql, [userId]);
+  }
+
   async subscribeUserToToken(userId, tokenId, chatId) {
     const sql = `INSERT INTO user_subscriptions (user_id, token_id, chat_id, notification_enabled)
                  VALUES ($1, $2, $3, true)

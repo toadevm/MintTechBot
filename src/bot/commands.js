@@ -217,6 +217,65 @@ class BotCommands {
   }
 
   /**
+   * Resolve chat_id to human-readable context label
+   * @param {string} chatId - Chat ID to resolve
+   * @param {Object} ctx - Telegram context
+   * @param {string} userTelegramId - User's Telegram ID
+   * @returns {Promise<string>} Context label (e.g., "Private" or "GroupName")
+   */
+  async resolveContextLabel(chatId, ctx, userTelegramId) {
+    try {
+      // Private context
+      if (chatId === userTelegramId) {
+        return 'Private';
+      }
+
+      // Group context - fetch group title
+      try {
+        const chat = await ctx.telegram.getChat(chatId);
+        return chat.title || 'Group';
+      } catch (error) {
+        logger.warn(`Failed to resolve context for chat_id ${chatId}:`, error);
+        return 'Group';
+      }
+    } catch (error) {
+      logger.error('Error resolving context label:', error);
+      return 'Unknown';
+    }
+  }
+
+  /**
+   * Resolve context labels for all tokens in parallel
+   * @param {Array} tokens - Array of tokens with chat_id
+   * @param {Object} ctx - Telegram context
+   * @param {string} userTelegramId - User's Telegram ID
+   * @returns {Promise<Array>} Tokens with contextLabel added
+   */
+  async resolveAllContexts(tokens, ctx, userTelegramId) {
+    try {
+      // Get unique chat_ids
+      const uniqueChatIds = [...new Set(tokens.map(t => t.chat_id))];
+
+      // Resolve all context labels in parallel
+      const contextMap = {};
+      await Promise.all(
+        uniqueChatIds.map(async (chatId) => {
+          contextMap[chatId] = await this.resolveContextLabel(chatId, ctx, userTelegramId);
+        })
+      );
+
+      // Add contextLabel to each token
+      return tokens.map(token => ({
+        ...token,
+        contextLabel: contextMap[token.chat_id]
+      }));
+    } catch (error) {
+      logger.error('Error resolving all contexts:', error);
+      return tokens; // Return tokens without labels on error
+    }
+  }
+
+  /**
    * Check if bot should respond to a message in a group
    * Bot responds in groups only when:
    * 1. Message is a reply to the bot's message
@@ -1306,9 +1365,15 @@ Choose your trending boost option:`;
 
 
         if (data.startsWith('remove_')) {
-          const tokenId = data.replace('remove_', '');
           await ctx.answerCbQuery();
-          await this.handleRemoveToken(ctx, tokenId);
+
+          // Parse pattern: remove_{tokenId} or remove_{tokenId}_{chatId}
+          const parts = data.replace('remove_', '').split('_');
+          const tokenId = parts[0];
+          const explicitChatId = parts.length > 1 ? parts.slice(1).join('_') : null;
+
+          logger.info(`[remove callback] tokenId: ${tokenId}, explicitChatId: ${explicitChatId}`);
+          await this.handleRemoveToken(ctx, tokenId, explicitChatId);
           return;
         }
 
@@ -1319,9 +1384,15 @@ Choose your trending boost option:`;
         }
 
         if (data.startsWith('remove_token_')) {
-          const tokenId = data.replace('remove_token_', '');
           await ctx.answerCbQuery();
-          await this.handleRemoveToken(ctx, tokenId);
+
+          // Parse pattern: remove_token_{tokenId} or remove_token_{tokenId}_{chatId}
+          const parts = data.replace('remove_token_', '').split('_');
+          const tokenId = parts[0];
+          const explicitChatId = parts.length > 1 ? parts.slice(1).join('_') : null;
+
+          logger.info(`[remove_token callback] tokenId: ${tokenId}, explicitChatId: ${explicitChatId}`);
+          await this.handleRemoveToken(ctx, tokenId, explicitChatId);
           return;
         }
 
@@ -2107,14 +2178,16 @@ You can try again with a different transaction hash or contact support.`;
     }
   }
 
-  async handleRemoveToken(ctx, tokenId) {
+  async handleRemoveToken(ctx, tokenId, explicitChatId = null) {
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
       if (!user) {
         return ctx.reply('❌ User not found. Please start the bot first with /startminty');
       }
 
-      const chatId = this.normalizeChatContext(ctx);
+      // Use explicit chatId if provided (for context-aware removal from DMs)
+      // Otherwise use current chat context
+      const chatId = explicitChatId || this.normalizeChatContext(ctx);
 
       // Get token info for the success message
       const token = await this.db.get('SELECT * FROM tracked_tokens WHERE id = $1', [tokenId]);
@@ -3071,6 +3144,168 @@ You will no longer receive notifications for this NFT in this chat context.`;
     }
   }
 
+  /**
+   * Group tokens by context, then by chain
+   * @param {Array} tokens - Tokens with contextLabel added
+   * @param {string} userTelegramId - User's Telegram ID
+   * @returns {Object} Grouped tokens: { Private: {...}, GroupName: {...} }
+   */
+  groupByContext(tokens, userTelegramId) {
+    const grouped = {};
+
+    tokens.forEach(token => {
+      const contextLabel = token.contextLabel || 'Unknown';
+
+      if (!grouped[contextLabel]) {
+        grouped[contextLabel] = {};
+      }
+
+      const chainName = token.chain_name || 'ethereum';
+      if (!grouped[contextLabel][chainName]) {
+        grouped[contextLabel][chainName] = [];
+      }
+
+      grouped[contextLabel][chainName].push(token);
+    });
+
+    // Sort contexts: Private first, then alphabetically
+    const sortedGrouped = {};
+    if (grouped['Private']) {
+      sortedGrouped['Private'] = grouped['Private'];
+    }
+
+    Object.keys(grouped)
+      .filter(key => key !== 'Private')
+      .sort()
+      .forEach(key => {
+        sortedGrouped[key] = grouped[key];
+      });
+
+    return sortedGrouped;
+  }
+
+  /**
+   * Render one context section (Private or Group)
+   * @param {string} contextLabel - Context name
+   * @param {Object} chainTokens - Tokens grouped by chain
+   * @param {Array} keyboard - Keyboard array to append buttons to
+   * @returns {string} Formatted message section
+   */
+  renderContextSection(contextLabel, chainTokens, keyboard) {
+    let section = '';
+    const totalTokens = Object.values(chainTokens).reduce((sum, tokens) => sum + tokens.length, 0);
+
+    // Context header with emoji
+    const contextEmoji = contextLabel === 'Private' ? '📱' : '👥';
+    section += `${contextEmoji} <b>${contextLabel}</b> (${totalTokens} token${totalTokens !== 1 ? 's' : ''})\n`;
+
+    // Group by chain within this context
+    for (const [chainName, tokens] of Object.entries(chainTokens)) {
+      const chainConfig = this.chainManager ? this.chainManager.getChain(chainName) : null;
+      const chainEmoji = this.chainManager ? this.chainManager.getChainEmoji(chainName) : '🔗';
+      const chainDisplay = chainConfig ? `${chainEmoji} ${chainConfig.displayName}` : chainName;
+
+      section += `  🔗 <b>${chainDisplay}</b> (${tokens.length})\n`;
+
+      tokens.forEach((token, index) => {
+        section += `     ${index + 1}. <b>${token.token_name || 'Unknown'}</b> (${token.token_symbol || 'N/A'})\n`;
+        section += `        📮 <code>${token.contract_address}</code>\n`;
+
+        // Add context-aware remove button
+        const buttonText = `🗑️ Remove ${token.token_name || token.contract_address.slice(0, 8)}... from ${contextLabel}`;
+        keyboard.push([
+          Markup.button.callback(
+            buttonText,
+            `remove_${token.id}_${token.chat_id}`
+          )
+        ]);
+      });
+
+      section += '\n';
+    }
+
+    return section;
+  }
+
+  /**
+   * Show all user tokens across all contexts (for DM view)
+   * Displays Private tokens + tokens from all groups user is tracking in
+   */
+  async showMyTokensAllContexts(ctx) {
+    try {
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startminty');
+      }
+
+      // Fetch ALL tokens across all contexts
+      const allTokens = await this.db.getUserTrackedTokensWithContext(user.id);
+      logger.info(`[showMyTokensAllContexts] User ${user.id}: Found ${allTokens.length} tokens across all contexts`);
+
+      if (allTokens.length === 0) {
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')],
+          [Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]
+        ]);
+        const message = '🔍 You haven\'t added any tokens yet!\n\nUse the button below to start tracking NFT collections.';
+
+        if (ctx.callbackQuery) {
+          try {
+            return await ctx.editMessageText(message, {
+              parse_mode: 'HTML',
+              reply_markup: keyboard.reply_markup
+            });
+          } catch (error) {
+            return ctx.replyWithHTML(message, keyboard);
+          }
+        } else {
+          return ctx.replyWithHTML(message, keyboard);
+        }
+      }
+
+      // Resolve context labels (group names) in parallel
+      const tokensWithLabels = await this.resolveAllContexts(allTokens, ctx, user.telegram_id);
+
+      // Group by context first, then by chain
+      const byContext = this.groupByContext(tokensWithLabels, user.telegram_id);
+
+      // Build message
+      const totalTokens = allTokens.length;
+      const contextCount = Object.keys(byContext).length;
+      let message = `🎯 <b>Your Tracked NFTs</b> (${totalTokens} total across ${contextCount} context${contextCount !== 1 ? 's' : ''})\n\n`;
+
+      const keyboard = [];
+
+      // Render each context section
+      for (const [contextLabel, chainTokens] of Object.entries(byContext)) {
+        message += this.renderContextSection(contextLabel, chainTokens, keyboard);
+      }
+
+      // Add action buttons
+      keyboard.push([
+        Markup.button.callback('➕ Add More NFTs', 'add_token_start'),
+        Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')
+      ]);
+
+      // Send or edit message
+      if (ctx.callbackQuery) {
+        try {
+          await ctx.editMessageText(message, {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard(keyboard).reply_markup
+          });
+        } catch (error) {
+          await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+        }
+      } else {
+        await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
+      }
+    } catch (error) {
+      logger.error('Error in showMyTokensAllContexts:', error);
+      ctx.reply('❌ Error retrieving your NFTs. Please try again.');
+    }
+  }
+
   async showMyTokens(ctx) {
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
@@ -3078,8 +3313,19 @@ You will no longer receive notifications for this NFT in this chat context.`;
         return ctx.reply('Please start the bot first with /startminty');
       }
 
+      // Route to appropriate view based on chat type
+      const chatType = ctx.chat.type;
+      logger.info(`[showMyTokens] User ${user.id}, ChatType: ${chatType}`);
+
+      // If in DM (private chat), show all contexts view
+      if (chatType === 'private') {
+        logger.info(`[showMyTokens] Routing to all contexts view for DM`);
+        return await this.showMyTokensAllContexts(ctx);
+      }
+
+      // If in group, show only group's tokens (existing behavior)
       const chatId = this.normalizeChatContext(ctx);
-      logger.info(`[showMyTokens] User ${user.id}, ChatId: ${chatId}, ChatType: ${ctx.chat.type}`);
+      logger.info(`[showMyTokens] Showing group-specific tokens for chat ${chatId}`);
       const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
       logger.info(`[showMyTokens] Found ${tokens.length} tokens for user ${user.id} in chat ${chatId}`);
 

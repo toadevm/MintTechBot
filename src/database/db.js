@@ -1149,6 +1149,15 @@ class Database {
     return result.rows[0] || null;
   }
 
+  /**
+   * Get all available group contexts where the bot has been set up
+   * Returns all groups from group_contexts table
+   */
+  async getAllAvailableGroupContexts() {
+    const sql = `SELECT group_chat_id, group_title FROM group_contexts ORDER BY group_title`;
+    return await this.all(sql);
+  }
+
   // ============================================================================
   // CONTEXT-AWARE TOKEN QUERIES
   // ============================================================================

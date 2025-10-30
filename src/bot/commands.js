@@ -2533,27 +2533,28 @@ You will no longer receive notifications for this NFT in this chat context.`;
         return ctx.reply('Please start the bot first with /startminty');
       }
 
-      // Get user's group contexts (chat_ids where they have tracked tokens)
-      const groupContexts = await this.db.getUserGroupContexts(user.id, user.telegram_id);
+      // Get all available group contexts where bot has been set up
+      const allGroupContexts = await this.db.getAllAvailableGroupContexts();
 
-      // Resolve group titles in parallel
-      const groupsWithTitles = await Promise.all(
-        groupContexts.map(async (context) => {
+      // Filter groups where user is admin (check in parallel)
+      const groupsWithAdminCheck = await Promise.all(
+        allGroupContexts.map(async (context) => {
           try {
-            const chat = await ctx.telegram.getChat(context.chat_id);
+            const isAdmin = await this.isUserGroupAdmin(ctx.from.id, context.group_chat_id, ctx);
             return {
-              chat_id: context.chat_id,
-              title: chat.title || 'Group'
+              chat_id: context.group_chat_id,
+              title: context.group_title || 'Group',
+              isAdmin
             };
           } catch (error) {
-            logger.warn(`Failed to get chat info for ${context.chat_id}:`, error);
-            return {
-              chat_id: context.chat_id,
-              title: 'Group'
-            };
+            logger.warn(`Failed to check admin status for ${context.group_chat_id}:`, error);
+            return null;
           }
         })
       );
+
+      // Keep only groups where user is admin
+      const groupsWithTitles = groupsWithAdminCheck.filter(g => g && g.isAdmin);
 
       // Pagination settings
       const groupsPerPage = 6;

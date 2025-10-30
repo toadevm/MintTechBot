@@ -212,7 +212,12 @@ class BotCommands {
 
       return isAdmin;
     } catch (error) {
-      logger.error('Error checking admin status:', error);
+      // "chat not found" is expected when bot is removed from a group - no need to log as error
+      if (error.response?.description?.includes('chat not found')) {
+        logger.debug(`Chat not found: ${groupChatId} (bot likely removed from group)`);
+      } else {
+        logger.error('Error checking admin status:', error);
+      }
       return false;
     }
   }

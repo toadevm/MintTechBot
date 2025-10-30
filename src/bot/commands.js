@@ -376,11 +376,8 @@ class BotCommands {
 
             logger.info(`[BOT_START] Stored pending group setup session for user ${user.id}`);
 
-            // Show welcome with group context indicator
-            const welcomeMessage = helpers.formatWelcomeMessage() +
-              `\n\n🎯 <b>Setting up for:</b> ${groupContext.group_title}\n` +
-              `💡 <i>When you add NFTs, they'll be added to this group automatically.</i>`;
-
+            // Show normal welcome message
+            const welcomeMessage = helpers.formatWelcomeMessage();
             const keyboard = helpers.buildMainMenuKeyboard();
             return await ctx.replyWithHTML(welcomeMessage, keyboard);
           } else {
@@ -2536,18 +2533,22 @@ You will no longer receive notifications for this NFT in this chat context.`;
       // Get all available group contexts where bot has been set up
       const allGroupContexts = await this.db.getAllAvailableGroupContexts();
 
+      logger.info(`[CONTEXT_SELECTION] Found ${allGroupContexts.length} groups in database`);
+      allGroupContexts.forEach(g => logger.info(`  - ${g.group_title} (${g.group_chat_id})`));
+
       // Filter groups where user is admin (check in parallel)
       const groupsWithAdminCheck = await Promise.all(
         allGroupContexts.map(async (context) => {
           try {
             const isAdmin = await this.isUserGroupAdmin(ctx.from.id, context.group_chat_id, ctx);
+            logger.info(`[CONTEXT_SELECTION] ${context.group_title}: isAdmin=${isAdmin}`);
             return {
               chat_id: context.group_chat_id,
               title: context.group_title || 'Group',
               isAdmin
             };
           } catch (error) {
-            logger.warn(`Failed to check admin status for ${context.group_chat_id}:`, error);
+            logger.warn(`[CONTEXT_SELECTION] Failed to check admin for ${context.group_title} (${context.group_chat_id}):`, error);
             return null;
           }
         })
@@ -2555,6 +2556,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
 
       // Keep only groups where user is admin
       const groupsWithTitles = groupsWithAdminCheck.filter(g => g && g.isAdmin);
+      logger.info(`[CONTEXT_SELECTION] User ${ctx.from.id} is admin in ${groupsWithTitles.length} groups`);
 
       // Pagination settings
       const groupsPerPage = 6;

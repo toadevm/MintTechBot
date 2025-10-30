@@ -356,21 +356,14 @@ class BotCommands {
 
       logger.info(`[BOT_START] User ${user.id} (${user.username}) started bot with payload: ${startPayload || 'NONE'}`);
 
-      // Handle group setup deep link
-      if (startPayload && startPayload.startsWith('group_')) {
-        const setupToken = startPayload.replace('group_', '');
-        logger.info(`[BOT_START] Detected group setup token, routing to handleGroupSetupFlow`);
-        return this.handleGroupSetupFlow(ctx, setupToken);
-      }
-
+      // Handle footer ads deep link
       if (startPayload === 'buy_footer') {
-        // Direct user to footer ads menu when clicking "Buy Ad spot" link
         logger.info(`[BOT_START] Routing to footer menu`);
         return this.showFooterMenu(ctx);
       }
 
-      // Default start behavior - show main menu
-      logger.info(`[BOT_START] Showing default main menu`);
+      // Default start behavior - show welcome menu (including from group redirects)
+      logger.info(`[BOT_START] Showing welcome menu`);
       const welcomeMessage = helpers.formatWelcomeMessage();
       const keyboard = helpers.buildMainMenuKeyboard();
 
@@ -779,48 +772,9 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
           const chainName = data.replace('chain_select_', '');
           const userState = this.getUserState(ctx.from.id);
-          const configuringGroup = this.getUserSession(ctx.from.id, 'configuring_group');
 
           logger.info(`[CHAIN_SELECT] User ${ctx.from.id} selected chain: ${chainName}`);
           logger.info(`[CHAIN_SELECT] User state: ${userState || 'NONE'}`);
-          logger.info(`[CHAIN_SELECT] Configuring group: ${configuringGroup || 'NONE'}`);
-
-          // Check if user is configuring for a group
-          if (configuringGroup) {
-            logger.info(`[GROUP_CONFIG] User is configuring group, proceeding with chain ${chainName}`);
-
-            if (chainName === 'all') {
-              return ctx.editMessageText('❌ Please select a specific blockchain network for adding tokens.');
-            }
-
-            const chainConfig = this.chainManager.getChain(chainName);
-            if (!chainConfig) {
-              return ctx.editMessageText('❌ Invalid blockchain network selected.');
-            }
-
-            // Store the selected chain
-            this.userStates.set(ctx.from.id.toString() + '_selected_chain', chainName);
-            this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);
-
-            const groupTitle = this.getUserSession(ctx.from.id, 'group_title');
-
-            // Customize message based on chain type
-            let message;
-            if (chainName === 'solana') {
-              message = `◎ <b>Solana NFT for ${groupTitle}</b>\n\n📝 Please enter the collection symbol:\n\nExample: <code>mad_lads</code>`;
-            } else if (chainName === 'bitcoin') {
-              message = `₿ <b>Bitcoin Ordinals for ${groupTitle}</b>\n\n📝 Please enter the collection name:\n\nExample: <code>bitcoin-puppets</code>`;
-            } else {
-              message = `🔗 <b>${chainConfig.displayName} NFT for ${groupTitle}</b>\n\n📝 Please enter the NFT contract address:`;
-            }
-
-            const keyboard = Markup.inlineKeyboard([
-              [Markup.button.callback('❌ Cancel', 'cancel_group_setup')]
-            ]);
-
-            logger.info(`[GROUP_CONFIG] Showing contract input prompt for ${chainName}`);
-            return this.sendOrEditMenu(ctx, message, keyboard);
-          }
 
           if (userState === this.STATE_EXPECTING_CHAIN_FOR_CONTRACT) {
             // User selected chain for adding a contract
@@ -916,25 +870,7 @@ Choose your trending boost option:`;
           return this.showTokensMenu(ctx);
         }
 
-        if (data === 'cancel_group_setup') {
-          await ctx.answerCbQuery();
-          const userId = ctx.from.id.toString();
-
-          // Clear group setup sessions
-          this.clearUserSession(userId, 'configuring_group');
-          this.clearUserSession(userId, 'group_title');
-          this.clearUserState(ctx.from.id);
-          this.userStates.delete(userId + '_selected_chain');
-
-          // Show full welcome message with main menu
-          const welcomeMessage = helpers.formatWelcomeMessage();
-          const keyboard = helpers.buildMainMenuKeyboard();
-
-          return ctx.editMessageText(welcomeMessage, {
-            parse_mode: 'HTML',
-            reply_markup: keyboard.reply_markup
-          });
-        }
+        // cancel_group_setup handler removed - no longer needed (no special group setup flow)
         if (data === 'back_to_chain_selection') {
           await ctx.answerCbQuery();
 
@@ -1373,17 +1309,7 @@ Choose your trending boost option:`;
           });
         }
 
-        if (data === 'enter_contract') {
-          await ctx.answerCbQuery();
-
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);
-          ctx.reply('📝 Please enter the NFT address:', {
-            reply_markup: Markup.inlineKeyboard([
-              [Markup.button.callback('❌ Cancel', 'cancel_token_add')]
-            ])
-          });
-          return;
-        }
+        // enter_contract handler removed - dead code from old fallback flow
 
 
         if (data.startsWith('remove_')) {
@@ -1835,96 +1761,34 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
       // Ensure user exists in database
       await this.db.createUser(ctx.from.id.toString(), ctx.from.username, ctx.from.first_name);
-      const user = await this.db.getUser(ctx.from.id.toString());
 
-      // Generate unique setup token
-      const crypto = require('crypto');
-      const setupToken = crypto.randomBytes(16).toString('hex');
+      // Show simple message with button to open bot in private
+      const message = `👋 <b>Hi! To configure NFT tracking for ${groupTitle}:</b>
 
-      logger.info(`[GROUP_START] Generated setup token: ${setupToken}`);
+1. Click the button below to open the bot in private chat
+2. Use "Add NFT Collection" from the menu
+3. Select this group from the context list
 
-      // Save group context
-      await this.db.createGroupContext(groupId, groupTitle, setupToken, user.id);
-      logger.info(`[GROUP_START] Saved group context to database`);
+The bot will show you all your groups where you can add NFT tracking!`;
 
-      // Show Public/Private setup options
-      const message = `🎉 <b>Welcome to MintyRush!</b>
-
-To configure bot for <b>${groupTitle}</b>
-select an option below:`;
-
-      // Create deep link for private setup
+      // Create clean deep link (no payload needed)
       const botUsername = ctx.botInfo.username;
-      const deepLink = `https://t.me/${botUsername}?start=group_${setupToken}`;
+      const deepLink = `https://t.me/${botUsername}`;
 
       const keyboard = Markup.inlineKeyboard([
-        [
-          Markup.button.callback('🔓 Public Setup', `public_config_${setupToken}`),
-          Markup.button.url('🔒 Private Setup', deepLink)
-        ]
+        [Markup.button.url('🔒 Open Bot in Private', deepLink)]
       ]);
 
       await ctx.replyWithHTML(message, keyboard);
-      logger.info(`[GROUP_START] ✅ Setup options shown to group ${groupId}`);
+      logger.info(`[GROUP_START] ✅ Setup instructions shown to group ${groupId}`);
     } catch (error) {
       logger.error('[GROUP_START] ❌ Error:', error);
       await ctx.reply('❌ An error occurred. Please try again.');
     }
   }
 
-  /**
-   * Handle deep link for group setup
-   * Shows NFT configuration UI for specific group
-   */
-  async handleGroupSetupFlow(ctx, setupToken) {
-    try {
-      logger.info(`[DEEP_LINK] User ${ctx.from.id} clicked deep link with token: ${setupToken}`);
-
-      // Validate setup token and get group context
-      const groupContext = await this.db.getGroupContextByToken(setupToken);
-
-      if (!groupContext) {
-        logger.warn(`[DEEP_LINK] Invalid/expired token: ${setupToken}`);
-        return ctx.reply('❌ Invalid or expired setup link. Please run /startminty in the group again.');
-      }
-
-      logger.info(`[DEEP_LINK] Found group context: ${groupContext.group_title} (${groupContext.group_chat_id})`);
-
-      const userId = ctx.from.id;
-
-      // Verify user is still admin
-      const isAdmin = await this.isUserGroupAdmin(userId, groupContext.group_chat_id, ctx);
-      if (!isAdmin) {
-        logger.warn(`[DEEP_LINK] User ${userId} is NOT admin in group ${groupContext.group_chat_id}`);
-        return ctx.reply('⚠️ Only group admins can configure tracking.');
-      }
-
-      logger.info(`[DEEP_LINK] User ${userId} verified as admin`);
-
-      // Store group context in user session
-      this.setUserSession(userId, 'configuring_group', groupContext.group_chat_id);
-      this.setUserSession(userId, 'group_title', groupContext.group_title);
-
-      logger.info(`[DEEP_LINK] Stored session - Group: ${groupContext.group_chat_id}, Title: ${groupContext.group_title}`);
-
-      // Show chain selection menu for group configuration
-      const message = `🎯 <b>Configure NFT Tracking for:</b>
-${groupContext.group_title}
-
-Add NFT contracts to track. All group members will receive notifications in the group.
-
-<b>Choose a blockchain:</b>`;
-
-      const keyboard = this.chainManager.getChainSelectionKeyboard();
-      keyboard.push([Markup.button.callback('❌ Cancel', 'cancel_group_setup')]);
-
-      await ctx.replyWithHTML(message, Markup.inlineKeyboard(keyboard));
-      logger.info(`[DEEP_LINK] ✅ Chain selection shown to user ${userId}`);
-    } catch (error) {
-      logger.error('[DEEP_LINK] ❌ Error:', error);
-      await ctx.reply('❌ An error occurred. Please try again.');
-    }
-  }
+  // handleGroupSetupFlow() method removed - no longer needed
+  // Users now use context selection menu to choose which group to add tokens to
 
   /**
    * Handle public group configuration (in-group setup)
@@ -2013,18 +1877,11 @@ Add NFT contracts to track. All group members will receive notifications in the 
       // Clear the selected chain from session data
       this.userStates.delete(ctx.from.id.toString() + '_selected_chain');
 
-      // Check if user is configuring for a group
+      // Check if user selected a group context via context selection menu
       const configuringGroupId = this.getUserSession(ctx.from.id, 'configuring_group');
 
       // Determine chat context
-      let chatId;
-      if (configuringGroupId) {
-        // User is configuring for a group via deep link
-        chatId = configuringGroupId;
-      } else {
-        // Normal flow - use current chat context
-        chatId = this.normalizeChatContext(ctx);
-      }
+      const chatId = configuringGroupId || this.normalizeChatContext(ctx);
 
       const result = await this.tokenTracker.addToken(
         contractAddress,
@@ -2037,42 +1894,13 @@ Add NFT contracts to track. All group members will receive notifications in the 
       logger.info(`Token addition result for user ${user.id}:`, result.success);
 
       if (result.success) {
-        // Check if this was a group configuration
+        // Clear group session after successful addition (if it was set)
         if (configuringGroupId) {
-          const groupTitle = this.getUserSession(ctx.from.id, 'group_title');
-
-          // Clear group session after successful addition
           this.clearUserSession(ctx.from.id, 'configuring_group');
           this.clearUserSession(ctx.from.id, 'group_title');
-
-          const keyboard = {
-            inline_keyboard: [
-              [
-                {
-                  text: '➕ Add Another NFT',
-                  callback_data: 'add_token_start'
-                }
-              ],
-              [
-                {
-                  text: '✅ Done',
-                  callback_data: 'main_menu'
-                }
-              ]
-            ]
-          };
-
-          const groupSuccessMessage = `✅ <b>${result.token.token_name || 'NFT'}</b> added to <b>${groupTitle}</b>!\n\n👥 Group members will now receive notifications when there's activity.`;
-
-          await ctx.replyWithHTML(groupSuccessMessage, {
-            reply_markup: keyboard
-          });
-
-          logger.info(`Token ${contractAddress} added to group ${configuringGroupId} by user ${user.id}`);
-          return;
         }
 
-        // Regular private chat flow
+        // Show success message
         const keyboard = {
           inline_keyboard: [
             [

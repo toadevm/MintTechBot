@@ -462,31 +462,9 @@ class BotCommands {
 
 
     bot.command('add_token', async (ctx) => {
-      if (!this.chainManager) {
-        // Fallback to old behavior if chainManager not available
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('🔍 Search by Name', 'search_token')],
-          [Markup.button.callback('📝 Enter Contract Address', 'enter_contract')]
-        ]);
-        return await ctx.reply('How would you like to add a token?', keyboard);
-      }
-
-      // Show chain selection first
-      const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
-      // Add back button to NFT Management
-      chainKeyboard.push([{
-        text: '◀️ Back to NFT Management',
-        callback_data: 'menu_tokens'
-      }]);
-      this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
-
-      await ctx.reply(
-        '🔗 <b>Select Blockchain Network</b>\n\nChoose the blockchain where your NFT collection exists:',
-        {
-          parse_mode: 'HTML',
-          reply_markup: { inline_keyboard: chainKeyboard }
-        }
-      );
+      // Show context selection menu first (same as button flow)
+      this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
+      return this.showContextSelectionMenu(ctx, 0);
     });
 
 
@@ -960,34 +938,11 @@ Choose your trending boost option:`;
         if (data === 'back_to_chain_selection') {
           await ctx.answerCbQuery();
 
-          // Reset user state to chain selection
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
+          // Go back to context selection (start of the flow)
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
           this.userStates.delete(ctx.from.id.toString() + '_selected_chain');
 
-          const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
-          // Add back button to NFT Management
-          chainKeyboard.push([{
-            text: '◀️ Back to NFT Management',
-            callback_data: 'menu_tokens'
-          }]);
-
-          try {
-            return ctx.editMessageText(
-              '🔗 <b>Select Blockchain Network</b>\n\nChoose which blockchain to add your NFT on:',
-              {
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: chainKeyboard }
-              }
-            );
-          } catch (error) {
-            return ctx.reply(
-              '🔗 <b>Select Blockchain Network</b>\n\nChoose which blockchain to add your NFT on:',
-              {
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: chainKeyboard }
-              }
-            );
-          }
+          return this.showContextSelectionMenu(ctx, 0);
         }
 
         // Submenu handlers
@@ -2701,7 +2656,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
       }
 
       // Cancel button
-      keyboard.push([Markup.button.callback('❌ Cancel', 'menu_tokens')]);
+      keyboard.push([Markup.button.callback('◀️ Back', 'menu_tokens')]);
 
       const message = `🎯 <b>Where do you want to add this NFT?</b>\n\nChoose context:`;
 

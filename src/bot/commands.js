@@ -1776,9 +1776,9 @@ Simple and focused - boost your NFTs easily! 🚀`;
 To configure bot for <b>${groupTitle}</b>
 select an option below:`;
 
-      // Create deep link for private setup (no token, just opens bot)
+      // Create deep link for private setup with start parameter to trigger /start
       const botUsername = ctx.botInfo.username;
-      const deepLink = `https://t.me/${botUsername}`;
+      const deepLink = `https://t.me/${botUsername}?start=menu`;
 
       const keyboard = Markup.inlineKeyboard([
         [

@@ -307,6 +307,19 @@ class Database {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         duration_days INTEGER DEFAULT 30,
         FOREIGN KEY (user_id) REFERENCES users (id)
+      )`,
+
+      `CREATE TABLE IF NOT EXISTS bot_groups (
+        id SERIAL PRIMARY KEY,
+        group_chat_id VARCHAR(255) UNIQUE NOT NULL,
+        group_title VARCHAR(255),
+        group_type VARCHAR(50) NOT NULL DEFAULT 'group',
+        bot_status VARCHAR(50) NOT NULL DEFAULT 'member',
+        is_setup BOOLEAN DEFAULT false,
+        first_added_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )`
     ];
 
@@ -345,7 +358,10 @@ class Database {
       'CREATE INDEX IF NOT EXISTS idx_image_fee_payments_active ON image_fee_payments(contract_address, is_active, end_time)',
       'CREATE INDEX IF NOT EXISTS idx_image_fee_payments_tx_hash ON image_fee_payments(transaction_hash)',
       'CREATE INDEX IF NOT EXISTS idx_footer_ads_active ON footer_ads(is_active, end_time)',
-      'CREATE INDEX IF NOT EXISTS idx_footer_ads_tx_hash ON footer_ads(transaction_hash)'
+      'CREATE INDEX IF NOT EXISTS idx_footer_ads_tx_hash ON footer_ads(transaction_hash)',
+      'CREATE INDEX IF NOT EXISTS idx_bot_groups_chat_id ON bot_groups(group_chat_id)',
+      'CREATE INDEX IF NOT EXISTS idx_bot_groups_status ON bot_groups(bot_status, last_seen_at)',
+      'CREATE INDEX IF NOT EXISTS idx_bot_groups_setup ON bot_groups(is_setup)'
     ];
 
     for (const index of indexes) {
@@ -1155,6 +1171,66 @@ class Database {
    */
   async getAllAvailableGroupContexts() {
     const sql = `SELECT group_chat_id, group_title FROM group_contexts ORDER BY group_title`;
+    return await this.all(sql);
+  }
+
+  /**
+   * Upsert a bot group (insert or update)
+   * Tracks all groups where the bot is a member
+   */
+  async upsertBotGroup(groupChatId, groupTitle, botStatus, groupType = 'group') {
+    const sql = `
+      INSERT INTO bot_groups (group_chat_id, group_title, group_type, bot_status, first_added_at, last_seen_at, updated_at)
+      VALUES ($1, $2, $3, $4, NOW(), NOW(), NOW())
+      ON CONFLICT (group_chat_id)
+      DO UPDATE SET
+        group_title = EXCLUDED.group_title,
+        bot_status = EXCLUDED.bot_status,
+        last_seen_at = NOW(),
+        updated_at = NOW()
+      RETURNING *
+    `;
+    return await this.get(sql, [groupChatId, groupTitle, groupType, botStatus]);
+  }
+
+  /**
+   * Update last_seen timestamp for a group (called on any bot activity in group)
+   */
+  async touchBotGroup(groupChatId, groupTitle = null) {
+    const sql = groupTitle
+      ? `UPDATE bot_groups SET last_seen_at = NOW(), group_title = $2, updated_at = NOW() WHERE group_chat_id = $1 RETURNING *`
+      : `UPDATE bot_groups SET last_seen_at = NOW(), updated_at = NOW() WHERE group_chat_id = $1 RETURNING *`;
+
+    const params = groupTitle ? [groupChatId, groupTitle] : [groupChatId];
+    return await this.get(sql, params);
+  }
+
+  /**
+   * Mark a group as "set up" (when /startminty is run or token is added)
+   */
+  async markGroupAsSetup(groupChatId) {
+    const sql = `UPDATE bot_groups SET is_setup = true, updated_at = NOW() WHERE group_chat_id = $1 RETURNING *`;
+    return await this.get(sql, [groupChatId]);
+  }
+
+  /**
+   * Get all groups where bot is member/admin (not removed)
+   * Combines bot_groups and group_contexts for comprehensive list
+   */
+  async getAvailableBotGroups() {
+    const sql = `
+      SELECT DISTINCT
+        COALESCE(bg.group_chat_id, gc.group_chat_id) as group_chat_id,
+        COALESCE(bg.group_title, gc.group_title) as group_title,
+        COALESCE(bg.is_setup, false) as is_setup,
+        bg.bot_status,
+        bg.last_seen_at,
+        gc.setup_token
+      FROM bot_groups bg
+      FULL OUTER JOIN group_contexts gc ON bg.group_chat_id = gc.group_chat_id
+      WHERE (bg.bot_status IN ('member', 'administrator') OR bg.bot_status IS NULL)
+      ORDER BY bg.last_seen_at DESC NULLS LAST, gc.group_title ASC
+    `;
     return await this.all(sql);
   }
 

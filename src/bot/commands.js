@@ -1873,6 +1873,63 @@ Simple and focused - boost your NFTs easily! 🚀`;
       }
     });
 
+    // Track when bot is added/removed from groups
+    bot.on('my_chat_member', async (ctx) => {
+      try {
+        const chat = ctx.chat;
+        const newStatus = ctx.myChatMember.new_chat_member.status;
+        const oldStatus = ctx.myChatMember.old_chat_member.status;
+
+        // Only track groups and channels
+        if (chat.type !== 'group' && chat.type !== 'supergroup' && chat.type !== 'channel') {
+          return;
+        }
+
+        const groupChatId = chat.id.toString();
+        const groupTitle = chat.title || 'Unknown Group';
+        const groupType = chat.type;
+
+        logger.info(`[BOT_GROUPS] Status change in ${groupTitle} (${groupChatId}): ${oldStatus} -> ${newStatus}`);
+
+        // Bot was added or promoted
+        if ((oldStatus === 'left' || oldStatus === 'kicked') && (newStatus === 'member' || newStatus === 'administrator')) {
+          await this.db.upsertBotGroup(groupChatId, groupTitle, newStatus, groupType);
+          logger.info(`[BOT_GROUPS] Bot added to ${groupTitle} (${groupChatId}) as ${newStatus}`);
+        }
+        // Bot status changed (member <-> admin)
+        else if ((oldStatus === 'member' || oldStatus === 'administrator') && (newStatus === 'member' || newStatus === 'administrator')) {
+          await this.db.upsertBotGroup(groupChatId, groupTitle, newStatus, groupType);
+          logger.info(`[BOT_GROUPS] Bot status updated in ${groupTitle} (${groupChatId}): ${newStatus}`);
+        }
+        // Bot was removed or kicked
+        else if (newStatus === 'left' || newStatus === 'kicked') {
+          await this.db.upsertBotGroup(groupChatId, groupTitle, newStatus, groupType);
+          logger.info(`[BOT_GROUPS] Bot removed from ${groupTitle} (${groupChatId})`);
+        }
+      } catch (error) {
+        logger.error('[BOT_GROUPS] Error tracking chat member update:', error);
+      }
+    });
+
+    // Update group last_seen on any message activity
+    bot.use(async (ctx, next) => {
+      try {
+        const chat = ctx.chat;
+        if (chat && (chat.type === 'group' || chat.type === 'supergroup' || chat.type === 'channel')) {
+          const groupChatId = chat.id.toString();
+          const groupTitle = chat.title || null;
+
+          // Silently update last_seen timestamp (don't block if it fails)
+          this.db.touchBotGroup(groupChatId, groupTitle).catch(err => {
+            logger.debug(`[BOT_GROUPS] Could not touch group ${groupChatId}: ${err.message}`);
+          });
+        }
+      } catch (error) {
+        logger.debug('[BOT_GROUPS] Error in activity tracking middleware:', error);
+      }
+      return next();
+    });
+
     logger.info('Bot commands setup completed');
   }
 
@@ -1911,6 +1968,15 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
       // Save group context for public setup
       await this.db.createGroupContext(groupId, groupTitle, setupToken, user.id);
+
+      // Also track in bot_groups table and mark as setup
+      try {
+        await this.db.upsertBotGroup(groupId, groupTitle, 'member', ctx.chat.type);
+        await this.db.markGroupAsSetup(groupId);
+        logger.info(`[BOT_GROUPS] Tracked and marked ${groupTitle} (${groupId}) as set up via /startminty`);
+      } catch (error) {
+        logger.debug('[BOT_GROUPS] Could not track group in bot_groups:', error.message);
+      }
 
       // Show message with two buttons
       const message = `🎉 <b>Welcome to MintyRush!</b>
@@ -2064,6 +2130,16 @@ select an option below:`;
       logger.info(`Token addition result for user ${user.id}:`, result.success);
 
       if (result.success) {
+        // Mark group as set up in bot_groups table (if it's a group/channel)
+        if (chatId && chatId !== ctx.from.id.toString() && chatId !== 'Private') {
+          try {
+            await this.db.markGroupAsSetup(chatId);
+            logger.info(`[BOT_GROUPS] Marked group ${chatId} as set up after token addition`);
+          } catch (error) {
+            logger.debug(`[BOT_GROUPS] Could not mark group ${chatId} as setup:`, error.message);
+          }
+        }
+
         // Delete the chain selection message if it exists
         const chainSelectMsgId = this.userStates.get(ctx.from.id.toString() + '_chain_select_msg');
         if (chainSelectMsgId) {
@@ -2321,7 +2397,6 @@ You can try again with a different transaction hash or contact support.`;
           return ctx.reply('❌ Error completing token removal. Please try again.');
         }
 
-        const contextName = chatId === 'private' ? 'private messages' : `group chat (${chatId})`;
         const successMessage = `✅ <b>Token Removed Successfully</b>
 
 🗑️ <b>${token.token_name || 'Unknown Collection'}</b> has been completely removed from tracking.
@@ -2651,11 +2726,11 @@ You will no longer receive notifications for this NFT in this chat context.`;
         return ctx.reply('Please start the bot first with /startminty');
       }
 
-      // Get all available group contexts where bot has been set up
-      const allGroupContexts = await this.db.getAllAvailableGroupContexts();
+      // Get all available groups where bot is member (combines bot_groups + group_contexts)
+      const allGroupContexts = await this.db.getAvailableBotGroups();
 
       logger.info(`[CONTEXT_SELECTION] Found ${allGroupContexts.length} groups in database`);
-      allGroupContexts.forEach(g => logger.info(`  - ${g.group_title} (${g.group_chat_id})`));
+      allGroupContexts.forEach(g => logger.info(`  - ${g.group_title} (${g.group_chat_id}) [setup: ${g.is_setup}]`));
 
       // Filter groups where user is admin (check in parallel)
       const groupsWithAdminCheck = await Promise.all(
@@ -2975,7 +3050,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
         return ctx.reply('Please start the bot first with /startminty');
       }
 
-      const { contractAddress, tokenName, tokenSymbol, chain, duration, amount } = session;
+      const { contractAddress, tokenName, tokenSymbol, chain, duration } = session;
 
       // Check if image fee is already active
       const isActive = await this.secureTrending.isImageFeeActive(contractAddress);
@@ -4236,14 +4311,14 @@ Select trending duration:`;
 
         await ctx.reply('⏳ Validating your image fee transaction...');
 
-        const user = await this.db.getUser(userId);
+        const user = await this.db.getUser(telegramId);
         const result = await this.secureTrending.validateImageFeeTransaction(user.id, contractAddress, txHash, null, validationChain);
 
         this.clearUserState(ctx.from.id);
-        this.userStates.delete(userId + '_validation_type');
-        this.userStates.delete(userId + '_validation_contract');
-        this.userStates.delete(userId + '_validation_chain');
-        this.userStates.delete(userId + '_validation_token_id');
+        this.userStates.delete(telegramId + '_validation_type');
+        this.userStates.delete(telegramId + '_validation_contract');
+        this.userStates.delete(telegramId + '_validation_chain');
+        this.userStates.delete(telegramId + '_validation_token_id');
 
         if (result.success) {
           const symbol = result.symbol || 'ETH';

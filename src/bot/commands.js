@@ -704,10 +704,30 @@ Choose your trending boost option:`;
 Click the button below to configure privately in DM:`;
 
           const keyboard = Markup.inlineKeyboard([
-            [Markup.button.url('👉 Open Private Setup', deepLink)]
+            [Markup.button.url('👉 Open Private Setup', deepLink)],
+            [Markup.button.callback('🗑️ Delete This Message', `delete_setup_${setupToken}`)]
           ]);
 
-          return ctx.replyWithHTML(message, keyboard);
+          try {
+            return await ctx.editMessageText(message, {
+              parse_mode: 'HTML',
+              reply_markup: keyboard.reply_markup
+            });
+          } catch (error) {
+            return ctx.replyWithHTML(message, keyboard);
+          }
+        }
+
+        // Delete setup message after user goes to DM
+        if (data.startsWith('delete_setup_')) {
+          await ctx.answerCbQuery();
+          try {
+            await ctx.deleteMessage();
+            logger.info(`[CALLBACK] Setup message deleted`);
+          } catch (error) {
+            logger.error(`[CALLBACK] Failed to delete message:`, error);
+          }
+          return;
         }
 
 
@@ -1882,12 +1902,21 @@ Add NFT contracts to track. All group members will receive notifications in the 
       // Ensure user exists in database
       await this.db.createUser(ctx.from.id.toString(), ctx.from.username, ctx.from.first_name);
 
-      // Show welcome message and main menu in the group
+      // Show welcome message and main menu in the group (edit the setup message)
       const welcomeMessage = helpers.formatWelcomeMessage();
       const keyboard = helpers.buildMainMenuKeyboard();
 
-      await ctx.replyWithHTML(welcomeMessage, keyboard);
-      logger.info(`[PUBLIC_CONFIG] ✅ Main menu shown in group ${groupContext.group_chat_id}`);
+      try {
+        await ctx.editMessageText(welcomeMessage, {
+          parse_mode: 'HTML',
+          reply_markup: keyboard.reply_markup
+        });
+        logger.info(`[PUBLIC_CONFIG] ✅ Main menu shown in group ${groupContext.group_chat_id}`);
+      } catch (error) {
+        // If edit fails, send new message
+        await ctx.replyWithHTML(welcomeMessage, keyboard);
+        logger.info(`[PUBLIC_CONFIG] ✅ Main menu sent to group ${groupContext.group_chat_id} (edit failed, sent new message)`);
+      }
     } catch (error) {
       logger.error('[PUBLIC_CONFIG] ❌ Error:', error);
       await ctx.reply('❌ An error occurred. Please try again.');

@@ -1219,7 +1219,7 @@ class Database {
    */
   async getAvailableBotGroups() {
     const sql = `
-      SELECT DISTINCT
+      SELECT
         COALESCE(bg.group_chat_id, gc.group_chat_id) as group_chat_id,
         COALESCE(bg.group_title, gc.group_title) as group_title,
         COALESCE(bg.is_setup, false) as is_setup,
@@ -1229,7 +1229,7 @@ class Database {
       FROM bot_groups bg
       FULL OUTER JOIN group_contexts gc ON bg.group_chat_id = gc.group_chat_id
       WHERE (bg.bot_status IN ('member', 'administrator') OR bg.bot_status IS NULL)
-      ORDER BY bg.last_seen_at DESC NULLS LAST, gc.group_title ASC
+      ORDER BY bg.last_seen_at DESC NULLS LAST, COALESCE(bg.group_title, gc.group_title) ASC
     `;
     return await this.all(sql);
   }

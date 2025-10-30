@@ -1762,24 +1762,18 @@ Simple and focused - boost your NFTs easily! 🚀`;
       // Ensure user exists in database
       await this.db.createUser(ctx.from.id.toString(), ctx.from.username, ctx.from.first_name);
 
-      // Show simple message with button to open bot in private
-      const message = `👋 <b>Hi! To configure NFT tracking for ${groupTitle}:</b>
-
-1. Click the button below to open the bot in private chat
-2. Use "Add NFT Collection" from the menu
-3. Select this group from the context list
-
-The bot will show you all your groups where you can add NFT tracking!`;
-
-      // Create clean deep link (no payload needed)
+      // Show simple message with link to bot
       const botUsername = ctx.botInfo.username;
       const deepLink = `https://t.me/${botUsername}`;
 
-      const keyboard = Markup.inlineKeyboard([
-        [Markup.button.url('🔒 Open Bot in Private', deepLink)]
-      ]);
+      const message = `🎉 <b>Welcome to MintyRush!</b>
 
-      await ctx.replyWithHTML(message, keyboard);
+To configure bot for <b>${groupTitle}</b>
+👉 <a href="${deepLink}">Click here</a>`;
+
+      await ctx.replyWithHTML(message, {
+        disable_web_page_preview: true
+      });
       logger.info(`[GROUP_START] ✅ Setup instructions shown to group ${groupId}`);
     } catch (error) {
       logger.error('[GROUP_START] ❌ Error:', error);

@@ -572,6 +572,7 @@ Choose your trending boost option:`;
 
     bot.on('callback_query', async (ctx) => {
       const data = ctx.callbackQuery.data;
+      logger.info(`[CALLBACK_DEBUG] Received callback: ${data}`);
       try {
         if (data === 'view_trending') {
           await ctx.answerCbQuery();

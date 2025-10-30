@@ -1781,10 +1781,8 @@ select an option below:`;
       const deepLink = `https://t.me/${botUsername}?start=menu`;
 
       const keyboard = Markup.inlineKeyboard([
-        [
-          Markup.button.callback('🔓 Public Setup', `public_config_${setupToken}`),
-          Markup.button.url('🔒 Private Setup', deepLink)
-        ]
+        [Markup.button.callback('💬 Setup in TG Chat', `public_config_${setupToken}`)],
+        [Markup.button.url('🤖 Setup inside bot chat', deepLink)]
       ]);
 
       await ctx.replyWithHTML(message, keyboard);

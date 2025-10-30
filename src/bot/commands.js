@@ -689,47 +689,6 @@ Choose your trending boost option:`;
           return this.handlePublicGroupConfig(ctx, setupToken);
         }
 
-        // Private configuration (DM setup)
-        if (data.startsWith('private_config_')) {
-          const setupToken = data.replace('private_config_', '');
-          await ctx.answerCbQuery();
-          logger.info(`[CALLBACK] Private config selected, token: ${setupToken}`);
-
-          // Create deep link for private setup
-          const botUsername = ctx.botInfo.username;
-          const deepLink = `https://t.me/${botUsername}?start=group_${setupToken}`;
-
-          const message = `🔒 <b>Private Setup</b>
-
-Click the button below to configure privately in DM:`;
-
-          const keyboard = Markup.inlineKeyboard([
-            [Markup.button.url('👉 Open Private Setup', deepLink)],
-            [Markup.button.callback('🗑️ Delete This Message', `delete_setup_${setupToken}`)]
-          ]);
-
-          try {
-            return await ctx.editMessageText(message, {
-              parse_mode: 'HTML',
-              reply_markup: keyboard.reply_markup
-            });
-          } catch (error) {
-            return ctx.replyWithHTML(message, keyboard);
-          }
-        }
-
-        // Delete setup message after user goes to DM
-        if (data.startsWith('delete_setup_')) {
-          await ctx.answerCbQuery();
-          try {
-            await ctx.deleteMessage();
-            logger.info(`[CALLBACK] Setup message deleted`);
-          } catch (error) {
-            logger.error(`[CALLBACK] Failed to delete message:`, error);
-          }
-          return;
-        }
-
 
         // Chain selection handlers for multi-chain support
         if (data.startsWith('chain_select_')) {
@@ -1801,10 +1760,14 @@ Simple and focused - boost your NFTs easily! 🚀`;
 To configure bot for <b>${groupTitle}</b>
 select an option below:`;
 
+      // Create deep link for private setup
+      const botUsername = ctx.botInfo.username;
+      const deepLink = `https://t.me/${botUsername}?start=group_${setupToken}`;
+
       const keyboard = Markup.inlineKeyboard([
         [
           Markup.button.callback('🔓 Public Setup', `public_config_${setupToken}`),
-          Markup.button.callback('🔒 Private Setup', `private_config_${setupToken}`)
+          Markup.button.url('🔒 Private Setup', deepLink)
         ]
       ]);
 

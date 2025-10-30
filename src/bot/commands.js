@@ -902,7 +902,12 @@ Choose your trending boost option:`;
               [Markup.button.callback('◀️ Back to Chain Selection', 'back_to_chain_selection')]
             ]);
 
-            return this.sendOrEditMenu(ctx, message, keyboard);
+            const sentMessage = await this.sendOrEditMenu(ctx, message, keyboard);
+            // Store message ID to delete it after successful token addition
+            if (sentMessage) {
+              this.userStates.set(ctx.from.id.toString() + '_chain_select_msg', sentMessage.message_id);
+            }
+            return sentMessage;
 
           } else if (userState === this.STATE_EXPECTING_CHAIN_FOR_VIEW) {
             // User selected chain for viewing tokens
@@ -1997,6 +2002,17 @@ select an option below:`;
       logger.info(`Token addition result for user ${user.id}:`, result.success);
 
       if (result.success) {
+        // Delete the chain selection message if it exists
+        const chainSelectMsgId = this.userStates.get(ctx.from.id.toString() + '_chain_select_msg');
+        if (chainSelectMsgId) {
+          try {
+            await ctx.deleteMessage(chainSelectMsgId).catch(() => {});
+            this.userStates.delete(ctx.from.id.toString() + '_chain_select_msg');
+          } catch (error) {
+            // Ignore deletion errors
+          }
+        }
+
         // Clear group session after successful addition (if it was set)
         if (configuringGroupId) {
           this.clearUserSession(ctx.from.id, 'configuring_group');
@@ -2061,12 +2077,35 @@ select an option below:`;
           }
         }, 2000);
       } else {
+        // Delete the chain selection message if it exists
+        const chainSelectMsgId = this.userStates.get(ctx.from.id.toString() + '_chain_select_msg');
+        if (chainSelectMsgId) {
+          try {
+            await ctx.deleteMessage(chainSelectMsgId).catch(() => {});
+            this.userStates.delete(ctx.from.id.toString() + '_chain_select_msg');
+          } catch (error) {
+            // Ignore deletion errors
+          }
+        }
+
         await ctx.reply(`❌ ${result.message}\n\nIf you think this is a mistake, try again or contact support.`);
         logger.error(`Failed to add token ${contractAddress} for user ${user.id}: ${result.message}`);
       }
     } catch (error) {
       logger.error('Error handling NFT address:', error);
       this.clearUserState(ctx.from.id);
+
+      // Delete the chain selection message if it exists
+      const chainSelectMsgId = this.userStates.get(ctx.from.id.toString() + '_chain_select_msg');
+      if (chainSelectMsgId) {
+        try {
+          await ctx.deleteMessage(chainSelectMsgId).catch(() => {});
+          this.userStates.delete(ctx.from.id.toString() + '_chain_select_msg');
+        } catch (error2) {
+          // Ignore deletion errors
+        }
+      }
+
       ctx.reply('❌ Error adding token. Please check the NFT address and try again.');
     }
   }

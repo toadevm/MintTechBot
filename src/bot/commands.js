@@ -910,7 +910,7 @@ Choose your trending boost option:`;
 
             // Enter listening mode - track chat context and set timeout
             const userId = ctx.from.id.toString();
-            this.userStates.set(userId + '_listening_chat', ctx.chat.id);
+            this.userStates.set(userId + '_listening_chat', ctx.chat.id.toString());
 
             // Set 10-minute timeout to auto-cancel listening mode
             const timeoutId = setTimeout(() => {
@@ -1661,7 +1661,7 @@ Choose your trending boost option:`;
         // Check if user is in listening mode for THIS chat
         const isInListeningMode = userState === this.STATE_EXPECTING_CONTRACT;
         const listeningChatId = this.userStates.get(userIdStr + '_listening_chat');
-        const isListeningInThisChat = isInListeningMode && listeningChatId === ctx.chat.id;
+        const isListeningInThisChat = isInListeningMode && listeningChatId === ctx.chat.id.toString();
 
         // Bypass reply/mention requirement if in listening mode for this chat
         if (!isListeningInThisChat && !this.shouldRespondInGroup(ctx)) {

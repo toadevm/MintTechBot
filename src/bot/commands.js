@@ -949,8 +949,8 @@ Choose your trending boost option:`;
           this.userStates.delete(userId + '_selected_chain');
 
           // Show full welcome message with main menu
-          const welcomeMessage = this.helpers.formatWelcomeMessage();
-          const keyboard = this.helpers.buildMainMenuKeyboard();
+          const welcomeMessage = helpers.formatWelcomeMessage();
+          const keyboard = helpers.buildMainMenuKeyboard();
 
           return ctx.editMessageText(welcomeMessage, {
             parse_mode: 'HTML',

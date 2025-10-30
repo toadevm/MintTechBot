@@ -688,7 +688,7 @@ Choose your trending boost option:`;
 
                 const keyboard = Markup.inlineKeyboard(chainKeyboard);
                 this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
-                return ctx.replyWithHTML(message, keyboard);
+                return this.sendOrEditMenu(ctx, message, keyboard);
               } else {
                 // User is no longer admin - clear session and show error
                 this.clearUserSession(ctx.from.id, 'pending_group_setup');
@@ -696,7 +696,6 @@ Choose your trending boost option:`;
 
                 // Fallback to normal context selection
                 this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
-                await ctx.reply('⚠️ You are no longer an admin in that group. Please select a different context:');
                 return this.showContextSelectionMenu(ctx, 0);
               }
             } else {

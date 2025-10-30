@@ -1652,6 +1652,7 @@ Choose your trending boost option:`;
     bot.on('text', async (ctx) => {
       const text = ctx.message.text;
       const userId = ctx.from.id;
+      const userIdStr = userId.toString();
       const userState = this.getUserState(userId);
 
       // In groups/supergroups, check if we should respond
@@ -1659,7 +1660,7 @@ Choose your trending boost option:`;
       if (chatType === 'group' || chatType === 'supergroup') {
         // Check if user is in listening mode for THIS chat
         const isInListeningMode = userState === this.STATE_EXPECTING_CONTRACT;
-        const listeningChatId = this.userStates.get(userId + '_listening_chat');
+        const listeningChatId = this.userStates.get(userIdStr + '_listening_chat');
         const isListeningInThisChat = isInListeningMode && listeningChatId === ctx.chat.id;
 
         // Bypass reply/mention requirement if in listening mode for this chat

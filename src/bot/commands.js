@@ -356,6 +356,43 @@ class BotCommands {
 
       logger.info(`[BOT_START] User ${user.id} (${user.username}) started bot with payload: ${startPayload || 'NONE'}`);
 
+      // Handle group setup deep link
+      if (startPayload && startPayload.startsWith('setup_')) {
+        const setupToken = startPayload.replace('setup_', '');
+        logger.info(`[BOT_START] Detected group setup token: ${setupToken}`);
+
+        // Validate token and get group context
+        const groupContext = await this.db.getGroupContextByToken(setupToken);
+
+        if (groupContext) {
+          logger.info(`[BOT_START] Found group context: ${groupContext.group_title} (${groupContext.group_chat_id})`);
+
+          // Verify user is still admin
+          const isAdmin = await this.isUserGroupAdmin(user.id, groupContext.group_chat_id, ctx);
+
+          if (isAdmin) {
+            // Store pending session for auto-detection
+            this.setUserSession(user.id, 'pending_group_setup', setupToken);
+
+            logger.info(`[BOT_START] Stored pending group setup session for user ${user.id}`);
+
+            // Show welcome with group context indicator
+            const welcomeMessage = helpers.formatWelcomeMessage() +
+              `\n\n🎯 <b>Setting up for:</b> ${groupContext.group_title}\n` +
+              `💡 <i>When you add NFTs, they'll be added to this group automatically.</i>`;
+
+            const keyboard = helpers.buildMainMenuKeyboard();
+            return await ctx.replyWithHTML(welcomeMessage, keyboard);
+          } else {
+            logger.warn(`[BOT_START] User ${user.id} is NOT admin in group ${groupContext.group_chat_id}`);
+            return ctx.reply('⚠️ You are no longer an admin in that group.');
+          }
+        } else {
+          logger.warn(`[BOT_START] Invalid setup token: ${setupToken}`);
+          return ctx.reply('❌ Invalid or expired setup link. Please run /startminty in the group again.');
+        }
+      }
+
       // Handle footer ads deep link
       if (startPayload === 'buy_footer') {
         logger.info(`[BOT_START] Routing to footer menu`);
@@ -612,7 +649,87 @@ Choose your trending boost option:`;
         if (data === 'add_token_start') {
           await ctx.answerCbQuery();
 
-          // NEW: Show context selection menu first (always, per user requirement)
+          // Check for pending group setup session (auto-detection from deep link)
+          const pendingSetupToken = this.getUserSession(ctx.from.id, 'pending_group_setup');
+
+          if (pendingSetupToken) {
+            logger.info(`[ADD_TOKEN] Auto-detecting group from setup token: ${pendingSetupToken}`);
+
+            // Validate token and get group context
+            const groupContext = await this.db.getGroupContextByToken(pendingSetupToken);
+
+            if (groupContext) {
+              // Verify user is still admin
+              const user = await this.db.getOrCreateUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+              const isAdmin = await this.isUserGroupAdmin(user.id, groupContext.group_chat_id, ctx);
+
+              if (isAdmin) {
+                // Auto-set group context for token addition
+                this.setUserSession(ctx.from.id, 'configuring_group', groupContext.group_chat_id);
+                this.setUserSession(ctx.from.id, 'group_title', groupContext.group_title);
+
+                // Clear pending session (one-shot consumption)
+                this.clearUserSession(ctx.from.id, 'pending_group_setup');
+
+                logger.info(`[ADD_TOKEN] Auto-detected group: ${groupContext.group_title} (${groupContext.group_chat_id})`);
+
+                // Show chain selection with group indicator and escape hatch
+                const message = `🎯 <b>Adding NFT to:</b> ${groupContext.group_title}\n\n` +
+                  `Please select the blockchain chain:`;
+
+                const keyboard = Markup.inlineKeyboard([
+                  [Markup.button.callback('⚡ Solana', 'add_token_chain_solana')],
+                  [Markup.button.callback('🟣 Polygon', 'add_token_chain_polygon')],
+                  [Markup.button.callback('🔵 Ethereum', 'add_token_chain_ethereum')],
+                  [Markup.button.callback('🔗 Base', 'add_token_chain_base')],
+                  [Markup.button.callback('🌊 Sei', 'add_token_chain_sei')],
+                  [Markup.button.callback('🟠 Arbitrum', 'add_token_chain_arbitrum')],
+                  [Markup.button.callback('🟡 Optimism', 'add_token_chain_optimism')],
+                  [Markup.button.callback('🔴 Avalanche', 'add_token_chain_avalanche')],
+                  [Markup.button.callback('🔄 Switch Group', 'switch_group_context')],
+                  [Markup.button.callback('🏠 Main Menu', 'main_menu')]
+                ]);
+
+                this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
+                return ctx.replyWithHTML(message, keyboard);
+              } else {
+                // User is no longer admin - clear session and show error
+                this.clearUserSession(ctx.from.id, 'pending_group_setup');
+                logger.warn(`[ADD_TOKEN] User ${user.id} is NOT admin in group ${groupContext.group_chat_id}`);
+
+                // Fallback to normal context selection
+                this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
+                await ctx.reply('⚠️ You are no longer an admin in that group. Please select a different context:');
+                return this.showContextSelectionMenu(ctx, 0);
+              }
+            } else {
+              // Invalid token - clear session and fallback
+              this.clearUserSession(ctx.from.id, 'pending_group_setup');
+              logger.warn(`[ADD_TOKEN] Invalid setup token: ${pendingSetupToken}`);
+
+              // Fallback to normal context selection
+              this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
+              return this.showContextSelectionMenu(ctx, 0);
+            }
+          }
+
+          // No pending session - show normal context selection menu
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
+          return this.showContextSelectionMenu(ctx, 0);
+        }
+
+        // Switch Group escape hatch handler
+        if (data === 'switch_group_context') {
+          await ctx.answerCbQuery();
+
+          // Clear group configuration sessions
+          const userId = ctx.from.id.toString();
+          this.clearUserSession(userId, 'configuring_group');
+          this.clearUserSession(userId, 'group_title');
+
+          logger.info(`[SWITCH_GROUP] User ${userId} manually switching context`);
+
+          // Show context selection menu
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
           return this.showContextSelectionMenu(ctx, 0);
         }
@@ -1776,9 +1893,9 @@ Simple and focused - boost your NFTs easily! 🚀`;
 To configure bot for <b>${groupTitle}</b>
 select an option below:`;
 
-      // Create deep link for private setup with start parameter to trigger /start
+      // Create deep link for private setup with setup token for auto-detection
       const botUsername = ctx.botInfo.username;
-      const deepLink = `https://t.me/${botUsername}?start=menu`;
+      const deepLink = `https://t.me/${botUsername}?start=setup_${setupToken}`;
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('💬 Setup in TG Chat', `public_config_${setupToken}`)],

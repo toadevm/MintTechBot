@@ -367,8 +367,8 @@ class BotCommands {
         if (groupContext) {
           logger.info(`[BOT_START] Found group context: ${groupContext.group_title} (${groupContext.group_chat_id})`);
 
-          // Verify user is still admin
-          const isAdmin = await this.isUserGroupAdmin(user.id, groupContext.group_chat_id, ctx);
+          // Verify user is still admin (use Telegram ID, not database user ID)
+          const isAdmin = await this.isUserGroupAdmin(ctx.from.id, groupContext.group_chat_id, ctx);
 
           if (isAdmin) {
             // Store pending session for auto-detection
@@ -384,7 +384,7 @@ class BotCommands {
             const keyboard = helpers.buildMainMenuKeyboard();
             return await ctx.replyWithHTML(welcomeMessage, keyboard);
           } else {
-            logger.warn(`[BOT_START] User ${user.id} is NOT admin in group ${groupContext.group_chat_id}`);
+            logger.warn(`[BOT_START] User ${ctx.from.id} is NOT admin in group ${groupContext.group_chat_id}`);
             return ctx.reply('⚠️ You are no longer an admin in that group.');
           }
         } else {
@@ -659,9 +659,10 @@ Choose your trending boost option:`;
             const groupContext = await this.db.getGroupContextByToken(pendingSetupToken);
 
             if (groupContext) {
-              // Verify user is still admin
-              const user = await this.db.getOrCreateUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
-              const isAdmin = await this.isUserGroupAdmin(user.id, groupContext.group_chat_id, ctx);
+              // Ensure user exists and verify admin status (use Telegram ID for admin check)
+              await this.db.createUser(ctx.from.id.toString(), ctx.from.username, ctx.from.first_name);
+              const user = await this.db.getUser(ctx.from.id.toString());
+              const isAdmin = await this.isUserGroupAdmin(ctx.from.id, groupContext.group_chat_id, ctx);
 
               if (isAdmin) {
                 // Auto-set group context for token addition
@@ -695,7 +696,7 @@ Choose your trending boost option:`;
               } else {
                 // User is no longer admin - clear session and show error
                 this.clearUserSession(ctx.from.id, 'pending_group_setup');
-                logger.warn(`[ADD_TOKEN] User ${user.id} is NOT admin in group ${groupContext.group_chat_id}`);
+                logger.warn(`[ADD_TOKEN] User ${ctx.from.id} is NOT admin in group ${groupContext.group_chat_id}`);
 
                 // Fallback to normal context selection
                 this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);

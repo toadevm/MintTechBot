@@ -1761,20 +1761,34 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
       // Ensure user exists in database
       await this.db.createUser(ctx.from.id.toString(), ctx.from.username, ctx.from.first_name);
+      const user = await this.db.getUser(ctx.from.id.toString());
 
-      // Show simple message with link to bot
-      const botUsername = ctx.botInfo.username;
-      const deepLink = `https://t.me/${botUsername}`;
+      // Generate setup token for public setup
+      const crypto = require('crypto');
+      const setupToken = crypto.randomBytes(16).toString('hex');
 
+      // Save group context for public setup
+      await this.db.createGroupContext(groupId, groupTitle, setupToken, user.id);
+
+      // Show message with two buttons
       const message = `🎉 <b>Welcome to MintyRush!</b>
 
 To configure bot for <b>${groupTitle}</b>
-👉 <a href="${deepLink}">Click here</a>`;
+select an option below:`;
 
-      await ctx.replyWithHTML(message, {
-        disable_web_page_preview: true
-      });
-      logger.info(`[GROUP_START] ✅ Setup instructions shown to group ${groupId}`);
+      // Create deep link for private setup (no token, just opens bot)
+      const botUsername = ctx.botInfo.username;
+      const deepLink = `https://t.me/${botUsername}`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('🔓 Public Setup', `public_config_${setupToken}`),
+          Markup.button.url('🔒 Private Setup', deepLink)
+        ]
+      ]);
+
+      await ctx.replyWithHTML(message, keyboard);
+      logger.info(`[GROUP_START] ✅ Setup options shown to group ${groupId}`);
     } catch (error) {
       logger.error('[GROUP_START] ❌ Error:', error);
       await ctx.reply('❌ An error occurred. Please try again.');

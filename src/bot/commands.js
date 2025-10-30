@@ -680,6 +680,35 @@ Choose your trending boost option:`;
           return;
         }
 
+        // Public configuration (in-group setup)
+        if (data.startsWith('public_config_')) {
+          const setupToken = data.replace('public_config_', '');
+          await ctx.answerCbQuery();
+          logger.info(`[CALLBACK] Public config selected, token: ${setupToken}`);
+          return this.handlePublicGroupConfig(ctx, setupToken);
+        }
+
+        // Private configuration (DM setup)
+        if (data.startsWith('private_config_')) {
+          const setupToken = data.replace('private_config_', '');
+          await ctx.answerCbQuery();
+          logger.info(`[CALLBACK] Private config selected, token: ${setupToken}`);
+
+          // Create deep link for private setup
+          const botUsername = ctx.botInfo.username;
+          const deepLink = `https://t.me/${botUsername}?start=group_${setupToken}`;
+
+          const message = `🔒 <b>Private Setup</b>
+
+Click the button below to configure privately in DM:`;
+
+          const keyboard = Markup.inlineKeyboard([
+            [Markup.button.url('👉 Open Private Setup', deepLink)]
+          ]);
+
+          return ctx.replyWithHTML(message, keyboard);
+        }
+
 
         // Chain selection handlers for multi-chain support
         if (data.startsWith('chain_select_')) {
@@ -1466,7 +1495,7 @@ Choose your trending boost option:`;
 
 🌐 <b>Web:</b> https://www.candycodex.com
 
-📧 <b>Mail:</b> Support@candycodex.com
+📧 <b>Mail:</b> support@candycodex.com
 
 💬 <b>Telegram:</b> @CandyCodex
 
@@ -1745,19 +1774,21 @@ Simple and focused - boost your NFTs easily! 🚀`;
       await this.db.createGroupContext(groupId, groupTitle, setupToken, user.id);
       logger.info(`[GROUP_START] Saved group context to database`);
 
-      // Create deep link
-      const botUsername = ctx.botInfo.username;
-      const deepLink = `https://t.me/${botUsername}?start=group_${setupToken}`;
-
-      logger.info(`[GROUP_START] Deep link created: ${deepLink}`);
-
+      // Show Public/Private setup options
       const message = `🎉 <b>Welcome to MintyRush!</b>
 
 To configure bot for <b>${groupTitle}</b>
-👉 <a href="${deepLink}">Click here</a>`;
+select an option below:`;
 
-      await ctx.replyWithHTML(message, { disable_web_page_preview: true });
-      logger.info(`[GROUP_START] ✅ Setup link sent to group ${groupId}`);
+      const keyboard = Markup.inlineKeyboard([
+        [
+          Markup.button.callback('🔓 Public Setup', `public_config_${setupToken}`),
+          Markup.button.callback('🔒 Private Setup', `private_config_${setupToken}`)
+        ]
+      ]);
+
+      await ctx.replyWithHTML(message, keyboard);
+      logger.info(`[GROUP_START] ✅ Setup options shown to group ${groupId}`);
     } catch (error) {
       logger.error('[GROUP_START] ❌ Error:', error);
       await ctx.reply('❌ An error occurred. Please try again.');
@@ -1814,6 +1845,50 @@ Add NFT contracts to track. All group members will receive notifications in the 
       logger.info(`[DEEP_LINK] ✅ Chain selection shown to user ${userId}`);
     } catch (error) {
       logger.error('[DEEP_LINK] ❌ Error:', error);
+      await ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  /**
+   * Handle public group configuration (in-group setup)
+   * Shows welcome message and main menu directly in the group
+   */
+  async handlePublicGroupConfig(ctx, setupToken) {
+    try {
+      logger.info(`[PUBLIC_CONFIG] User ${ctx.from.id} chose public setup with token: ${setupToken}`);
+
+      // Validate setup token and get group context
+      const groupContext = await this.db.getGroupContextByToken(setupToken);
+
+      if (!groupContext) {
+        logger.warn(`[PUBLIC_CONFIG] Invalid/expired token: ${setupToken}`);
+        return ctx.reply('❌ Invalid or expired setup link. Please run /startminty in the group again.');
+      }
+
+      logger.info(`[PUBLIC_CONFIG] Found group context: ${groupContext.group_title} (${groupContext.group_chat_id})`);
+
+      const userId = ctx.from.id;
+
+      // Verify user is still admin
+      const isAdmin = await this.isUserGroupAdmin(userId, groupContext.group_chat_id, ctx);
+      if (!isAdmin) {
+        logger.warn(`[PUBLIC_CONFIG] User ${userId} is NOT admin in group ${groupContext.group_chat_id}`);
+        return ctx.reply('⚠️ Only group admins can configure tracking.');
+      }
+
+      logger.info(`[PUBLIC_CONFIG] User ${userId} verified as admin`);
+
+      // Ensure user exists in database
+      await this.db.createUser(ctx.from.id.toString(), ctx.from.username, ctx.from.first_name);
+
+      // Show welcome message and main menu in the group
+      const welcomeMessage = helpers.formatWelcomeMessage();
+      const keyboard = helpers.buildMainMenuKeyboard();
+
+      await ctx.replyWithHTML(welcomeMessage, keyboard);
+      logger.info(`[PUBLIC_CONFIG] ✅ Main menu shown in group ${groupContext.group_chat_id}`);
+    } catch (error) {
+      logger.error('[PUBLIC_CONFIG] ❌ Error:', error);
       await ctx.reply('❌ An error occurred. Please try again.');
     }
   }
@@ -2727,10 +2802,8 @@ You will no longer receive notifications for this NFT in this chat context.`;
       }
 
       const message = `✅ <b>Verify Your Payments</b>\n\n` +
-        `Select the type of payment you want to verify:\n\n` +
-        `🔍 <b>Trending Payments</b> - Verify NFT trending boosts\n` +
-        `🖼️ <b>Image Display</b> - Verify image display fees\n` +
-        `🔗 <b>Footer Ads</b> - Verify footer advertisements`;
+        `Select the type of payment you want to verify:\n\n`
+        
 
       const keyboard = [
         [Markup.button.callback('🔍 Verify Trending', 'verify_trending')],

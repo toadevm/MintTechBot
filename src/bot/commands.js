@@ -2314,12 +2314,17 @@ You will no longer receive notifications for this NFT in this chat context.`;
         return ctx.reply('Please start the bot first with /startminty');
       }
 
-      // Use the same database approach as working methods
-      const chatId = this.normalizeChatContext(ctx);
-      const userTokens = await this.db.getUserTrackedTokens(user.id, chatId);
+      // In private chat, fetch ALL tokens across all contexts (same as View My NFTs)
+      let userTokens;
+      if (ctx.chat.type === 'private') {
+        userTokens = await this.db.getUserTrackedTokensWithContext(user.id);
+      } else {
+        const chatId = this.normalizeChatContext(ctx);
+        userTokens = await this.db.getUserTrackedTokens(user.id, chatId);
+      }
 
       // Debug logging
-      console.log(`[showPromoteTokenMenu] User: ${user.id}, ChatId: ${chatId}, Tokens found: ${userTokens.length}, isPremium: ${isPremium}`);
+      console.log(`[showPromoteTokenMenu] User: ${user.id}, ChatType: ${ctx.chat.type}, Tokens found: ${userTokens.length}, isPremium: ${isPremium}`);
       if (!userTokens || userTokens.length === 0) {
         const message = '📝 You need to add some NFT collections first!';
         const keyboard = Markup.inlineKeyboard([[Markup.button.callback('➕ Add NFT Collection', 'add_token_start')]]);
@@ -2670,8 +2675,14 @@ You will no longer receive notifications for this NFT in this chat context.`;
         return ctx.reply('Please start the bot first with /startminty');
       }
 
-      const chatId = this.normalizeChatContext(ctx);
-      const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
+      // In private chat, fetch ALL tokens across all contexts (same as View My NFTs)
+      let tokens;
+      if (ctx.chat.type === 'private') {
+        tokens = await this.db.getUserTrackedTokensWithContext(user.id);
+      } else {
+        const chatId = this.normalizeChatContext(ctx);
+        tokens = await this.db.getUserTrackedTokens(user.id, chatId);
+      }
 
       // Determine if this is from a callback query (has message to edit) or command (no message)
       const isCallback = ctx.callbackQuery && ctx.callbackQuery.message;

@@ -568,6 +568,19 @@ class Database {
     return await this.all(sql, [userId]);
   }
 
+  /**
+   * Get unique group contexts where user has tracked tokens
+   * Returns distinct chat_ids (excluding user's private chat)
+   * Used for context selection menu
+   */
+  async getUserGroupContexts(userId, userTelegramId) {
+    const sql = `SELECT DISTINCT us.chat_id
+                 FROM user_subscriptions us
+                 WHERE us.user_id = $1 AND us.chat_id != $2
+                 ORDER BY us.chat_id`;
+    return await this.all(sql, [userId, userTelegramId]);
+  }
+
   async subscribeUserToToken(userId, tokenId, chatId) {
     const sql = `INSERT INTO user_subscriptions (user_id, token_id, chat_id, notification_enabled)
                  VALUES ($1, $2, $3, true)

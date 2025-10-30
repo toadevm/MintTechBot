@@ -17,6 +17,7 @@ class BotCommands {
     this.userSessions = new Map(); // Store user session data for multi-step flows
 
     // Original states
+    this.STATE_EXPECTING_CONTEXT_SELECTION = 'expecting_context_selection';
     this.STATE_EXPECTING_CONTRACT = 'expecting_contract';
     this.STATE_EXPECTING_CHAIN_FOR_CONTRACT = 'expecting_chain_for_contract';
     this.STATE_EXPECTING_CHAIN_FOR_VIEW = 'expecting_chain_for_view';
@@ -640,32 +641,85 @@ Choose your trending boost option:`;
         if (data === 'add_token_start') {
           await ctx.answerCbQuery();
 
-          // Simply use the existing /add_token command logic
+          // NEW: Show context selection menu first (always, per user requirement)
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
+          return this.showContextSelectionMenu(ctx, 0);
+        }
+
+        // Context selection handlers
+        if (data === 'context_select_private') {
+          await ctx.answerCbQuery();
+
+          // Clear any previous group configuration session
+          const userId = ctx.from.id.toString();
+          this.clearUserSession(userId, 'configuring_group');
+          this.clearUserSession(userId, 'group_title');
+
+          // Show chain selection
           if (!this.chainManager) {
-            // Fallback to old behavior if chainManager not available
-            const keyboard = Markup.inlineKeyboard([
-              [Markup.button.callback('🔍 Search by Name', 'search_token')],
-              [Markup.button.callback('📝 Enter Contract Address', 'enter_contract')]
-            ]);
-            try {
-              return await ctx.editMessageText('How would you like to add a token?', keyboard);
-            } catch (error) {
-              return await ctx.reply('How would you like to add a token?', keyboard);
-            }
+            return ctx.reply('❌ Chain manager not available');
           }
 
-          // Show chain selection first
           const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
-          // Add back button to NFT Management
           chainKeyboard.push([{
-            text: '◀️ Back to NFT Management',
-            callback_data: 'menu_tokens'
+            text: '◀️ Back to Context Selection',
+            callback_data: 'add_token_start'
           }]);
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
 
-          const message = '🔗 <b>Select Blockchain Network</b>\n\nChoose the blockchain where your NFT collection exists:';
+          const message = '🔗 <b>Select Blockchain Network</b>\n\n📱 <b>Adding to: Private</b>\n\nChoose the blockchain where your NFT collection exists:';
           const keyboard = Markup.inlineKeyboard(chainKeyboard);
-          await this.sendOrEditMenu(ctx, message, keyboard);
+          return this.sendOrEditMenu(ctx, message, keyboard);
+        }
+
+        if (data.startsWith('context_select_group_')) {
+          await ctx.answerCbQuery();
+
+          // Parse: context_select_group_{chatId}_{page}
+          const parts = data.replace('context_select_group_', '').split('_');
+          const page = parts.pop(); // Last part is page number
+          const chatId = parts.join('_'); // Rest is chat_id
+
+          // Get group title
+          let groupTitle = 'Group';
+          try {
+            const chat = await ctx.telegram.getChat(chatId);
+            groupTitle = chat.title || 'Group';
+          } catch (error) {
+            logger.warn(`Failed to get chat title for ${chatId}:`, error);
+          }
+
+          // Set session for group configuration
+          const userId = ctx.from.id.toString();
+          this.setUserSession(userId, 'configuring_group', chatId);
+          this.setUserSession(userId, 'group_title', groupTitle);
+
+          // Show chain selection
+          if (!this.chainManager) {
+            return ctx.reply('❌ Chain manager not available');
+          }
+
+          const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
+          chainKeyboard.push([{
+            text: '◀️ Back to Context Selection',
+            callback_data: 'add_token_start'
+          }]);
+          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
+
+          const message = `🔗 <b>Select Blockchain Network</b>\n\n👥 <b>Adding to: ${groupTitle}</b>\n\nChoose the blockchain where your NFT collection exists:`;
+          const keyboard = Markup.inlineKeyboard(chainKeyboard);
+          return this.sendOrEditMenu(ctx, message, keyboard);
+        }
+
+        if (data.startsWith('context_page_')) {
+          await ctx.answerCbQuery();
+          const page = parseInt(data.replace('context_page_', ''));
+          return this.showContextSelectionMenu(ctx, page);
+        }
+
+        if (data === 'noop') {
+          // No-op for page indicator button
+          await ctx.answerCbQuery();
           return;
         }
         if (data === 'boost_trending') {
@@ -888,7 +942,27 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
           this.clearUserState(ctx.from.id);
           this.userStates.delete(ctx.from.id.toString() + '_selected_chain');
-          return this.showTokenMenu(ctx);
+          return this.showTokensMenu(ctx);
+        }
+
+        if (data === 'cancel_group_setup') {
+          await ctx.answerCbQuery();
+          const userId = ctx.from.id.toString();
+
+          // Clear group setup sessions
+          this.clearUserSession(userId, 'configuring_group');
+          this.clearUserSession(userId, 'group_title');
+          this.clearUserState(ctx.from.id);
+          this.userStates.delete(userId + '_selected_chain');
+
+          // Show full welcome message with main menu
+          const welcomeMessage = this.helpers.formatWelcomeMessage();
+          const keyboard = this.helpers.buildMainMenuKeyboard();
+
+          return ctx.editMessageText(welcomeMessage, {
+            parse_mode: 'HTML',
+            reply_markup: keyboard.reply_markup
+          });
         }
         if (data === 'back_to_chain_selection') {
           await ctx.answerCbQuery();
@@ -2546,6 +2620,102 @@ You will no longer receive notifications for this NFT in this chat context.`;
       });
     } catch (error) {
       return ctx.replyWithHTML(welcomeMessage, keyboard);
+    }
+  }
+
+  /**
+   * Show context selection menu for adding tokens
+   * Allows user to choose Private or a Group context
+   */
+  async showContextSelectionMenu(ctx, page = 0) {
+    try {
+      const user = await this.db.getUser(ctx.from.id.toString());
+      if (!user) {
+        return ctx.reply('Please start the bot first with /startminty');
+      }
+
+      // Get user's group contexts (chat_ids where they have tracked tokens)
+      const groupContexts = await this.db.getUserGroupContexts(user.id, user.telegram_id);
+
+      // Resolve group titles in parallel
+      const groupsWithTitles = await Promise.all(
+        groupContexts.map(async (context) => {
+          try {
+            const chat = await ctx.telegram.getChat(context.chat_id);
+            return {
+              chat_id: context.chat_id,
+              title: chat.title || 'Group'
+            };
+          } catch (error) {
+            logger.warn(`Failed to get chat info for ${context.chat_id}:`, error);
+            return {
+              chat_id: context.chat_id,
+              title: 'Group'
+            };
+          }
+        })
+      );
+
+      // Pagination settings
+      const groupsPerPage = 6;
+      const totalPages = Math.ceil(groupsWithTitles.length / groupsPerPage);
+      const startIdx = page * groupsPerPage;
+      const endIdx = startIdx + groupsPerPage;
+      const pageGroups = groupsWithTitles.slice(startIdx, endIdx);
+
+      // Build keyboard
+      const keyboard = [];
+
+      // Always show Private option first
+      keyboard.push([Markup.button.callback('📱 Private', 'context_select_private')]);
+
+      // Add group buttons (2 per row)
+      for (let i = 0; i < pageGroups.length; i += 2) {
+        const row = [];
+
+        const group1 = pageGroups[i];
+        row.push(Markup.button.callback(
+          `👥 ${group1.title.slice(0, 20)}`,
+          `context_select_group_${group1.chat_id}_${page}`
+        ));
+
+        if (i + 1 < pageGroups.length) {
+          const group2 = pageGroups[i + 1];
+          row.push(Markup.button.callback(
+            `👥 ${group2.title.slice(0, 20)}`,
+            `context_select_group_${group2.chat_id}_${page}`
+          ));
+        }
+
+        keyboard.push(row);
+      }
+
+      // Add pagination buttons if needed
+      if (totalPages > 1) {
+        const paginationRow = [];
+
+        if (page > 0) {
+          paginationRow.push(Markup.button.callback('◀️ Prev', `context_page_${page - 1}`));
+        }
+
+        paginationRow.push(Markup.button.callback(`Page ${page + 1}/${totalPages}`, 'noop'));
+
+        if (page < totalPages - 1) {
+          paginationRow.push(Markup.button.callback('Next ▶️', `context_page_${page + 1}`));
+        }
+
+        keyboard.push(paginationRow);
+      }
+
+      // Cancel button
+      keyboard.push([Markup.button.callback('❌ Cancel', 'menu_tokens')]);
+
+      const message = `🎯 <b>Where do you want to add this NFT?</b>\n\nChoose context:`;
+
+      return this.sendOrEditMenu(ctx, message, Markup.inlineKeyboard(keyboard));
+    } catch (error) {
+      logger.error('Error showing context selection menu:', error);
+      ctx.reply('❌ Error loading contexts. Please try again.');
     }
   }
 

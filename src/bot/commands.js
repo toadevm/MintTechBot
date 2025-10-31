@@ -190,6 +190,32 @@ class BotCommands {
     }
   }
 
+  /**
+   * Set user flow state (for STATE_EXPECTING_* constants)
+   * @param {number} userId - User ID
+   * @param {string} state - Flow state value (e.g., 'expecting_chain_for_contract')
+   */
+  setFlowState(userId, state) {
+    this.userStates.set(userId.toString(), state);
+  }
+
+  /**
+   * Get user flow state
+   * @param {number} userId - User ID
+   * @returns {string|undefined} Flow state value or undefined
+   */
+  getFlowState(userId) {
+    return this.userStates.get(userId.toString());
+  }
+
+  /**
+   * Clear user flow state
+   * @param {number} userId - User ID
+   */
+  clearFlowState(userId) {
+    this.userStates.delete(userId.toString());
+  }
+
   // ============================================================================
   // GROUP MANAGEMENT HELPERS
   // ============================================================================
@@ -490,7 +516,7 @@ class BotCommands {
 
     bot.command('add_token', async (ctx) => {
       // Show context selection menu first (same as button flow)
-      this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
+      this.setFlowState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
       return this.showContextSelectionMenu(ctx, 0);
     });
 
@@ -641,11 +667,11 @@ Choose your trending boost option:`;
 
       // Clear selected chain when user clicks any OTHER button (not the chain they just selected)
       const userId = ctx.from.id.toString();
-      const userState = this.getUserState(ctx.from.id);
+      const userState = this.getFlowState(ctx.from.id);
 
       // If user clicks a different button while expecting contract, cancel the flow
       if (userState === this.STATE_EXPECTING_CONTRACT && !data.startsWith('chain_select_')) {
-        this.clearUserState(ctx.from.id);
+        this.clearFlowState(ctx.from.id);
         this.userStates.delete(userId + '_selected_chain');
         this.userStates.delete(userId + '_chain_select_msg');
         logger.info(`[STATE] Cleared contract expectation for user ${ctx.from.id} - clicked: ${data}`);
@@ -700,7 +726,7 @@ Choose your trending boost option:`;
                 ]);
 
                 const keyboard = Markup.inlineKeyboard(chainKeyboard);
-                this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
+                this.setFlowState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
                 return this.sendOrEditMenu(ctx, message, keyboard);
               } else {
                 // User is no longer admin - clear session and show error
@@ -708,7 +734,7 @@ Choose your trending boost option:`;
                 logger.warn(`[ADD_TOKEN] User ${ctx.from.id} is NOT admin in group ${groupContext.group_chat_id}`);
 
                 // Fallback to normal context selection
-                this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
+                this.setFlowState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
                 return this.showContextSelectionMenu(ctx, 0);
               }
             } else {
@@ -717,7 +743,7 @@ Choose your trending boost option:`;
               logger.warn(`[ADD_TOKEN] Invalid setup token: ${pendingSetupToken}`);
 
               // Fallback to normal context selection
-              this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
+              this.setFlowState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
               return this.showContextSelectionMenu(ctx, 0);
             }
           }
@@ -752,12 +778,12 @@ Choose your trending boost option:`;
             ]);
 
             const keyboard = Markup.inlineKeyboard(chainKeyboard);
-            this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
+            this.setFlowState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
             return this.sendOrEditMenu(ctx, message, keyboard);
           }
 
           // No pending session and not in group - show normal context selection menu
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
+          this.setFlowState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
           return this.showContextSelectionMenu(ctx, 0);
         }
 
@@ -773,7 +799,7 @@ Choose your trending boost option:`;
           logger.info(`[SWITCH_GROUP] User ${userId} manually switching context`);
 
           // Show context selection menu
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
+          this.setFlowState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
           return this.showContextSelectionMenu(ctx, 0);
         }
 
@@ -810,7 +836,7 @@ Choose your trending boost option:`;
             text: '◀️ Back to Context Selection',
             callback_data: 'add_token_start'
           }]);
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
+          this.setFlowState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
 
           const message = `🔗 <b>Select Blockchain Network</b>\n\n👥 <b>Adding to: ${groupTitle}</b>\n\nChoose the blockchain where your NFT collection exists:`;
           const keyboard = Markup.inlineKeyboard(chainKeyboard);
@@ -906,7 +932,7 @@ Choose your trending boost option:`;
         if (data.startsWith('chain_select_')) {
           await ctx.answerCbQuery();
           const chainName = data.replace('chain_select_', '');
-          const userState = this.getUserState(ctx.from.id);
+          const userState = this.getFlowState(ctx.from.id);
 
           logger.info(`[CHAIN_SELECT] User ${ctx.from.id} selected chain: ${chainName}`);
           logger.info(`[CHAIN_SELECT] User state: ${userState || 'NONE'}`);
@@ -933,7 +959,7 @@ Choose your trending boost option:`;
 
             // Store the selected chain in user session data
             this.userStates.set(ctx.from.id.toString() + '_selected_chain', chainName);
-            this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);
+            this.setFlowState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);
 
             logger.info(`[CHAIN_SELECT] User ${ctx.from.id} selected ${chainName}, now expecting contract input`);
 
@@ -961,7 +987,7 @@ Choose your trending boost option:`;
           } else if (userState === this.STATE_EXPECTING_CHAIN_FOR_VIEW) {
             // User selected chain for viewing tokens
             if (chainName === 'all') {
-              this.clearUserState(ctx.from.id);
+              this.clearFlowState(ctx.from.id);
               return this.showTokensForAllChains(ctx);
             }
 
@@ -974,7 +1000,7 @@ Choose your trending boost option:`;
               }
             }
 
-            this.clearUserState(ctx.from.id);
+            this.clearFlowState(ctx.from.id);
             return this.showTokensForChain(ctx, chainName, chainConfig);
 
           } else {
@@ -987,27 +1013,27 @@ Choose your trending boost option:`;
         }
 
         // Handle cancel operations - clear states and redirect to appropriate menu
-        if (data === 'cancel_footer' || (data === 'menu_footer' && this.getUserState(ctx.from.id))) {
+        if (data === 'cancel_footer' || (data === 'menu_footer' && this.getFlowState(ctx.from.id))) {
           await ctx.answerCbQuery();
-          this.clearUserState(ctx.from.id);
+          this.clearFlowState(ctx.from.id);
           this.clearUserSessionData(ctx.from.id, 'footer');
           return this.showFooterMenu(ctx);
         }
-        if (data === 'cancel_images' || (data === 'menu_images' && this.getUserState(ctx.from.id))) {
+        if (data === 'cancel_images' || (data === 'menu_images' && this.getFlowState(ctx.from.id))) {
           await ctx.answerCbQuery();
-          this.clearUserState(ctx.from.id);
+          this.clearFlowState(ctx.from.id);
           this.clearUserSessionData(ctx.from.id, 'image');
           return this.showImagesMenu(ctx);
         }
-        if (data === 'cancel_verify' || (data === 'menu_verify' && this.getUserState(ctx.from.id))) {
+        if (data === 'cancel_verify' || (data === 'menu_verify' && this.getFlowState(ctx.from.id))) {
           await ctx.answerCbQuery();
-          this.clearUserState(ctx.from.id);
+          this.clearFlowState(ctx.from.id);
           this.clearUserSessionData(ctx.from.id, 'validation');
           return this.showVerifyMenu(ctx);
         }
         if (data === 'cancel_token_add') {
           await ctx.answerCbQuery();
-          this.clearUserState(ctx.from.id);
+          this.clearFlowState(ctx.from.id);
           this.userStates.delete(ctx.from.id.toString() + '_selected_chain');
           return this.showTokensMenu(ctx);
         }
@@ -1017,7 +1043,7 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
 
           // Go back to context selection (start of the flow)
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
+          this.setFlowState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
           this.userStates.delete(ctx.from.id.toString() + '_selected_chain');
 
           return this.showContextSelectionMenu(ctx, 0);
@@ -1350,7 +1376,7 @@ Choose your trending boost option:`;
           }
 
           // Set state to expect transaction hash
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_IMAGE_TX_HASH);
+          this.setFlowState(ctx.from.id, this.STATE_EXPECTING_IMAGE_TX_HASH);
 
           const chainConfig = session?.chain && this.chainManager ? this.chainManager.getChain(session.chain) : null;
           const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : 'the selected blockchain';
@@ -1380,7 +1406,7 @@ Choose your trending boost option:`;
           }
 
           // Set state to expect transaction hash
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_IMAGE_TX_HASH);
+          this.setFlowState(ctx.from.id, this.STATE_EXPECTING_IMAGE_TX_HASH);
 
           const chainConfig = session?.chain && this.chainManager ? this.chainManager.getChain(session.chain) : null;
           const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : 'the selected blockchain';
@@ -1414,7 +1440,7 @@ Choose your trending boost option:`;
           }
 
           // Set state to expect transaction hash
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_TX_HASH);
+          this.setFlowState(ctx.from.id, this.STATE_EXPECTING_FOOTER_TX_HASH);
 
           const chainConfig = session?.chain && this.chainManager ? this.chainManager.getChain(session.chain) : null;
           const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : 'the selected blockchain';
@@ -1427,7 +1453,7 @@ Choose your trending boost option:`;
         // Submit buttons for transactions
         if (data === 'submit_footer_tx') {
           await ctx.answerCbQuery();
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_TX_HASH);
+          this.setFlowState(ctx.from.id, this.STATE_EXPECTING_FOOTER_TX_HASH);
 
           const session = this.getUserSession(ctx.from.id);
           const chainConfig = session?.chain && this.chainManager ? this.chainManager.getChain(session.chain) : null;
@@ -1439,7 +1465,7 @@ Choose your trending boost option:`;
         }
         if (data === 'submit_image_tx') {
           await ctx.answerCbQuery();
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_IMAGE_TX_HASH);
+          this.setFlowState(ctx.from.id, this.STATE_EXPECTING_IMAGE_TX_HASH);
 
           const session = this.getUserSession(ctx.from.id);
           const chainConfig = session?.chain && this.chainManager ? this.chainManager.getChain(session.chain) : null;
@@ -1544,7 +1570,7 @@ Choose your trending boost option:`;
           pendingPayment.chain = chain;
           this.pendingPayments.set(userId, pendingPayment);
 
-          this.setUserState(ctx.from.id, this.STATE_EXPECTING_TX_HASH);
+          this.setFlowState(ctx.from.id, this.STATE_EXPECTING_TX_HASH);
 
           // Get chain configuration
           const chainConfig = this.chainManager ? this.chainManager.getChain(chain) : null;
@@ -1656,7 +1682,7 @@ Choose your trending boost option:`;
       const text = ctx.message.text;
       const userId = ctx.from.id;
       const userIdStr = userId.toString();
-      const userState = this.getUserState(userId);
+      const userState = this.getFlowState(userId);
 
       logger.info(`[TEXT_HANDLER] Received text from user ${userId} in chat ${ctx.chat.id} (${ctx.chat.type}): "${text.substring(0, 50)}..."`);
       logger.info(`[TEXT_HANDLER] UserState: ${userState || 'NONE'}`);
@@ -1746,7 +1772,7 @@ Choose your trending boost option:`;
       }
 
       // Magic Eden collection symbol or URL (only when in STATE_EXPECTING_CONTRACT)
-      if (text.match(/^[a-zA-Z0-9_-]+$/) && text.length < 50 && this.getUserState(userId) === this.STATE_EXPECTING_CONTRACT) {
+      if (text.match(/^[a-zA-Z0-9_-]+$/) && text.length < 50 && this.getFlowState(userId) === this.STATE_EXPECTING_CONTRACT) {
         await this.handleContractAddress(ctx, text);
         return;
       }
@@ -3368,7 +3394,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
       this.userStates.set(userId + '_validation_chain', selectedToken.chain_name || 'ethereum');
 
       // Move to transaction hash input
-      this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
+      this.setFlowState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
 
       const chainName = selectedToken.chain_name || 'ethereum';
       const chainConfig = this.chainManager ? this.chainManager.getChain(chainName) : null;
@@ -3417,7 +3443,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
       this.userStates.set(userId + '_validation_footer_ad_id', selectedFooterAd.id);
 
       // Move to transaction hash input
-      this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
+      this.setFlowState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
 
       const message = `📝 <b>Submit Transaction Hash</b>\n\n` +
         `🔗 <b>Payment Type:</b> Footer Advertisement\n` +
@@ -3443,7 +3469,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
 
       const keyboard = Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]]);
 
-      this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TICKER);
+      this.setFlowState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TICKER);
       this.userStates.set(ctx.from.id.toString() + '_validation_type', 'footer');
 
       return this.sendOrEditMenu(ctx, message, keyboard);
@@ -4116,7 +4142,7 @@ Select trending duration:`;
         // For enhanced flow, store transaction hash in session and ask for link
         session.txHash = txHash;
         this.setUserSession(ctx.from.id, session);
-        this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_LINK);
+        this.setFlowState(ctx.from.id, this.STATE_EXPECTING_FOOTER_LINK);
 
         // Use pre-formatted amount that already includes the correct symbol
         const amountText = session.amountFormatted || '0 ETH';
@@ -4133,7 +4159,7 @@ Select trending duration:`;
         // For old flow, use old session storage method
         this.userStates.set(userId + '_footer_tx', txHash);
         this.userStates.set(userId + '_payment_validated', true);
-        this.setUserState(ctx.from.id, this.STATE_EXPECTING_FOOTER_LINK);
+        this.setFlowState(ctx.from.id, this.STATE_EXPECTING_FOOTER_LINK);
 
         return ctx.reply('✅ <b>Payment Verified!</b>\n\n🔗 <b>Custom Link</b>\n\nNow please send me the custom link you want to display in the footer ads.\n\n<i>Example: https://mytoken.com</i>\n\n', {
           parse_mode: 'HTML',
@@ -4393,7 +4419,7 @@ Select trending duration:`;
 
       // Store NFT address and move to next step
       this.userStates.set(userId + '_validation_contract', contractAddress);
-      this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
+      this.setFlowState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
 
       const message = `📝 <b>Transaction Hash Required</b>\n\nNow please send me the transaction hash for your ${validationType} payment.\n\n<i>Example: 0xabc123456789def...</i>`;
       const keyboard = Markup.inlineKeyboard([[Markup.button.callback('◀️ Back to Verify Payments', 'cancel_verify')]]);
@@ -4593,7 +4619,7 @@ Select trending duration:`;
 
       const userId = ctx.from.id.toString();
       this.userStates.set(userId + '_validation_ticker', cleanTicker);
-      this.setUserState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
+      this.setFlowState(ctx.from.id, this.STATE_EXPECTING_VALIDATION_TX_HASH);
 
       const message = `📝 <b>Submit Transaction Hash</b>\n\n` +
         `🔗 <b>Footer Ticker:</b> ${cleanTicker}\n\n` +

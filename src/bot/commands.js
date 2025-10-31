@@ -286,7 +286,7 @@ class BotCommands {
    */
   shouldRespondInGroup(ctx) {
     // If message is a reply to the bot's message, respond
-    if (ctx.message.reply_to_message && ctx.message.reply_to_message.from.is_bot) {
+    if (ctx.message.reply_to_message && ctx.message.reply_to_message.from.id === ctx.botInfo.id) {
       logger.debug(`Group message is reply to bot - will respond`);
       return true;
     }

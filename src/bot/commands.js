@@ -639,23 +639,16 @@ Choose your trending boost option:`;
       const data = ctx.callbackQuery.data;
       logger.info(`[CALLBACK_DEBUG] Received callback: ${data}`);
 
-      // Auto-cancel listening mode when user clicks any button
+      // Clear selected chain when user clicks any OTHER button (not the chain they just selected)
       const userId = ctx.from.id.toString();
       const userState = this.getUserState(ctx.from.id);
-      if (userState === this.STATE_EXPECTING_CONTRACT) {
-        // Cancel the timeout
-        const timeoutId = this.userStates.get(userId + '_listening_timeout');
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          this.userStates.delete(userId + '_listening_timeout');
-        }
 
-        // Clear all listening mode state
+      // If user clicks a different button while expecting contract, cancel the flow
+      if (userState === this.STATE_EXPECTING_CONTRACT && !data.startsWith('chain_select_')) {
         this.clearUserState(ctx.from.id);
         this.userStates.delete(userId + '_selected_chain');
-        this.userStates.delete(userId + '_listening_chat');
         this.userStates.delete(userId + '_chain_select_msg');
-        logger.info(`[LISTENING_MODE] Auto-cancelled for user ${ctx.from.id} - button clicked: ${data}`);
+        logger.info(`[STATE] Cleared contract expectation for user ${ctx.from.id} - clicked: ${data}`);
       }
 
       try {
@@ -729,7 +722,41 @@ Choose your trending boost option:`;
             }
           }
 
-          // No pending session - show normal context selection menu
+          // Check if user is already in a group - skip context selection
+          const chatType = ctx.chat.type;
+          if (chatType === 'group' || chatType === 'supergroup') {
+            const groupChatId = ctx.chat.id.toString();
+            const groupTitle = ctx.chat.title || 'this group';
+
+            // Verify user is admin
+            const isAdmin = await this.isUserGroupAdmin(ctx.from.id, groupChatId, ctx);
+            if (!isAdmin) {
+              return ctx.reply('⚠️ Only group admins can add NFT tracking.');
+            }
+
+            // Set group as target for token addition
+            this.setUserSession(ctx.from.id, 'configuring_group', groupChatId);
+            this.setUserSession(ctx.from.id, 'group_title', groupTitle);
+
+            logger.info(`[ADD_TOKEN] User ${ctx.from.id} adding token directly in group ${groupChatId}`);
+
+            // Show chain selection immediately
+            if (!this.chainManager) {
+              return ctx.reply('❌ Chain manager not available');
+            }
+
+            const message = `🎯 <b>Adding NFT to:</b> ${groupTitle}\n\nPlease select the blockchain chain:`;
+            const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
+            chainKeyboard.push([
+              { text: '◀️ Back', callback_data: 'menu_tokens' }
+            ]);
+
+            const keyboard = Markup.inlineKeyboard(chainKeyboard);
+            this.setUserState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
+            return this.sendOrEditMenu(ctx, message, keyboard);
+          }
+
+          // No pending session and not in group - show normal context selection menu
           this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTEXT_SELECTION);
           return this.showContextSelectionMenu(ctx, 0);
         }
@@ -908,31 +935,7 @@ Choose your trending boost option:`;
             this.userStates.set(ctx.from.id.toString() + '_selected_chain', chainName);
             this.setUserState(ctx.from.id, this.STATE_EXPECTING_CONTRACT);
 
-            // Enter listening mode - track chat context and set timeout
-            const userId = ctx.from.id.toString();
-            this.userStates.set(userId + '_listening_chat', ctx.chat.id.toString());
-
-            // Set 10-minute timeout to auto-cancel listening mode
-            const timeoutId = setTimeout(() => {
-              const storedMsgId = this.userStates.get(userId + '_chain_select_msg');
-              if (storedMsgId) {
-                try {
-                  ctx.telegram.deleteMessage(ctx.chat.id, storedMsgId).catch(() => {});
-                } catch (error) {
-                  // Ignore deletion errors
-                }
-              }
-              // Clear all listening mode state
-              this.clearUserState(ctx.from.id);
-              this.userStates.delete(userId + '_selected_chain');
-              this.userStates.delete(userId + '_listening_chat');
-              this.userStates.delete(userId + '_chain_select_msg');
-              this.userStates.delete(userId + '_listening_timeout');
-              logger.info(`[LISTENING_MODE] Auto-cancelled for user ${ctx.from.id} after timeout`);
-            }, 600000); // 10 minutes
-
-            this.userStates.set(userId + '_listening_timeout', timeoutId);
-            logger.info(`[LISTENING_MODE] Activated for user ${ctx.from.id} in chat ${ctx.chat.id}`);
+            logger.info(`[CHAIN_SELECT] User ${ctx.from.id} selected ${chainName}, now expecting contract input`);
 
             // Customize message based on chain type
             let message;
@@ -1655,28 +1658,29 @@ Choose your trending boost option:`;
       const userIdStr = userId.toString();
       const userState = this.getUserState(userId);
 
+      logger.info(`[TEXT_HANDLER] Received text from user ${userId} in chat ${ctx.chat.id} (${ctx.chat.type}): "${text.substring(0, 50)}..."`);
+      logger.info(`[TEXT_HANDLER] UserState: ${userState || 'NONE'}`);
+
       // In groups/supergroups, check if we should respond
       const chatType = ctx.chat.type;
       if (chatType === 'group' || chatType === 'supergroup') {
-        // Check if user is in listening mode for THIS chat
-        const isInListeningMode = userState === this.STATE_EXPECTING_CONTRACT;
-        const listeningChatId = this.userStates.get(userIdStr + '_listening_chat');
-        const isListeningInThisChat = isInListeningMode && listeningChatId === ctx.chat.id.toString();
+        // If user is expecting a contract, always process their message (no reply required)
+        const isExpectingContract = userState === this.STATE_EXPECTING_CONTRACT;
 
-        // Bypass reply/mention requirement if in listening mode for this chat
-        if (!isListeningInThisChat && !this.shouldRespondInGroup(ctx)) {
-          // Silently ignore messages that aren't replies or mentions
+        if (!isExpectingContract && !this.shouldRespondInGroup(ctx)) {
+          // Only ignore if user is NOT expecting input AND message is not a reply/mention
+          logger.debug(`[TEXT_HANDLER] Ignoring message - user not expecting input and not reply/mention`);
           return;
         }
 
-        if (isListeningInThisChat) {
-          logger.info(`[LISTENING_MODE] Captured message from user ${ctx.from.id} in chat ${ctx.chat.id}`);
+        if (isExpectingContract) {
+          logger.info(`[CAPTURE] User ${ctx.from.id} is expecting contract - processing message: "${text.substring(0, 50)}..."`);
         }
       } else if (chatType === 'private') {
-        // In DMs, check if user is in listening mode (can send address in DM)
-        const isInListeningMode = userState === this.STATE_EXPECTING_CONTRACT;
-        if (isInListeningMode) {
-          logger.info(`[LISTENING_MODE] Captured message from user ${ctx.from.id} in DM`);
+        // In DMs, always process if user is expecting a contract
+        const isExpectingContract = userState === this.STATE_EXPECTING_CONTRACT;
+        if (isExpectingContract) {
+          logger.info(`[CAPTURE] User ${ctx.from.id} is expecting contract in DM - processing message`);
         }
       }
 

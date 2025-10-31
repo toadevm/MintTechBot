@@ -156,32 +156,32 @@ class BotCommands {
    * @param {string} key - Session key
    * @param {*} value - Session value
    */
-  setUserSession(userId, key, value) {
+  setUserState(userId, key, value) {
     const sessionKey = `${userId}_session_${key}`;
     this.userStates.set(sessionKey, value);
   }
 
   /**
-   * Get user session value
+   * Get user state value
    * @param {number} userId - User ID
-   * @param {string} key - Session key
-   * @returns {*} Session value or undefined
+   * @param {string} key - State key
+   * @returns {*} State value or undefined
    */
-  getUserSession(userId, key) {
+  getUserState(userId, key) {
     const sessionKey = `${userId}_session_${key}`;
     return this.userStates.get(sessionKey);
   }
 
   /**
-   * Clear user session
+   * Clear user state
    * @param {number} userId - User ID
    * @param {string|null} key - Specific key to clear, or null to clear all
    */
-  clearUserSession(userId, key = null) {
+  clearUserState(userId, key = null) {
     if (key) {
       this.userStates.delete(`${userId}_session_${key}`);
     } else {
-      // Clear all sessions for user
+      // Clear all states for user
       for (const [k] of this.userStates) {
         if (k.startsWith(`${userId}_session_`)) {
           this.userStates.delete(k);
@@ -372,7 +372,7 @@ class BotCommands {
 
           if (isAdmin) {
             // Store pending session for auto-detection
-            this.setUserSession(user.id, 'pending_group_setup', setupToken);
+            this.setUserState(user.id, 'pending_group_setup', setupToken);
 
             logger.info(`[BOT_START] Stored pending group setup session for user ${user.id}`);
 
@@ -660,7 +660,7 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
 
           // Check for pending group setup session (auto-detection from deep link)
-          const pendingSetupToken = this.getUserSession(ctx.from.id, 'pending_group_setup');
+          const pendingSetupToken = this.getUserState(ctx.from.id, 'pending_group_setup');
 
           if (pendingSetupToken) {
             logger.info(`[ADD_TOKEN] Auto-detecting group from setup token: ${pendingSetupToken}`);
@@ -676,11 +676,11 @@ Choose your trending boost option:`;
 
               if (isAdmin) {
                 // Auto-set group context for token addition
-                this.setUserSession(ctx.from.id, 'configuring_group', groupContext.group_chat_id);
-                this.setUserSession(ctx.from.id, 'group_title', groupContext.group_title);
+                this.setUserState(ctx.from.id, 'configuring_group', groupContext.group_chat_id);
+                this.setUserState(ctx.from.id, 'group_title', groupContext.group_title);
 
                 // Clear pending session (one-shot consumption)
-                this.clearUserSession(ctx.from.id, 'pending_group_setup');
+                this.clearUserState(ctx.from.id, 'pending_group_setup');
 
                 logger.info(`[ADD_TOKEN] Auto-detected group: ${groupContext.group_title} (${groupContext.group_chat_id})`);
 
@@ -704,7 +704,7 @@ Choose your trending boost option:`;
                 return this.sendOrEditMenu(ctx, message, keyboard);
               } else {
                 // User is no longer admin - clear session and show error
-                this.clearUserSession(ctx.from.id, 'pending_group_setup');
+                this.clearUserState(ctx.from.id, 'pending_group_setup');
                 logger.warn(`[ADD_TOKEN] User ${ctx.from.id} is NOT admin in group ${groupContext.group_chat_id}`);
 
                 // Fallback to normal context selection
@@ -713,7 +713,7 @@ Choose your trending boost option:`;
               }
             } else {
               // Invalid token - clear session and fallback
-              this.clearUserSession(ctx.from.id, 'pending_group_setup');
+              this.clearUserState(ctx.from.id, 'pending_group_setup');
               logger.warn(`[ADD_TOKEN] Invalid setup token: ${pendingSetupToken}`);
 
               // Fallback to normal context selection
@@ -735,8 +735,8 @@ Choose your trending boost option:`;
             }
 
             // Set group as target for token addition
-            this.setUserSession(ctx.from.id, 'configuring_group', groupChatId);
-            this.setUserSession(ctx.from.id, 'group_title', groupTitle);
+            this.setUserState(ctx.from.id, 'configuring_group', groupChatId);
+            this.setUserState(ctx.from.id, 'group_title', groupTitle);
 
             logger.info(`[ADD_TOKEN] User ${ctx.from.id} adding token directly in group ${groupChatId}`);
 
@@ -767,8 +767,8 @@ Choose your trending boost option:`;
 
           // Clear group configuration sessions
           const userId = ctx.from.id.toString();
-          this.clearUserSession(userId, 'configuring_group');
-          this.clearUserSession(userId, 'group_title');
+          this.clearUserState(userId, 'configuring_group');
+          this.clearUserState(userId, 'group_title');
 
           logger.info(`[SWITCH_GROUP] User ${userId} manually switching context`);
 
@@ -797,8 +797,8 @@ Choose your trending boost option:`;
 
           // Set session for group configuration
           const userId = ctx.from.id.toString();
-          this.setUserSession(userId, 'configuring_group', chatId);
-          this.setUserSession(userId, 'group_title', groupTitle);
+          this.setUserState(userId, 'configuring_group', chatId);
+          this.setUserState(userId, 'group_title', groupTitle);
 
           // Show chain selection
           if (!this.chainManager) {
@@ -2092,7 +2092,7 @@ select an option below:`;
       logger.info(`[LISTENING_MODE] Cleared for user ${ctx.from.id} - address submitted`);
 
       // Check if user selected a group context via context selection menu
-      const configuringGroupId = this.getUserSession(ctx.from.id, 'configuring_group');
+      const configuringGroupId = this.getUserState(ctx.from.id, 'configuring_group');
 
       // Block private chat tracking - users must add tokens in groups/channels only
       if (ctx.chat.type === 'private' && !configuringGroupId) {
@@ -2140,8 +2140,8 @@ select an option below:`;
 
         // Clear group session after successful addition (if it was set)
         if (configuringGroupId) {
-          this.clearUserSession(ctx.from.id, 'configuring_group');
-          this.clearUserSession(ctx.from.id, 'group_title');
+          this.clearUserState(ctx.from.id, 'configuring_group');
+          this.clearUserState(ctx.from.id, 'group_title');
         }
 
         // Show success message
@@ -2487,20 +2487,44 @@ You will no longer receive notifications for this NFT in this chat context.`;
         return ctx.reply('Please start the bot first with /startminty');
       }
 
-      // In private chat, fetch ALL tokens across all contexts (same as View My NFTs)
+      const chatId = this.normalizeChatContext(ctx);
+
+      // Check if user is admin (in groups)
+      let isAdmin = true;
+      if (ctx.chat.type === 'group' || ctx.chat.type === 'supergroup') {
+        isAdmin = await this.isUserGroupAdmin(ctx.from.id, ctx.chat.id, ctx);
+      }
+
+      // In private chat, fetch ALL tokens across all contexts
+      // In groups: Admins see their tracked tokens, non-admins see all group tokens
       let userTokens;
       if (ctx.chat.type === 'private') {
         userTokens = await this.db.getUserTrackedTokensWithContext(user.id);
       } else {
-        const chatId = this.normalizeChatContext(ctx);
-        userTokens = await this.db.getUserTrackedTokens(user.id, chatId);
+        userTokens = isAdmin
+          ? await this.db.getUserTrackedTokens(user.id, chatId)
+          : await this.db.getGroupTrackedTokens(chatId);
       }
 
       // Debug logging
-      console.log(`[showPromoteTokenMenu] User: ${user.id}, ChatType: ${ctx.chat.type}, Tokens found: ${userTokens.length}, isPremium: ${isPremium}`);
+      console.log(`[showPromoteTokenMenu] User: ${user.id}, ChatType: ${ctx.chat.type}, IsAdmin: ${isAdmin}, Tokens found: ${userTokens.length}, isPremium: ${isPremium}`);
+
       if (!userTokens || userTokens.length === 0) {
-        const message = '📝 You need to add some NFT collections first!';
-        const keyboard = Markup.inlineKeyboard([[Markup.button.callback('➕ Add NFT Collection', 'add_token_start')]]);
+        // Check if in group and if user is admin
+        const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+
+        let message, keyboard;
+        if (isGroup && !isAdmin) {
+          // Non-admin in group with no tracked NFTs
+          message = '📝 No NFTs are being tracked in this group yet!\n\nℹ️ Only admins can add NFT collections to track.';
+          keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('◀️ Back to Trending Menu', 'menu_trending')]
+          ]);
+        } else {
+          // Admin or private chat
+          message = '📝 You need to add some NFT collections first!';
+          keyboard = Markup.inlineKeyboard([[Markup.button.callback('➕ Add NFT Collection', 'add_token_start')]]);
+        }
         return ctx.replyWithHTML(message, keyboard);
       }
 
@@ -2873,22 +2897,43 @@ You will no longer receive notifications for this NFT in this chat context.`;
       if (ctx.chat.type === 'private') {
         tokens = await this.db.getUserTrackedTokensWithContext(user.id);
       } else {
+        // In groups: check if user is admin
         const chatId = this.normalizeChatContext(ctx);
-        tokens = await this.db.getUserTrackedTokens(user.id, chatId);
+        const isAdmin = await this.isUserGroupAdmin(ctx.from.id, ctx.chat.id, ctx);
+
+        // Admins see their tracked tokens, non-admins see all group tokens
+        tokens = isAdmin
+          ? await this.db.getUserTrackedTokens(user.id, chatId)
+          : await this.db.getGroupTrackedTokens(chatId);
       }
 
       // Determine if this is from a callback query (has message to edit) or command (no message)
       const isCallback = ctx.callbackQuery && ctx.callbackQuery.message;
 
       if (tokens.length === 0) {
-        const message = `🖼️ <b>Select NFT for Image Display</b>\n\n` +
-          `📝 You need to add some NFT collections first!\n\n` +
-          `Add your NFTs to track them and enable image display.`;
+        // Check if in group and if user is admin
+        const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+        const isAdmin = isGroup ? await this.isUserGroupAdmin(ctx.from.id, ctx.chat.id, ctx) : true;
 
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')],
-          [Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]
-        ]);
+        let message, keyboard;
+        if (isGroup && !isAdmin) {
+          // Non-admin in group with no tracked NFTs
+          message = `🖼️ <b>Select NFT for Image Display</b>\n\n` +
+            `📝 No NFTs are being tracked in this group yet!\n\n` +
+            `ℹ️ Only admins can add NFT collections to track.`;
+          keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]
+          ]);
+        } else {
+          // Admin or private chat
+          message = `🖼️ <b>Select NFT for Image Display</b>\n\n` +
+            `📝 You need to add some NFT collections first!\n\n` +
+            `Add your NFTs to track them and enable image display.`;
+          keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')],
+            [Markup.button.callback('◀️ Back to Images Menu', 'menu_images')]
+          ]);
+        }
 
         if (isCallback) {
           try {
@@ -2971,7 +3016,18 @@ You will no longer receive notifications for this NFT in this chat context.`;
 
       // Get token details from database
       const chatId = this.normalizeChatContext(ctx);
-      const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
+
+      // Check if user is admin (in groups)
+      let isAdmin = true;
+      if (ctx.chat.type === 'group' || ctx.chat.type === 'supergroup') {
+        isAdmin = await this.isUserGroupAdmin(ctx.from.id, ctx.chat.id, ctx);
+      }
+
+      // Admins see their tracked tokens, non-admins see all group tokens
+      const tokens = isAdmin
+        ? await this.db.getUserTrackedTokens(user.id, chatId)
+        : await this.db.getGroupTrackedTokens(chatId);
+
       const selectedToken = tokens.find(token => token.id.toString() === tokenId.toString());
 
       if (!selectedToken) {
@@ -3181,21 +3237,45 @@ You will no longer receive notifications for this NFT in this chat context.`;
       }
 
       const chatId = this.normalizeChatContext(ctx);
-      const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
+
+      // Check if user is admin (in groups)
+      let isAdmin = true;
+      if (ctx.chat.type === 'group' || ctx.chat.type === 'supergroup') {
+        isAdmin = await this.isUserGroupAdmin(ctx.from.id, ctx.chat.id, ctx);
+      }
+
+      // Admins see their tracked tokens, non-admins see all group tokens
+      const tokens = isAdmin
+        ? await this.db.getUserTrackedTokens(user.id, chatId)
+        : await this.db.getGroupTrackedTokens(chatId);
 
       // Determine if this is from a callback query (has message to edit) or command (no message)
       const isCallback = ctx.callbackQuery && ctx.callbackQuery.message;
 
       if (tokens.length === 0) {
+        // Check if in group and if user is admin
+        const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
         const verifyTypeText = verificationType === 'image' ? 'Image Fee' : 'Trending';
-        const message = `🔍 <b>Verify ${verifyTypeText} Payment</b>\n\n` +
-          `📝 You need to add some NFT collections first!\n\n` +
-          `Add your NFTs to track them before verifying payments.`;
 
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')],
-          [Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]
-        ]);
+        let message, keyboard;
+        if (isGroup && !isAdmin) {
+          // Non-admin in group with no tracked NFTs
+          message = `🔍 <b>Verify ${verifyTypeText} Payment</b>\n\n` +
+            `📝 No NFTs are being tracked in this group yet!\n\n` +
+            `ℹ️ Only admins can add NFT collections to track.`;
+          keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]
+          ]);
+        } else {
+          // Admin or private chat
+          message = `🔍 <b>Verify ${verifyTypeText} Payment</b>\n\n` +
+            `📝 You need to add some NFT collections first!\n\n` +
+            `Add your NFTs to track them before verifying payments.`;
+          keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')],
+            [Markup.button.callback('◀️ Back to Verify Menu', 'menu_verify')]
+          ]);
+        }
 
         if (isCallback) {
           return ctx.editMessageText(message, {
@@ -3262,7 +3342,18 @@ You will no longer receive notifications for this NFT in this chat context.`;
 
       // Get token details from database
       const chatId = this.normalizeChatContext(ctx);
-      const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
+
+      // Check if user is admin (in groups)
+      let isAdmin = true;
+      if (ctx.chat.type === 'group' || ctx.chat.type === 'supergroup') {
+        isAdmin = await this.isUserGroupAdmin(ctx.from.id, ctx.chat.id, ctx);
+      }
+
+      // Admins see their tracked tokens, non-admins see all group tokens
+      const tokens = isAdmin
+        ? await this.db.getUserTrackedTokens(user.id, chatId)
+        : await this.db.getGroupTrackedTokens(chatId);
+
       const selectedToken = tokens.find(token => token.id.toString() === tokenId.toString());
 
       if (!selectedToken) {
@@ -3602,15 +3693,36 @@ You will no longer receive notifications for this NFT in this chat context.`;
       // If in group, show only group's tokens (existing behavior)
       const chatId = this.normalizeChatContext(ctx);
       logger.info(`[showMyTokens] Showing group-specific tokens for chat ${chatId}`);
-      const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
-      logger.info(`[showMyTokens] Found ${tokens.length} tokens for user ${user.id} in chat ${chatId}`);
+
+      // Check if user is admin (in groups)
+      let isAdmin = true;
+      if (ctx.chat.type === 'group' || ctx.chat.type === 'supergroup') {
+        isAdmin = await this.isUserGroupAdmin(ctx.from.id, ctx.chat.id, ctx);
+      }
+
+      // Admins see their tracked tokens, non-admins see all group tokens
+      const tokens = isAdmin
+        ? await this.db.getUserTrackedTokens(user.id, chatId)
+        : await this.db.getGroupTrackedTokens(chatId);
+
+      logger.info(`[showMyTokens] Found ${tokens.length} tokens for ${isAdmin ? 'admin' : 'non-admin'} user ${user.id} in chat ${chatId}`);
 
       if (tokens.length === 0) {
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')],
-          [Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]
-        ]);
-        const message = '🔍 You haven\'t added any tokens yet!\n\nUse the button below to start tracking NFT collections.';
+        let message;
+        let keyboard;
+
+        if (isAdmin) {
+          keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')],
+            [Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]
+          ]);
+          message = '🔍 You haven\'t added any tokens yet!\n\nUse the button below to start tracking NFT collections.';
+        } else {
+          keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]
+          ]);
+          message = '🔍 No NFTs are being tracked in this group yet!\n\nℹ️ Only admins can add NFT collections to track.';
+        }
 
         // Check if this is a callback query (has callbackQuery) or command
         if (ctx.callbackQuery) {
@@ -3639,7 +3751,11 @@ You will no longer receive notifications for this NFT in this chat context.`;
         tokensByChain[chainName].push(token);
       });
 
-      let message = `🎯 <b>Your Tracked NFTs</b> (${tokens.length} total)\n\n`;
+      // Different header for admins vs non-admins
+      let message = isAdmin
+        ? `🎯 <b>Your Tracked NFTs</b> (${tokens.length} total)\n\n`
+        : `🎯 <b>Tracked NFTs in this Group</b> (${tokens.length} total)\n\nℹ️ <i>Read-only view - only admins can manage collections</i>\n\n`;
+
       const keyboard = [];
 
       for (const [chainName, chainTokens] of Object.entries(tokensByChain)) {
@@ -3661,17 +3777,25 @@ You will no longer receive notifications for this NFT in this chat context.`;
           }
           message += '\n';
 
-          keyboard.push([
-            Markup.button.callback(
-              `🗑️ Remove ${token.token_name || token.contract_address.slice(0, 8)}...`,
-              `remove_${token.id}`
-            )
-          ]);
+          // Only show remove button for admins
+          if (isAdmin) {
+            keyboard.push([
+              Markup.button.callback(
+                `🗑️ Remove ${token.token_name || token.contract_address.slice(0, 8)}...`,
+                `remove_${token.id}`
+              )
+            ]);
+          }
         });
         message += '\n';
       }
 
-      keyboard.push([Markup.button.callback('➕ Add More NFTs', 'add_token_start'), Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]);
+      // Bottom buttons - different for admins vs non-admins
+      if (isAdmin) {
+        keyboard.push([Markup.button.callback('➕ Add More NFTs', 'add_token_start'), Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]);
+      } else {
+        keyboard.push([Markup.button.callback('◀️ Back to NFTs Menu', 'menu_tokens')]);
+      }
 
       // Check if this is a callback query or command
       if (ctx.callbackQuery) {
@@ -3701,19 +3825,43 @@ You will no longer receive notifications for this NFT in this chat context.`;
       }
 
       const chatId = this.normalizeChatContext(ctx);
-      const tokens = await this.db.getUserTrackedTokens(user.id, chatId);
+
+      // Check if user is admin (in groups)
+      let isAdmin = true;
+      if (ctx.chat.type === 'group' || ctx.chat.type === 'supergroup') {
+        isAdmin = await this.isUserGroupAdmin(ctx.from.id, ctx.chat.id, ctx);
+      }
+
+      // Admins see their tracked tokens, non-admins see all group tokens
+      const tokens = isAdmin
+        ? await this.db.getUserTrackedTokens(user.id, chatId)
+        : await this.db.getGroupTrackedTokens(chatId);
 
       // Debug logging
-      console.log(`[showTrendingTypeMenu] User: ${user.id}, ChatId: ${chatId}, Tokens found: ${tokens.length} (using database)`);
+      console.log(`[showTrendingTypeMenu] User: ${user.id}, ChatId: ${chatId}, IsAdmin: ${isAdmin}, Tokens found: ${tokens.length}`);
       if (tokens.length > 0) {
         console.log(`[showTrendingTypeMenu] Token details:`, tokens.map(t => ({ id: t.id, name: t.token_name, address: t.contract_address })));
       }
 
       if (tokens.length === 0) {
-        const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')]
-        ]);
-        return ctx.reply('📝 You need to add some NFT collections first!\n\nUse /add_token to track your first NFT collection.', keyboard);
+        // Check if in group and if user is admin
+        const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+
+        let message, keyboard;
+        if (isGroup && !isAdmin) {
+          // Non-admin in group with no tracked NFTs
+          message = '📝 No NFTs are being tracked in this group yet!\n\nℹ️ Only admins can add NFT collections to track.';
+          keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('◀️ Back to Trending Menu', 'menu_trending')]
+          ]);
+        } else {
+          // Admin or private chat
+          message = '📝 You need to add some NFT collections first!\n\nUse /add_token to track your first NFT collection.';
+          keyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('➕ Add Your First NFT', 'add_token_start')]
+          ]);
+        }
+        return ctx.reply(message, keyboard);
       }
 
       const trendingType = isPremium ? 'Premium' : 'Normal';

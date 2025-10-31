@@ -558,6 +558,23 @@ class Database {
     return await this.all(sql, params);
   }
 
+  async getGroupTrackedTokens(chatId, chainName = null) {
+    let sql = `SELECT DISTINCT ON (tt.id) tt.*, true as notification_enabled
+               FROM tracked_tokens tt
+               JOIN user_subscriptions us ON tt.id = us.token_id
+               WHERE us.chat_id = $1 AND tt.is_active = true`;
+
+    const params = [chatId];
+
+    if (chainName) {
+      sql += ` AND tt.chain_name = $2`;
+      params.push(chainName);
+    }
+
+    sql += ` ORDER BY tt.id, tt.created_at DESC`;
+    return await this.all(sql, params);
+  }
+
   async getUserTrackedTokensByChain(userId, chatId, chainName) {
     return await this.getUserTrackedTokens(userId, chatId, chainName);
   }

@@ -1954,15 +1954,6 @@ Simple and focused - boost your NFTs easily! 🚀`;
 
       logger.info(`[GROUP_START] User ${userId} (${ctx.from.username}) ran /startminty in group ${groupId} (${groupTitle})`);
 
-      // Check if user is admin
-      const isAdmin = await this.isUserGroupAdmin(userId, groupId, ctx);
-      if (!isAdmin) {
-        logger.warn(`[GROUP_START] User ${userId} is NOT an admin in group ${groupId}`);
-        return ctx.reply('⚠️ Only group admins can configure NFT tracking.');
-      }
-
-      logger.info(`[GROUP_START] User ${userId} verified as admin`);
-
       // Ensure user exists in database
       await this.db.createUser(ctx.from.id.toString(), ctx.from.username, ctx.from.first_name);
       const user = await this.db.getUser(ctx.from.id.toString());
@@ -2028,15 +2019,6 @@ select an option below:`;
       logger.info(`[PUBLIC_CONFIG] Found group context: ${groupContext.group_title} (${groupContext.group_chat_id})`);
 
       const userId = ctx.from.id;
-
-      // Verify user is still admin
-      const isAdmin = await this.isUserGroupAdmin(userId, groupContext.group_chat_id, ctx);
-      if (!isAdmin) {
-        logger.warn(`[PUBLIC_CONFIG] User ${userId} is NOT admin in group ${groupContext.group_chat_id}`);
-        return ctx.reply('⚠️ Only group admins can configure tracking.');
-      }
-
-      logger.info(`[PUBLIC_CONFIG] User ${userId} verified as admin`);
 
       // Ensure user exists in database
       await this.db.createUser(ctx.from.id.toString(), ctx.from.username, ctx.from.first_name);
@@ -2820,14 +2802,37 @@ You will no longer receive notifications for this NFT in this chat context.`;
   }
 
   async showTokensMenu(ctx) {
-    const message = `📊 <b>NFT Management</b>
+    // Check if user is admin (in groups)
+    let isAdmin = true;
+    if (ctx.chat.type === 'group' || ctx.chat.type === 'supergroup') {
+      isAdmin = await this.isUserGroupAdmin(ctx.from.id, ctx.chat.id, ctx);
+    }
+
+    let message;
+    let keyboard;
+
+    if (isAdmin) {
+      // Admins see full management options
+      message = `📊 <b>NFT Management</b>
 
 <b>Manage your NFT collections:</b>`;
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('➕ Add NFT Collection', 'add_token_start'), Markup.button.callback('👁️ View My NFTs', 'my_tokens')],
-      [Markup.button.callback('🗑️ Remove NFT Collection', 'remove_token')],
-      [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
-    ]);
+      keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('➕ Add NFT Collection', 'add_token_start'), Markup.button.callback('👁️ View My NFTs', 'my_tokens')],
+        [Markup.button.callback('🗑️ Remove NFT Collection', 'remove_token')],
+        [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
+      ]);
+    } else {
+      // Non-admins only see view option
+      message = `📊 <b>NFT Collections</b>
+
+<b>View tracked NFT collections in this group:</b>
+
+ℹ️ <i>Only admins can add or remove collections</i>`;
+      keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('👁️ View Tracked NFTs', 'my_tokens')],
+        [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
+      ]);
+    }
 
     return this.sendOrEditMenu(ctx, message, keyboard);
   }

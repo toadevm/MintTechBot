@@ -39,7 +39,7 @@ class MintyRushBot {
 
   async initialize() {
     try {
-      logger.info('Starting MintyRushBot initialization...');
+      logger.info('Starting Minty RushBot initialization...');
 
       this.bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
@@ -231,7 +231,7 @@ class MintyRushBot {
 
       this.setupGracefulShutdown();
 
-      logger.info('🚀 MintyRushBot fully initialized and running!');
+      logger.info('🚀 Minty RushBot fully initialized and running!');
 
       await this.logSystemStatus();
 

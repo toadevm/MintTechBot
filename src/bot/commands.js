@@ -1862,7 +1862,7 @@ Choose your trending boost option:`;
             break;
 
           case 'help':
-            const helpMessage = `📋 <b>MintyRushBot Commands</b>
+            const helpMessage = `📋 <b>Minty RushBot Commands</b>
 
 🎯 <b>NFT Management:</b>
 • /add_token - Add NFT collection to track
@@ -2001,7 +2001,7 @@ Simple and focused - boost your NFTs easily! 🚀`;
       }
 
       // Show message with two buttons
-      const message = `🎉 <b>Welcome to MintyRush!</b>
+      const message = `🎉 <b>Welcome to Minty Rush!</b>
 
 To configure bot for <b>${groupTitle}</b>
 select an option below:`;
@@ -2012,7 +2012,7 @@ select an option below:`;
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('💬 Setup in TG Chat', `public_config_${setupToken}`)],
-        [Markup.button.url('🤖 Setup inside bot chat', deepLink)]
+        [Markup.button.url('🤖 Setup inside BOT', deepLink)]
       ]);
 
       await ctx.replyWithHTML(message, keyboard);
@@ -2124,7 +2124,7 @@ select an option below:`;
       if (ctx.chat.type === 'private' && !configuringGroupId) {
         return ctx.replyWithHTML(
           '❌ <b>Private tracking is not available</b>\n\n' +
-          'Please add this bot to a group or channel and use the <b>Setup inside bot chat</b> button to track NFTs.\n\n' +
+          'Please add this bot to a group or channel and use the <b>Setup inside BOT</b> button to track NFTs.\n\n' +
           'You can still view your tracked NFTs from groups here in DM.'
         );
       }
@@ -2902,7 +2902,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
   async showImagesMenu(ctx) {
     const message = `🖼️ <b>NFT Image Display</b>
 
-<b>Enable real NFT images instead of CandyCodex image:</b>`;
+<b>Enable real NFT images instead of Candy Codex image:</b>`;
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('💳 Display NFT Image', 'buy_image_menu')],
       [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
@@ -3099,7 +3099,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
       const message = `🎨 <b>Image Fee - Select Duration</b>\n\n` +
         `🎯 <b>Selected NFT:</b> ${selectedToken.token_name || 'Unknown'} (${selectedToken.token_symbol || 'N/A'})\n` +
         `🔗 <b>Blockchain:</b> ${chainEmoji} ${chainDisplay}\n\n` +
-        `Choose how long you want NFT images displayed instead of the CandyCodex image:\n\n` +
+        `Choose how long you want NFT images displayed instead of the Candy Codex image:\n\n` +
         `🔹 <b>30 days</b> - ${prices[30]} ${symbol}\n` +
         `🔹 <b>60 days</b> - ${prices[60]} ${symbol}\n` +
         `🔹 <b>90 days</b> - ${prices[90]} ${symbol}\n` +
@@ -4791,7 +4791,7 @@ Select trending duration:`;
   async showImageDurationSelection(ctx) {
     try {
       const message = `🎨 <b>Image Fee - Select Duration</b>\n\n` +
-        `Choose how long you want NFT images displayed instead of the CandyCodex image:\n\n` +
+        `Choose how long you want NFT images displayed instead of the Candy Codex image:\n\n` +
         `🔹 <b>30 days</b>\n` +
         `🔹 <b>60 days</b>\n` +
         `🔹 <b>90 days</b>\n` +

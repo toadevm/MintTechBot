@@ -230,7 +230,7 @@ I help you track NFT collections and get real-time alerts for:
  * @returns {string} HTML formatted help message
  */
 function formatHelpMessage() {
-  return `📋 <b>MintyRushBot Commands</b>
+  return `📋 <b>Minty RushBot Commands</b>
 
 🎯 <b>NFT Management:</b>
 • /add_token - Add NFT collection to track

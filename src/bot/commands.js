@@ -2791,6 +2791,26 @@ You will no longer receive notifications for this NFT in this chat context.`;
       const groupsWithTitles = groupsWithAdminCheck.filter(g => g && g.isAdmin);
       logger.info(`[CONTEXT_SELECTION] User ${ctx.from.id} is admin in ${groupsWithTitles.length} groups`);
 
+      // If user has no admin groups, show helpful message
+      if (groupsWithTitles.length === 0) {
+        const message = `📭 <b>No Groups Available</b>\n\n` +
+          `You don't have any groups in common with this bot yet, or you're not an admin in those groups.\n\n` +
+          `<b>To get started:</b>\n` +
+          `1️⃣ Add me to your desired Telegram group\n` +
+          `2️⃣ Make sure you are an admin in that group\n` +
+          `3️⃣ Run /startminty in the group to set it up\n` +
+          `4️⃣ Come back here to add NFTs\n\n` +
+          `💡 Use the button below to start adding me to a group!`;
+
+        const botUsername = ctx.botInfo?.username || (await ctx.telegram.getMe()).username;
+        const keyboard = Markup.inlineKeyboard([
+          [Markup.button.url('➕ Add Bot to Group', `https://t.me/${botUsername}?startgroup=true`)],
+          [Markup.button.callback('◀️ Back', 'menu_tokens')]
+        ]);
+
+        return this.sendOrEditMenu(ctx, message, keyboard);
+      }
+
       // Pagination settings
       const groupsPerPage = 6;
       const totalPages = Math.ceil(groupsWithTitles.length / groupsPerPage);

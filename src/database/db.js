@@ -190,6 +190,9 @@ class Database {
         transaction_hash VARCHAR(255) UNIQUE NOT NULL,
         payer_address VARCHAR(255) NOT NULL,
         trending_duration INTEGER NOT NULL,
+        tier VARCHAR(50) DEFAULT 'normal',
+        group_link TEXT,
+        group_username VARCHAR(255),
         start_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         end_time TIMESTAMP WITH TIME ZONE NOT NULL,
         is_active BOOLEAN DEFAULT true,
@@ -197,7 +200,8 @@ class Database {
         validation_timestamp TIMESTAMP WITH TIME ZONE,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         FOREIGN KEY (user_id) REFERENCES users (id),
-        FOREIGN KEY (token_id) REFERENCES tracked_tokens (id)
+        FOREIGN KEY (token_id) REFERENCES tracked_tokens (id),
+        CHECK (tier IN ('normal', 'premium'))
       )`,
 
       `CREATE TABLE IF NOT EXISTS processed_transactions (
@@ -249,8 +253,10 @@ class Database {
         is_active BOOLEAN DEFAULT true,
         show_trending BOOLEAN DEFAULT true,
         show_all_activities BOOLEAN DEFAULT false,
+        trending_tier VARCHAR(50) DEFAULT 'normal',
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-        FOREIGN KEY (added_by_user_id) REFERENCES users (id)
+        FOREIGN KEY (added_by_user_id) REFERENCES users (id),
+        CHECK (trending_tier IN ('none', 'normal', 'premium', 'both'))
       )`,
 
       `CREATE TABLE IF NOT EXISTS group_contexts (
@@ -407,6 +413,107 @@ class Database {
         }
       } catch (error) {
         logger.warn('Migration warning for Bitcoin chain_name fix:', error.message);
+      }
+
+      // Migration: Add tier column to trending_payments
+      try {
+        await this.query(`
+          ALTER TABLE trending_payments
+          ADD COLUMN IF NOT EXISTS tier VARCHAR(50) DEFAULT 'normal'
+        `);
+        logger.info('✅ Migration: Added tier column to trending_payments');
+      } catch (error) {
+        if (!error.message.includes('already exists')) {
+          logger.warn('Migration warning for trending_payments tier column:', error.message);
+        }
+      }
+
+      // Migration: Add trending_tier column to channels
+      try {
+        await this.query(`
+          ALTER TABLE channels
+          ADD COLUMN IF NOT EXISTS trending_tier VARCHAR(50) DEFAULT 'normal'
+        `);
+        logger.info('✅ Migration: Added trending_tier column to channels');
+      } catch (error) {
+        if (!error.message.includes('already exists')) {
+          logger.warn('Migration warning for channels trending_tier column:', error.message);
+        }
+      }
+
+      // Migration: Create index for tier queries
+      try {
+        await this.query(`
+          CREATE INDEX IF NOT EXISTS idx_trending_payments_tier
+          ON trending_payments(tier, is_active, end_time)
+        `);
+        logger.info('✅ Migration: Created index for trending_payments tier queries');
+      } catch (error) {
+        if (!error.message.includes('already exists')) {
+          logger.warn('Migration warning for tier index:', error.message);
+        }
+      }
+
+      // Migration: Update channels trending_tier constraint to include 'none'
+      try {
+        // Drop old constraint if exists
+        await this.query(`
+          ALTER TABLE channels
+          DROP CONSTRAINT IF EXISTS channels_trending_tier_check
+        `);
+        // Add new constraint with 'none' included
+        await this.query(`
+          ALTER TABLE channels
+          ADD CONSTRAINT channels_trending_tier_check
+          CHECK (trending_tier IN ('none', 'normal', 'premium', 'both'))
+        `);
+        logger.info('✅ Migration: Updated channels trending_tier constraint to include none');
+      } catch (error) {
+        if (!error.message.includes('already exists')) {
+          logger.warn('Migration warning for channels tier constraint:', error.message);
+        }
+      }
+
+      // Migration: Add group link columns to trending_payments
+      try {
+        await this.query(`
+          ALTER TABLE trending_payments
+          ADD COLUMN IF NOT EXISTS group_link TEXT,
+          ADD COLUMN IF NOT EXISTS group_username VARCHAR(255)
+        `);
+        logger.info('✅ Migration: Added group link columns to trending_payments');
+      } catch (error) {
+        if (!error.message.includes('already exists')) {
+          logger.warn('Migration warning for group link columns:', error.message);
+        }
+      }
+
+      // Migration: Set 'none' tier channels to 'normal' to enable broadcasts
+      try {
+        const result = await this.query(`
+          UPDATE channels
+          SET trending_tier = 'normal'
+          WHERE trending_tier = 'none'
+        `);
+        if (result.rowCount > 0) {
+          logger.info(`✅ Migration: Set ${result.rowCount} channels from 'none' to 'normal' tier to enable trending broadcasts`);
+        }
+      } catch (error) {
+        logger.warn('Migration warning for channel tier restore:', error.message);
+      }
+
+      // Migration: Convert 'both' tier to 'normal' to prevent duplicate broadcasts
+      try {
+        const result = await this.query(`
+          UPDATE channels
+          SET trending_tier = 'normal'
+          WHERE trending_tier = 'both'
+        `);
+        if (result.rowCount > 0) {
+          logger.info(`✅ Migration: Converted ${result.rowCount} channels from 'both' to 'normal' tier to prevent duplicate broadcasts`);
+        }
+      } catch (error) {
+        logger.warn('Migration warning for both tier conversion:', error.message);
       }
 
       logger.info('Database migration completed');
@@ -921,13 +1028,13 @@ class Database {
     return await this.all(sql, [userId]);
   }
 
-  async addTrendingPayment(userId, tokenId, paymentAmount, transactionHash, durationHours, payerAddress = null) {
+  async addTrendingPayment(userId, tokenId, paymentAmount, transactionHash, durationHours, payerAddress = null, tier = 'normal', groupLink = null, groupUsername = null) {
     const endTime = new Date(Date.now() + (durationHours * 60 * 60 * 1000)).toISOString();
     const sql = `INSERT INTO trending_payments
-                 (user_id, token_id, payment_amount, transaction_hash, payer_address, trending_duration, end_time, is_validated, validation_timestamp)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW())
+                 (user_id, token_id, payment_amount, transaction_hash, payer_address, trending_duration, tier, group_link, group_username, end_time, is_validated, validation_timestamp)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, NOW())
                  RETURNING id`;
-    const result = await this.query(sql, [userId, tokenId, paymentAmount, transactionHash, payerAddress, durationHours, endTime]);
+    const result = await this.query(sql, [userId, tokenId, paymentAmount, transactionHash, payerAddress, durationHours, tier, groupLink, groupUsername, endTime]);
     return { id: result.rows[0]?.id };
   }
 
@@ -962,6 +1069,42 @@ class Database {
                  WHERE tp.is_active = true AND tp.end_time > NOW()
                  ORDER BY tp.payment_amount DESC, tp.start_time DESC`;
     return await this.all(sql);
+  }
+
+  async getTrendingTokensByTier(tier = null) {
+    let sql = `SELECT tt.*, tp.end_time as trending_end_time, tp.payment_amount, tp.tier
+               FROM tracked_tokens tt
+               JOIN trending_payments tp ON tt.id = tp.token_id
+               WHERE tp.is_active = true AND tp.end_time > NOW()`;
+
+    const params = [];
+    if (tier && tier !== 'both') {
+      sql += ` AND tp.tier = $1`;
+      params.push(tier);
+    }
+
+    sql += ` ORDER BY tp.payment_amount DESC, tp.start_time DESC`;
+    return await this.all(sql, params);
+  }
+
+  async getTokenTrendingTier(contractAddress) {
+    const sql = `SELECT tp.tier, tp.end_time
+                 FROM trending_payments tp
+                 JOIN tracked_tokens tt ON tt.id = tp.token_id
+                 WHERE LOWER(tt.contract_address) = LOWER($1)
+                 AND tp.is_active = true AND tp.end_time > NOW()
+                 ORDER BY tp.created_at DESC LIMIT 1`;
+    return await this.get(sql, [contractAddress]);
+  }
+
+  async getTrendingPaymentForToken(contractAddress) {
+    const sql = `SELECT tp.*, tt.token_symbol
+                 FROM trending_payments tp
+                 JOIN tracked_tokens tt ON tt.id = tp.token_id
+                 WHERE LOWER(tt.contract_address) = LOWER($1)
+                 AND tp.is_active = true AND tp.end_time > NOW()
+                 ORDER BY tp.created_at DESC LIMIT 1`;
+    return await this.get(sql, [contractAddress]);
   }
 
   // Generic helper method for expiring premium features
@@ -1010,6 +1153,13 @@ class Database {
   async getActiveChannels() {
     const sql = 'SELECT * FROM channels WHERE is_active = true';
     return await this.all(sql);
+  }
+
+  async getChannelsByUser(userId) {
+    const sql = `SELECT * FROM channels
+                 WHERE added_by_user_id = $1 AND is_active = true
+                 ORDER BY created_at DESC`;
+    return await this.all(sql, [userId]);
   }
 
   async logWebhook(webhookType, payload, processed = false, errorMessage = null) {
@@ -1240,12 +1390,14 @@ class Database {
         COALESCE(bg.group_chat_id, gc.group_chat_id) as group_chat_id,
         COALESCE(bg.group_title, gc.group_title) as group_title,
         COALESCE(bg.is_setup, false) as is_setup,
+        bg.group_type,
         bg.bot_status,
         bg.last_seen_at,
         gc.setup_token
       FROM bot_groups bg
       FULL OUTER JOIN group_contexts gc ON bg.group_chat_id = gc.group_chat_id
       WHERE (bg.bot_status IN ('member', 'administrator') OR bg.bot_status IS NULL)
+        AND (bg.group_type IS NULL OR bg.group_type IN ('group', 'supergroup'))
       ORDER BY bg.last_seen_at DESC NULLS LAST, COALESCE(bg.group_title, gc.group_title) ASC
     `;
     return await this.all(sql);

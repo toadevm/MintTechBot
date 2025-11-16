@@ -1132,13 +1132,13 @@ class SecureTrendingService {
   // ========== END SOLANA PAYMENT VALIDATION ==========
 
   // Process validated trending payment (secure - no private keys)
-  async processValidatedTrendingPayment(userId, tokenId, txHash, durationHours, isPremium = false) {
+  async processValidatedTrendingPayment(userId, tokenId, txHash, durationHours, isPremium = false, groupLink = null, groupUsername = null) {
     try {
       logger.info(`Processing validated trending payment: user=${userId}, token=${tokenId}, tx=${txHash}`);
 
       const expectedAmount = this.calculateTrendingFee(durationHours, isPremium);
       const validation = await this.validateTrendingPayment(txHash, expectedAmount, durationHours);
-      
+
       if (!validation.valid) {
         return {
           success: false,
@@ -1157,14 +1157,18 @@ class SecureTrendingService {
         purpose
       );
 
-      // Add trending payment to database
+      // Add trending payment to database with tier and group link
+      const tier = isPremium ? 'premium' : 'normal';
       const dbResult = await this.db.addTrendingPayment(
         userId,
         tokenId,
         validation.amount,
         txHash,
         durationHours,
-        validation.payer
+        validation.payer,
+        tier,
+        groupLink,
+        groupUsername
       );
 
       logger.info(`Trending payment processed successfully: db_id=${dbResult.id}, tx=${txHash}`);
@@ -1488,13 +1492,16 @@ class SecureTrendingService {
 
       // Process the trending payment (need to add Solana support)
       // For now, we'll add to trending_payments directly
+      // TODO: Detect tier from Solana payment amount
+      const tier = 'normal'; // Default to normal for Solana payments
       const dbResult = await this.db.addTrendingPayment(
         userId,
         matchingPayment.token_id,
         amountLamports.toString(),
         signature,
         matchingPayment.duration_hours,
-        payerAddress
+        payerAddress,
+        tier
       );
 
       // Mark pending payment as matched
@@ -1590,13 +1597,16 @@ class SecureTrendingService {
       );
 
       // Process the trending payment - add to trending_payments directly
+      // TODO: Detect tier from Bitcoin payment amount
+      const tier = 'normal'; // Default to normal for Bitcoin payments
       const dbResult = await this.db.addTrendingPayment(
         userId,
         matchingPayment.token_id,
         amountSats.toString(),
         txid,
         matchingPayment.duration_hours,
-        payerAddress
+        payerAddress,
+        tier
       );
 
       // Mark pending payment as matched
@@ -1621,11 +1631,11 @@ class SecureTrendingService {
   }
 
   // Get trending tokens (database-driven, no smart contract calls)
-  async getTrendingTokens() {
+  async getTrendingTokens(tier = null) {
     try {
       // Expire old trending payments
       await this.db.expireTrendingPayments();
-      const trendingTokens = await this.db.getTrendingTokens();
+      const trendingTokens = await this.db.getTrendingTokensByTier(tier);
 
       // Sort by payment amount (higher first), then by start time (recent first)
       trendingTokens.sort((a, b) => {

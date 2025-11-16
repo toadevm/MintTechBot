@@ -41,23 +41,9 @@ class BotCommands {
     this.STATE_IMAGE_DURATION_SELECT = 'image_duration_select';
     this.STATE_IMAGE_CHAIN_SELECT = 'image_chain_select';
     this.STATE_IMAGE_CONTRACT_INPUT = 'image_contract_input';
+    this.STATE_EXPECTING_GROUP_LINK = 'expecting_group_link';
 
     this.pendingPayments = new Map();
-  }
-
-
-  setUserState(userId, state) {
-    this.userStates.set(userId.toString(), state);
-    logger.debug(`Set user ${userId} state to: ${state}`);
-  }
-
-  getUserState(userId) {
-    return this.userStates.get(userId.toString()) || null;
-  }
-
-  clearUserState(userId) {
-    this.userStates.delete(userId.toString());
-    logger.debug(`Cleared state for user ${userId}`);
   }
 
   // Session data management for multi-step flows
@@ -365,6 +351,12 @@ class BotCommands {
       // Handle private chat context (existing behavior)
       const user = ctx.from;
       await this.db.createUser(user.id.toString(), user.username, user.first_name);
+
+      // Clear stale group context - user is starting fresh
+      this.clearUserState(user.id, 'configuring_group');
+      this.clearUserState(user.id, 'group_title');
+      logger.debug(`[STARTMINTY] Cleared stale group context for fresh start`);
+
       const welcomeMessage = helpers.formatWelcomeMessage();
       const keyboard = helpers.buildMainMenuKeyboard();
 
@@ -424,6 +416,12 @@ class BotCommands {
 
       // Default start behavior - show welcome menu (including from group redirects)
       logger.info(`[BOT_START] Showing welcome menu`);
+
+      // Clear stale group context - user is starting fresh (not from deep link)
+      this.clearUserState(ctx.from.id, 'configuring_group');
+      this.clearUserState(ctx.from.id, 'group_title');
+      logger.debug(`[BOT_START] Cleared stale group context for fresh start`);
+
       const welcomeMessage = helpers.formatWelcomeMessage();
       const keyboard = helpers.buildMainMenuKeyboard();
 
@@ -550,56 +548,12 @@ class BotCommands {
 
 
     bot.command('trending', async (ctx) => {
-      try {
-        await this.db.expireTrendingPayments();
-        const trendingTokens = await this.db.getTrendingTokens();
-        if (trendingTokens.length === 0) {
-          const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('💰 Buy Normal', 'promote_token'), Markup.button.callback('⭐ Buy Premium', 'promote_token_premium')],
-            [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
-          ]);
-          return ctx.replyWithMarkdown(
-            '📊 *No trending NFTs right now*\n\nBe the first to boost your NFT collection!',
-            keyboard
-          );
-        }
-
-        let message = '🔥 *Trending NFT Collections*\n\n';
-        const keyboard = [];
-
-        trendingTokens.forEach((token, index) => {
-          const endTime = new Date(token.trending_end_time);
-          const hoursLeft = Math.max(0, Math.ceil((endTime - new Date()) / (1000 * 60 * 60)));
-          message += `${index + 1}. *${token.token_name || 'Unknown Collection'}*\n`;
-          message += `   📮 \`${token.contract_address}\`\n`;
-          message += `   ⏱️ ${hoursLeft}h left\n`;
-          message += `   💰 Paid: ${ethers.formatEther(token.payment_amount)} ETH\n\n`;
-          keyboard.push([
-            Markup.button.callback(`📊 ${token.token_name || 'View'} Stats`, `stats_${token.id}`)
-          ]);
-        });
-
-        keyboard.push([Markup.button.callback('💰 Boost Your Token', 'promote_token')]);
-
-        await ctx.replyWithMarkdown(message, Markup.inlineKeyboard(keyboard));
-      } catch (error) {
-        logger.error('Error in trending command:', error);
-        ctx.reply('❌ Error retrieving trending tokens. Please try again.');
-      }
+      return this.showTrendingCommand(ctx);
     });
 
 
     bot.command('buy_trending', async (ctx) => {
-      const message = `🚀 *Buy Trending Menu*
-
-Choose your trending boost option:`;
-      const keyboard = Markup.inlineKeyboard([
-        [Markup.button.callback('💫 Buy Trending', 'buy_trending_normal')],
-        [Markup.button.callback('⭐ Buy Trending Premium', 'buy_trending_premium')],
-        [Markup.button.callback('🔥 View Current Trending', 'view_trending')]
-      ]);
-
-      await ctx.replyWithMarkdown(message, keyboard);
+      return this.showBuyTrendingMenu(ctx);
     });
 
 
@@ -612,10 +566,23 @@ Choose your trending boost option:`;
           return ctx.reply('❌ This command only works in channels or groups. Add me to a channel first, then use this command there.');
         }
         const channelTitle = ctx.chat.title || 'Unknown Channel';
-        const userId = ctx.from?.id;
-        if (!userId) {
+        const telegramId = ctx.from?.id;
+        if (!telegramId) {
           return ctx.reply('❌ Unable to identify user. Please try again.');
         }
+
+        // Create user and get database ID
+        const userResult = await this.db.createUser(
+          telegramId.toString(),
+          ctx.from.username,
+          ctx.from.first_name
+        );
+        const userId = userResult.id;
+
+        if (!userId) {
+          return ctx.reply('❌ Error setting up user. Please try again.');
+        }
+
         const result = await this.channels.addChannel(chatId, channelTitle, userId);
         await ctx.reply(result.message);
       } catch (error) {
@@ -748,6 +715,43 @@ Choose your trending boost option:`;
             }
           }
 
+          // Check if user already has a configured group context (from previous token addition)
+          const existingGroupId = this.getUserState(ctx.from.id, 'configuring_group');
+          const existingGroupTitle = this.getUserState(ctx.from.id, 'group_title');
+
+          if (existingGroupId) {
+            logger.info(`[ADD_TOKEN] Reusing existing group context: ${existingGroupTitle} (${existingGroupId})`);
+
+            // Verify user is still admin
+            const isStillAdmin = await this.isUserGroupAdmin(ctx.from.id, existingGroupId, ctx);
+
+            if (isStillAdmin) {
+              // Show chain selection with existing group context
+              if (!this.chainManager) {
+                return ctx.reply('❌ Chain manager not available');
+              }
+
+              const message = `🎯 <b>Adding NFT to:</b> ${existingGroupTitle || 'Group'}\n\n` +
+                `Please select the blockchain chain:`;
+
+              const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
+              chainKeyboard.push([
+                { text: '🔄 Switch Group', callback_data: 'switch_group_context' },
+                { text: '🏠 Main Menu', callback_data: 'main_menu' }
+              ]);
+
+              const keyboard = Markup.inlineKeyboard(chainKeyboard);
+              this.setFlowState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
+              return this.sendOrEditMenu(ctx, message, keyboard);
+            } else {
+              // User is no longer admin - clear stale session
+              this.clearUserState(ctx.from.id, 'configuring_group');
+              this.clearUserState(ctx.from.id, 'group_title');
+              logger.warn(`[ADD_TOKEN] User ${ctx.from.id} is NO LONGER admin in group ${existingGroupId} - clearing stale session`);
+              // Fall through to show context selection menu
+            }
+          }
+
           // Check if user is already in a group - skip context selection
           const chatType = ctx.chat.type;
           if (chatType === 'group' || chatType === 'supergroup') {
@@ -854,9 +858,9 @@ Choose your trending boost option:`;
           await ctx.answerCbQuery();
           return;
         }
-        if (data === 'boost_trending') {
+        if (data === 'boost_trending' || data === 'buy_trending') {
           await ctx.answerCbQuery();
-          return this.showPromoteTokenMenu(ctx);
+          return this.showBuyTrendingMenu(ctx);
         }
         if (data === 'buy_trending_normal') {
           await ctx.answerCbQuery();
@@ -868,20 +872,7 @@ Choose your trending boost option:`;
         }
         if (data === 'back_to_buy_trending') {
           await ctx.answerCbQuery();
-          // Simulate the /buy_trending command
-          const message = `🚀 *Buy Trending Menu*
-
-Choose your trending boost option:`;
-          const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('💫 Buy Trending', 'buy_trending_normal')],
-            [Markup.button.callback('⭐ Buy Trending Premium', 'buy_trending_premium')],
-            [Markup.button.callback('🔥 View Current Trending', 'view_trending')]
-          ]);
-          try {
-            return ctx.editMessageText(message, { parse_mode: 'Markdown', reply_markup: keyboard.reply_markup });
-          } catch (error) {
-            return ctx.replyWithMarkdown(message, keyboard);
-          }
+          return this.showBuyTrendingMenu(ctx);
         }
 
         // Main menu navigation handlers
@@ -891,7 +882,7 @@ Choose your trending boost option:`;
         }
         if (data === 'menu_trending') {
           await ctx.answerCbQuery();
-          return this.showTrendingMenu(ctx);
+          return this.showBuyTrendingMenu(ctx);
         }
         if (data === 'menu_images') {
           await ctx.answerCbQuery();
@@ -914,6 +905,14 @@ Choose your trending boost option:`;
         }
         if (data === 'main_menu') {
           await ctx.answerCbQuery();
+
+          // Clear group configuration context - user is navigating away from flow
+          this.clearUserState(ctx.from.id, 'configuring_group');
+          this.clearUserState(ctx.from.id, 'group_title');
+          this.clearUserState(ctx.from.id, 'pending_group_setup');
+
+          logger.info(`[MAIN_MENU] Cleared group context for user ${ctx.from.id}`);
+
           return this.showMainMenu(ctx);
         }
 
@@ -1233,7 +1232,17 @@ Choose your trending boost option:`;
           }
           const autoDetectedChain = token.chain_name || 'ethereum';
 
-          return this.showTrendingDurationSelection(ctx, tokenId, isPremium, autoDetectedChain);
+          // Store in session for later use
+          const userId = ctx.from.id;
+          this.setUserSession(userId, {
+            pendingTrendingTokenId: tokenId,
+            pendingTrendingTier: isPremium ? 'premium' : 'normal',
+            pendingTrendingChain: autoDetectedChain,
+            pendingTrendingToken: token
+          });
+
+          // Ask for group link before duration selection
+          return this.showGroupLinkInput(ctx, token);
         }
 
         // Trending chain selection handler
@@ -1244,6 +1253,32 @@ Choose your trending boost option:`;
           const isPremium = parts[3] === 'premium';
           const chain = parts[4];
           return this.showTrendingDurationSelection(ctx, tokenId, isPremium, chain);
+        }
+
+        // Skip group link - proceed to duration selection
+        if (data === 'trending_skip_group_link') {
+          await ctx.answerCbQuery();
+          const userId = ctx.from.id;
+
+          // Get session data
+          const session = this.getUserSession(userId);
+          const tokenId = session.pendingTrendingTokenId;
+          const tier = session.pendingTrendingTier;
+          const chain = session.pendingTrendingChain;
+
+          if (!tokenId) {
+            return ctx.reply('❌ Session expired. Please start again.');
+          }
+
+          // Clear state and group link session
+          this.clearUserState(userId);
+          this.setUserSession(userId, {
+            pendingGroupLink: null,
+            pendingGroupUsername: null
+          });
+
+          // Proceed to duration selection
+          return this.showTrendingDurationSelection(ctx, tokenId, tier === 'premium', chain);
         }
 
         // Back to trending chain selection
@@ -1512,16 +1547,6 @@ Choose your trending boost option:`;
           return;
         }
 
-        if (data === 'promote_token') {
-          await ctx.answerCbQuery();
-          return this.showPromoteTokenMenu(ctx, false); // false = normal trending
-        }
-        if (data === 'promote_token_premium') {
-          await ctx.answerCbQuery();
-          return this.showPromoteTokenMenu(ctx, true); // true = premium trending
-        }
-
-
         if (data.startsWith('contract_')) {
           const address = data.replace('contract_', '');
           await ctx.answerCbQuery();
@@ -1529,30 +1554,9 @@ Choose your trending boost option:`;
           return;
         }
 
-        if (data.startsWith('promote_premium_')) {
-          const tokenId = data.replace('promote_premium_', '');
-          await ctx.answerCbQuery();
-          return this.showPromoteDurationMenu(ctx, tokenId, true); // true = premium
-        }
-        if (data.startsWith('promote_')) {
-          const tokenId = data.replace('promote_', '');
-          await ctx.answerCbQuery();
-          return this.showPromoteDurationMenu(ctx, tokenId, false); // false = normal
-        }
-
         if (data === 'main_menu') {
           await ctx.answerCbQuery();
           return this.showMainMenu(ctx);
-        }
-
-        if (data.startsWith('duration_')) {
-          const parts = data.split('_');
-          const tokenId = parts[1];
-          const duration = parseInt(parts[2]);
-          const isPremium = parts[3] === 'premium';
-          const chain = parts[4] || 'ethereum'; // Extract auto-detected chain parameter
-          await ctx.answerCbQuery();
-          return this.showPaymentInstructions(ctx, tokenId, duration, isPremium, chain);
         }
 
         if (data.startsWith('submit_tx_')) {
@@ -1599,62 +1603,115 @@ Example: \`0x1234567890abcdef...\`
 
         if (data === 'channel_settings') {
           await ctx.answerCbQuery();
-          const chatId = ctx.chat.id.toString();
-          return this.channels.handleChannelSettingsCommand(ctx, chatId);
+          // Redirect to channel selection menu instead of using DM chat ID
+          return this.showChannelsMenu(ctx);
         }
 
-        if (data === 'channel_remove_trending') {
+        // Channel selection handler
+        if (data.startsWith('channel_select_')) {
           await ctx.answerCbQuery();
-          const chatId = ctx.chat.id.toString();
+          const channelChatId = data.replace('channel_select_', '');
+          return this.showChannelSettingsForChannel(ctx, channelChatId);
+        }
 
-          const settings = await this.channels.getChannelSettings(chatId);
-          if (settings.success) {
-            const newValue = !settings.settings.show_trending;
-            const result = await this.channels.updateChannelSettings(chatId, {
-              show_trending: newValue ? 1 : 0
-            });
-            if (result.success) {
+        // Channel pagination handler
+        if (data.startsWith('channel_page_')) {
+          await ctx.answerCbQuery();
+          const page = parseInt(data.replace('channel_page_', ''));
+          const user = await this.db.getUser(ctx.from.id.toString());
+          if (!user) {
+            return ctx.reply('Please start the bot first with /startminty');
+          }
+          const channels = await this.db.getChannelsByUser(user.id);
+          return this.showChannelSelectionMenu(ctx, channels, page);
+        }
 
-              return this.channels.handleChannelSettingsCommand(ctx, chatId);
-            } else {
-              return ctx.reply(result.message);
-            }
-          } else {
+        // Cycle through alert modes
+        if (data.startsWith('channel_cycle_mode_')) {
+          await ctx.answerCbQuery();
+          const channelChatId = data.replace('channel_cycle_mode_', '');
+
+          const settings = await this.channels.getChannelSettings(channelChatId);
+          if (!settings.success) {
             return ctx.reply(settings.message);
           }
+
+          const { show_all_activities, trending_tier } = settings.settings;
+
+          // Determine current mode and next mode
+          // Cycle: All Activity → Standard → Premium → None → All Activity...
+          let nextMode = {};
+
+          if (show_all_activities) {
+            // From All Activity → Standard Trending
+            nextMode = { show_all_activities: false, trending_tier: 'normal' };
+          } else if (trending_tier === 'normal') {
+            // From Standard → Premium
+            nextMode = { show_all_activities: false, trending_tier: 'premium' };
+          } else if (trending_tier === 'premium') {
+            // From Premium → None
+            nextMode = { show_all_activities: false, trending_tier: 'none' };
+          } else {
+            // From None → All Activity
+            nextMode = { show_all_activities: true, trending_tier: 'none' };
+          }
+
+          const result = await this.channels.updateChannelSettings(channelChatId, nextMode);
+          if (result.success) {
+            return this.showChannelSettingsForChannel(ctx, channelChatId);
+          } else {
+            return ctx.reply(result.message);
+          }
+        }
+
+        // Add NFTs to channel
+        if (data.startsWith('channel_add_nft_')) {
+          await ctx.answerCbQuery();
+          const channelChatId = data.replace('channel_add_nft_', '');
+
+          // Get channel info to display in flow
+          const settings = await this.channels.getChannelSettings(channelChatId);
+          if (!settings.success) {
+            return ctx.reply(settings.message);
+          }
+
+          // Set channel as target context for NFT addition
+          this.setUserState(ctx.from.id, 'configuring_group', channelChatId);
+          this.setUserState(ctx.from.id, 'group_title', settings.settings.channel_title);
+
+          // Start chain selection flow
+          if (!this.chainManager) {
+            return ctx.reply('❌ Chain manager not available');
+          }
+
+          const message = `🎯 <b>Adding NFT to:</b> ${settings.settings.channel_title}\n\n` +
+            `Please select the blockchain chain:`;
+
+          const chainKeyboard = this.chainManager.getChainSelectionKeyboard();
+          chainKeyboard.push([
+            { text: '◀️ Back', callback_data: `channel_select_${channelChatId}` }
+          ]);
+
+          const keyboard = Markup.inlineKeyboard(chainKeyboard);
+          this.setFlowState(ctx.from.id, this.STATE_EXPECTING_CHAIN_FOR_CONTRACT);
+          return this.sendOrEditMenu(ctx, message, keyboard);
+        }
+
+        // Legacy handlers (keep for backwards compatibility)
+        if (data === 'channel_remove_trending') {
+          await ctx.answerCbQuery();
+          // Redirect to channel selection
+          return this.showChannelsMenu(ctx);
         }
 
         if (data === 'channel_remove_activity') {
           await ctx.answerCbQuery();
-          const chatId = ctx.chat.id.toString();
-
-          const settings = await this.channels.getChannelSettings(chatId);
-          if (settings.success) {
-            const newValue = !settings.settings.show_all_activities;
-            const result = await this.channels.updateChannelSettings(chatId, {
-              show_all_activities: newValue ? 1 : 0
-            });
-            if (result.success) {
-
-              return this.channels.handleChannelSettingsCommand(ctx, chatId);
-            } else {
-              return ctx.reply(result.message);
-            }
-          } else {
-            return ctx.reply(settings.message);
-          }
+          // Redirect to channel selection
+          return this.showChannelsMenu(ctx);
         }
         if (data === '/buy_trending') {
           await ctx.answerCbQuery();
-          const message = `🚀 *Buy Trending Menu*
-
-Choose your trending boost option:`;
-          const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('💫 Buy Trending', 'buy_trending_normal')],
-            [Markup.button.callback('⭐ Buy Trending Premium', 'buy_trending_premium')],
-            [Markup.button.callback('🔥 View Current Trending', 'view_trending')]
-          ]);
-          return ctx.replyWithMarkdown(message, keyboard);
+          return this.showBuyTrendingMenu(ctx);
         }
         if (data === 'help_contact') {
           await ctx.answerCbQuery();
@@ -1686,6 +1743,7 @@ Choose your trending boost option:`;
 
       logger.info(`[TEXT_HANDLER] Received text from user ${userId} in chat ${ctx.chat.id} (${ctx.chat.type}): "${text.substring(0, 50)}..."`);
       logger.info(`[TEXT_HANDLER] UserState: ${userState || 'NONE'}`);
+      logger.info(`[TEXT_HANDLER] Checking against STATE_EXPECTING_GROUP_LINK: ${this.STATE_EXPECTING_GROUP_LINK}`);
 
       // In groups/supergroups, check if we should respond
       const chatType = ctx.chat.type;
@@ -1766,6 +1824,10 @@ Choose your trending boost option:`;
       } else if (userState === this.STATE_FOOTER_TICKER_INPUT) {
         await this.handleFooterTickerInput(ctx, text);
         return;
+      } else if (userState === this.STATE_EXPECTING_GROUP_LINK) {
+        logger.info(`[TEXT_HANDLER] Matched STATE_EXPECTING_GROUP_LINK - routing to handleGroupLinkInput`);
+        await this.handleGroupLinkInput(ctx, text);
+        return;
       } else if (userState === this.STATE_FOOTER_CONTRACT_INPUT) {
         await this.handleEnhancedFooterContract(ctx, text);
         return;
@@ -1784,10 +1846,16 @@ Choose your trending boost option:`;
 
     bot.on('channel_post', async (ctx) => {
       try {
-        const text = ctx.channelPost.text;
-        if (!text) return;
+        logger.info(`[CHANNEL_POST] Received update from channel ${ctx.chat.id} (${ctx.chat.title || 'Unknown'})`);
+        logger.info(`[CHANNEL_POST] ctx.from: ${ctx.from ? ctx.from.id : 'undefined'}`);
 
-        logger.debug(`Channel post received: "${text}" in channel ${ctx.chat.id}`);
+        const text = ctx.channelPost.text;
+        if (!text) {
+          logger.debug(`[CHANNEL_POST] No text in message`);
+          return;
+        }
+
+        logger.info(`[CHANNEL_POST] Message: "${text}"`);
 
 
         let command = null;
@@ -1818,28 +1886,53 @@ Choose your trending boost option:`;
             const channelTitle = ctx.chat.title || 'Unknown Channel';
 
             let userId = null;
+            let username = null;
+            let firstName = null;
+
             if (ctx.from) {
-
               userId = ctx.from.id.toString();
+              username = ctx.from.username || null;
+              firstName = ctx.from.first_name || 'User';
             } else {
-
               try {
                 const chatAdmins = await ctx.telegram.getChatAdministrators(chatId);
                 const owner = chatAdmins.find(admin => admin.status === 'creator');
                 if (owner && owner.user) {
                   userId = owner.user.id.toString();
+                  username = owner.user.username || null;
+                  firstName = owner.user.first_name || 'Channel Owner';
                   logger.info(`Using channel owner ${userId} for anonymous channel post`);
                 } else {
-
                   userId = `channel_${chatId}`;
+                  username = null;
+                  firstName = channelTitle;
                   logger.info(`Using channel ID ${userId} for anonymous channel post`);
                 }
               } catch (error) {
                 logger.warn('Could not get channel admins, using channel ID as user:', error.message);
                 userId = `channel_${chatId}`;
+                username = null;
+                firstName = channelTitle;
               }
             }
-            const result = await this.channels.addChannel(chatId, channelTitle, userId);
+
+            // Ensure user exists in database before adding channel
+            let dbUserId;
+            try {
+              const userResult = await this.db.createUser(userId, username, firstName);
+              dbUserId = userResult.id;
+              logger.info(`Ensured user ${userId} exists in database with DB ID ${dbUserId}`);
+
+              if (!dbUserId) {
+                logger.error(`createUser returned null ID for user ${userId}`);
+                return ctx.reply('❌ Error setting up user. Please try again.');
+              }
+            } catch (error) {
+              logger.error(`Error ensuring user ${userId} exists:`, error);
+              return ctx.reply('❌ Error setting up user. Please try again.');
+            }
+
+            const result = await this.channels.addChannel(chatId, channelTitle, dbUserId);
             await ctx.reply(result.message);
             break;
 
@@ -2100,7 +2193,9 @@ select an option below:`;
         }
       }, 60000);
 
-      this.clearUserState(ctx.from.id);
+      // DON'T clear all user states here - we need to preserve configuring_group!
+      // The specific listening mode states are cleared below individually
+      // this.clearUserState(ctx.from.id);
 
       // Clear all listening mode state
       const userId = ctx.from.id.toString();
@@ -2164,11 +2259,12 @@ select an option below:`;
           }
         }
 
-        // Clear group session after successful addition (if it was set)
-        if (configuringGroupId) {
-          this.clearUserState(ctx.from.id, 'configuring_group');
-          this.clearUserState(ctx.from.id, 'group_title');
-        }
+        // Don't clear group session - allow adding multiple tokens to same group
+        // User can manually switch groups using the "Switch Group" button if needed
+        // if (configuringGroupId) {
+        //   this.clearUserState(ctx.from.id, 'configuring_group');
+        //   this.clearUserState(ctx.from.id, 'group_title');
+        // }
 
         // Show success message
         const keyboard = {
@@ -2309,11 +2405,33 @@ select an option below:`;
 
       ctx.reply('🔍 Validating your transaction... This may take a few moments.');
 
+      // Extract group link from pending payment
+      const groupLink = pendingPayment.groupLink || null;
+      const groupUsername = pendingPayment.groupUsername || null;
 
-      const result = await this.trending.processSimplePayment(
-        userId,
-        txHash
-      );
+      // Use secure trending service if available
+      let result;
+      if (this.secureTrending && pendingPayment.tokenId && pendingPayment.duration !== undefined) {
+        // Get database user ID
+        const userResult = await this.db.createUser(userId, ctx.from.username, ctx.from.first_name);
+        const dbUserId = userResult.id;
+
+        result = await this.secureTrending.processValidatedTrendingPayment(
+          dbUserId,
+          pendingPayment.tokenId,
+          txHash,
+          pendingPayment.duration,
+          pendingPayment.isPremium || false,
+          groupLink,
+          groupUsername
+        );
+      } else {
+        // Fallback to old trending service
+        result = await this.trending.processSimplePayment(
+          userId,
+          txHash
+        );
+      }
 
       this.clearUserState(userId);
       this.pendingPayments.delete(userId);
@@ -2473,7 +2591,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
       const trendingTokens = await this.db.getTrendingTokens();
       if (trendingTokens.length === 0) {
         const keyboard = Markup.inlineKeyboard([
-          [Markup.button.callback('💰 Buy Normal', 'promote_token'), Markup.button.callback('⭐ Buy Premium', 'promote_token_premium')],
+          [Markup.button.callback('🚀 Buy Trending', 'buy_trending')],
           [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
         ]);
         return ctx.replyWithMarkdown(
@@ -2497,171 +2615,12 @@ You will no longer receive notifications for this NFT in this chat context.`;
         ]);
       });
 
-      keyboard.push([Markup.button.callback('💰 Boost Your Token', 'promote_token')]);
+      keyboard.push([Markup.button.callback('🚀 Boost Your Token', 'buy_trending')]);
 
       await ctx.replyWithMarkdown(message, Markup.inlineKeyboard(keyboard));
     } catch (error) {
       logger.error('Error in showTrendingCommand:', error);
       ctx.reply('❌ Error loading trending tokens. Please try again.');
-    }
-  }
-
-  async showPromoteTokenMenu(ctx, isPremium = false) {
-    try {
-      const user = await this.db.getUser(ctx.from.id.toString());
-      if (!user) {
-        return ctx.reply('Please start the bot first with /startminty');
-      }
-
-      const chatId = this.normalizeChatContext(ctx);
-
-      // Check if user is admin (in groups)
-      let isAdmin = true;
-      if (ctx.chat.type === 'group' || ctx.chat.type === 'supergroup') {
-        isAdmin = await this.isUserGroupAdmin(ctx.from.id, ctx.chat.id, ctx);
-      }
-
-      // In private chat, fetch ALL tokens across all contexts
-      // In groups: Admins see their tracked tokens, non-admins see all group tokens
-      let userTokens;
-      if (ctx.chat.type === 'private') {
-        userTokens = await this.db.getUserTrackedTokensWithContext(user.id);
-      } else {
-        userTokens = isAdmin
-          ? await this.db.getUserTrackedTokens(user.id, chatId)
-          : await this.db.getGroupTrackedTokens(chatId);
-      }
-
-      // Debug logging
-      console.log(`[showPromoteTokenMenu] User: ${user.id}, ChatType: ${ctx.chat.type}, IsAdmin: ${isAdmin}, Tokens found: ${userTokens.length}, isPremium: ${isPremium}`);
-
-      if (!userTokens || userTokens.length === 0) {
-        // Check if in group and if user is admin
-        const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-
-        let message, keyboard;
-        if (isGroup && !isAdmin) {
-          // Non-admin in group with no tracked NFTs
-          message = '📝 No NFTs are being tracked in this group yet!\n\nℹ️ Only admins can add NFT collections to track.';
-          keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('◀️ Back to Trending Menu', 'menu_trending')]
-          ]);
-        } else {
-          // Admin or private chat
-          message = '📝 You need to add some NFT collections first!';
-          keyboard = Markup.inlineKeyboard([[Markup.button.callback('➕ Add NFT Collection', 'add_token_start')]]);
-        }
-        return ctx.replyWithHTML(message, keyboard);
-      }
-
-      const trendingType = isPremium ? 'Premium' : 'Normal';
-      const message = `🚀 Select an NFT collection for ${trendingType} trending boost:`;
-
-      const keyboard = [];
-
-      userTokens.forEach((token, index) => {
-        keyboard.push([{
-          text: `🚀 ${token.token_name || `Token ${index + 1}`}`,
-          callback_data: isPremium ? `promote_premium_${token.id}` : `promote_${token.id}`
-        }]);
-      });
-
-      keyboard.push([{
-        text: '◀️ Back to Trending & Boost',
-        callback_data: 'menu_trending'
-      }]);
-
-      try {
-        return await ctx.editMessageText(message, {
-          reply_markup: {
-            inline_keyboard: keyboard
-          }
-        });
-      } catch (error) {
-        // Ignore "message is not modified" error (happens when clicking the same button twice)
-        if (error.response?.error_code === 400 && error.response?.description?.includes('message is not modified')) {
-          logger.debug('Message content unchanged, skipping edit');
-          return;
-        }
-        return ctx.reply(message, {
-          reply_markup: {
-            inline_keyboard: keyboard
-          }
-        });
-      }
-
-    } catch (error) {
-      logger.error('Error showing promote token menu:', error);
-      return ctx.reply('❌ Error loading promotion menu. Please try again.');
-    }
-  }
-
-  async showPromoteDurationMenu(ctx, tokenId, isPremium = false) {
-    try {
-      const token = await this.db.get(
-        'SELECT * FROM tracked_tokens WHERE id = $1',
-        [tokenId]
-      );
-
-      if (!token) {
-        return ctx.reply('❌ NFT not found.');
-      }
-
-      // Auto-detect chain from selected token
-      const autoDetectedChain = token.chain_name || 'ethereum';
-      const chainConfig = this.chainManager ? this.chainManager.getChain(autoDetectedChain) : null;
-      const chainDisplay = chainConfig ? `${chainConfig.emoji} ${chainConfig.displayName}` : autoDetectedChain.charAt(0).toUpperCase() + autoDetectedChain.slice(1);
-      const currencySymbol = chainConfig ? chainConfig.currencySymbol : 'ETH';
-
-      // Use secure trending service with fallback to old service
-      const trendingService = this.secureTrending || this.trending;
-      const trendingOptions = await trendingService.getTrendingOptions();
-      logger.info(`Trending options loaded: ${trendingOptions.length} options`);
-
-      const trendingType = isPremium ? 'Premium' : 'Normal';
-      const trendingIcon = isPremium ? '⭐' : '💫';
-
-      let message = `🚀 <b>${trendingType} Trending Boost</b>\n\n`;
-      message += `${trendingIcon} <b>${token.token_name || 'Unknown Collection'}</b>\n`;
-      message += `📮 <code>${token.contract_address}</code>\n`;
-      message += `🔗 Chain: <b>${chainDisplay}</b> <i>(auto-detected)</i>\n\n`;
-      message += `<b>Select ${trendingType.toLowerCase()} boost duration:</b>`;
-
-      const buttons = [];
-
-      // Add only the relevant trending options based on type
-      trendingOptions.forEach(option => {
-        const feeEth = isPremium ? option.premiumFeeEth : option.normalFeeEth;
-        const buttonIcon = isPremium ? '🌟' : '💰';
-        const type = isPremium ? 'premium' : 'normal';
-
-        buttons.push([Markup.button.callback(
-          `${buttonIcon} ${option.duration}h - ${feeEth} ${currencySymbol}`,
-          `duration_${tokenId}_${option.duration}_${type}_${autoDetectedChain}`
-        )]);
-      });
-
-      buttons.push([Markup.button.callback('◀️ Back', isPremium ? 'promote_token_premium' : 'promote_token')]);
-
-      const keyboard = Markup.inlineKeyboard(buttons);
-
-      try {
-        return await ctx.editMessageText(message, {
-          parse_mode: 'HTML',
-          reply_markup: keyboard.reply_markup
-        });
-      } catch (error) {
-        try {
-          return await ctx.replyWithHTML(message, keyboard);
-        } catch (replyError) {
-          logger.error('Error sending duration menu message:', replyError);
-          return await ctx.reply(`🚀 Boost: ${token.token_name || 'Unknown Collection'}\n\nSelect boost duration:`, keyboard);
-        }
-      }
-
-    } catch (error) {
-      logger.error('Error showing promote duration menu:', error);
-      return ctx.reply('❌ Error loading duration options.');
     }
   }
 
@@ -2708,12 +2667,19 @@ You will no longer receive notifications for this NFT in this chat context.`;
       message += `⏰ Payment expires in 30 minutes\n\n`;
       message += `After successful transaction, submit your transaction hash below:`;
 
+      // Get group link from session
+      const session = this.getUserSession(ctx.from.id);
+      const groupLink = session.pendingGroupLink;
+      const groupUsername = session.pendingGroupUsername;
+
       this.pendingPayments.set(telegramId, {
         tokenId: tokenId,
         duration: duration,
         isPremium: isPremium,
         chain: chain,
-        expectedAmount: instructions.fee
+        expectedAmount: instructions.fee,
+        groupLink: groupLink,
+        groupUsername: groupUsername
       });
 
       const keyboard = [
@@ -2903,18 +2869,6 @@ You will no longer receive notifications for this NFT in this chat context.`;
         [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
       ]);
     }
-
-    return this.sendOrEditMenu(ctx, message, keyboard);
-  }
-
-  async showTrendingMenu(ctx) {
-    const message = `🔥 <b>Trending & Boost</b>
-
-<b>Promote your NFT collections:</b>`;
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('💰 Buy Normal', 'promote_token'), Markup.button.callback('⭐ Buy Premium', 'promote_token_premium')],
-      [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
-    ]);
 
     return this.sendOrEditMenu(ctx, message, keyboard);
   }
@@ -3146,7 +3100,7 @@ You will no longer receive notifications for this NFT in this chat context.`;
       ]);
 
       // Set user state
-      this.setUserState(ctx.from.id, this.STATE_IMAGE_DURATION_SELECT);
+      this.setFlowState(ctx.from.id, this.STATE_IMAGE_DURATION_SELECT);
 
       await ctx.replyWithHTML(message, keyboard);
     } catch (error) {
@@ -3231,13 +3185,138 @@ You will no longer receive notifications for this NFT in this chat context.`;
   }
 
   async showChannelsMenu(ctx) {
-    const message = `📺 <b>Channel Management</b>
+    const user = await this.db.getUser(ctx.from.id.toString());
+    if (!user) {
+      return ctx.reply('Please start the bot first with /startminty');
+    }
 
-<b>Configure bot for your channels:</b>`;
+    // Get channels added by this user
+    const channels = await this.db.getChannelsByUser(user.id);
+
+    if (channels.length === 0) {
+      const message = `📺 <b>Channel Management</b>
+
+You haven't added any channels yet.
+
+<b>To get started:</b>
+1️⃣ Add me to your channel as an admin
+2️⃣ Run /add_channel in the channel
+3️⃣ Come back here to configure settings`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
+      ]);
+
+      return this.sendOrEditMenu(ctx, message, keyboard);
+    }
+
+    // Show channel selection menu
+    return this.showChannelSelectionMenu(ctx, channels, 0);
+  }
+
+  async showChannelSelectionMenu(ctx, channels, page = 0) {
+    const channelsPerPage = 6;
+    const totalPages = Math.ceil(channels.length / channelsPerPage);
+    const startIdx = page * channelsPerPage;
+    const endIdx = startIdx + channelsPerPage;
+    const pageChannels = channels.slice(startIdx, endIdx);
+
+    const keyboard = [];
+
+    // Add channel buttons (2 per row)
+    for (let i = 0; i < pageChannels.length; i += 2) {
+      const row = [];
+
+      const channel1 = pageChannels[i];
+      row.push(Markup.button.callback(
+        `📺 ${channel1.channel_title.slice(0, 20)}`,
+        `channel_select_${channel1.telegram_chat_id}`
+      ));
+
+      if (i + 1 < pageChannels.length) {
+        const channel2 = pageChannels[i + 1];
+        row.push(Markup.button.callback(
+          `📺 ${channel2.channel_title.slice(0, 20)}`,
+          `channel_select_${channel2.telegram_chat_id}`
+        ));
+      }
+
+      keyboard.push(row);
+    }
+
+    // Add pagination buttons if needed
+    if (totalPages > 1) {
+      const paginationRow = [];
+
+      if (page > 0) {
+        paginationRow.push(Markup.button.callback('◀️ Prev', `channel_page_${page - 1}`));
+      }
+
+      paginationRow.push(Markup.button.callback(`Page ${page + 1}/${totalPages}`, 'noop'));
+
+      if (page < totalPages - 1) {
+        paginationRow.push(Markup.button.callback('Next ▶️', `channel_page_${page + 1}`));
+      }
+
+      keyboard.push(paginationRow);
+    }
+
+    // Back button
+    keyboard.push([Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]);
+
+    const message = `📺 <b>My Channels</b>
+
+Select a channel to configure:`;
+
+    return this.sendOrEditMenu(ctx, message, Markup.inlineKeyboard(keyboard));
+  }
+
+  async showChannelSettingsForChannel(ctx, channelChatId) {
+    const settings = await this.channels.getChannelSettings(channelChatId);
+
+    if (!settings.success) {
+      return ctx.reply(settings.message);
+    }
+
+    const { show_all_activities, trending_tier, channel_title } = settings.settings;
+
+    // Determine current mode
+    let currentMode, modeIcon, modeDescription;
+    if (show_all_activities) {
+      currentMode = 'all';
+      modeIcon = '📊';
+      modeDescription = '<b>All Activity</b>\nShows real-time alerts for ALL tracked NFTs from any group';
+    } else if (trending_tier === 'none') {
+      currentMode = 'none';
+      modeIcon = '🔕';
+      modeDescription = '<b>No Alerts</b>\nChannel alerts are disabled';
+    } else if (trending_tier === 'normal') {
+      currentMode = 'normal';
+      modeIcon = '🔵';
+      modeDescription = '<b>Standard Trending</b>\nShows scheduled broadcasts for standard tier promotions';
+    } else if (trending_tier === 'premium') {
+      currentMode = 'premium';
+      modeIcon = '⭐';
+      modeDescription = '<b>Premium Trending</b>\nShows scheduled broadcasts for premium tier promotions';
+    } else {
+      // This shouldn't happen with migration, but fallback to normal
+      currentMode = 'normal';
+      modeIcon = '🔵';
+      modeDescription = '<b>Standard Trending</b>\nShows scheduled broadcasts for standard tier promotions';
+    }
+
+    const message = `⚙️ <b>${channel_title}</b>
+
+<b>Current Alert Mode:</b>
+${modeIcon} ${modeDescription}
+
+Tap the button below to cycle through alert modes:`;
+
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('➕ Add to Channel', 'channel_add'), Markup.button.callback('⚙️ Configure Alerts', 'channel_settings')],
-      [Markup.button.callback('🆔 Get Chat ID', 'get_chat_id')],
-      [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
+      [Markup.button.callback(`${modeIcon} Change Alert Mode`, `channel_cycle_mode_${channelChatId}`)],
+      [Markup.button.callback('➕ Add NFTs', `channel_add_nft_${channelChatId}`)],
+      [Markup.button.callback('🔄 Refresh', `channel_select_${channelChatId}`)],
+      [Markup.button.callback('◀️ Back to Channels', 'menu_channels')]
     ]);
 
     return this.sendOrEditMenu(ctx, message, keyboard);
@@ -3863,6 +3942,27 @@ You will no longer receive notifications for this NFT in this chat context.`;
     }
   }
 
+  async showBuyTrendingMenu(ctx) {
+    try {
+      const message = `<b>🔥 Buy Trending</b>\n\nSelect trending tier:\n\n` +
+        `<b>🔵 Standard Trending</b>\n` +
+        `Lower cost, shown to standard tier channels\n\n` +
+        `<b>⭐ Premium Trending</b>\n` +
+        `Higher visibility, shown to premium tier channels`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('🔵 Buy Standard Trending', 'buy_trending_normal')],
+        [Markup.button.callback('⭐ Buy Premium Trending', 'buy_trending_premium')],
+        [Markup.button.callback('◀️ Back to Main Menu', 'main_menu')]
+      ]);
+
+      return ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error showing buy trending menu:', error);
+      return ctx.reply('❌ Error loading trending menu. Please try again.');
+    }
+  }
+
   async showTrendingTypeMenu(ctx, isPremium = false) {
     try {
       const user = await this.db.getUser(ctx.from.id.toString());
@@ -3878,15 +3978,16 @@ You will no longer receive notifications for this NFT in this chat context.`;
         isAdmin = await this.isUserGroupAdmin(ctx.from.id, ctx.chat.id, ctx);
       }
 
-      // Admins see their tracked tokens, non-admins see all group tokens
-      const tokens = isAdmin
-        ? await this.db.getUserTrackedTokens(user.id, chatId)
-        : await this.db.getGroupTrackedTokens(chatId);
-
-      // Debug logging
-      console.log(`[showTrendingTypeMenu] User: ${user.id}, ChatId: ${chatId}, IsAdmin: ${isAdmin}, Tokens found: ${tokens.length}`);
-      if (tokens.length > 0) {
-        console.log(`[showTrendingTypeMenu] Token details:`, tokens.map(t => ({ id: t.id, name: t.token_name, address: t.contract_address })));
+      // Fetch tokens based on chat type
+      let tokens;
+      if (ctx.chat.type === 'private') {
+        // In private chat: show ALL tokens from ALL contexts (DM + all groups)
+        tokens = await this.db.getUserTrackedTokensWithContext(user.id);
+      } else {
+        // In groups: admins see their tracked tokens, non-admins see group tokens
+        tokens = isAdmin
+          ? await this.db.getUserTrackedTokens(user.id, chatId)
+          : await this.db.getGroupTrackedTokens(chatId);
       }
 
       if (tokens.length === 0) {
@@ -3971,6 +4072,40 @@ Select an NFT collection to boost:`;
     } catch (error) {
       logger.error('Error showing trending chain selection:', error);
       return ctx.reply('❌ Error loading chain options. Please try again.');
+    }
+  }
+
+  async showGroupLinkInput(ctx, token) {
+    try {
+      const userId = ctx.from.id;
+      const session = this.getUserSession(userId);
+      const tier = session.pendingTrendingTier;
+      const tierBadge = tier === 'premium' ? '⭐ PREMIUM' : '🔵 STANDARD';
+
+      const message = `📎 <b>Group Link (Optional)</b>\n\n` +
+        `<b>Selected:</b> ${token.token_name || token.contract_address}\n` +
+        `<b>Tier:</b> ${tierBadge}\n\n` +
+        `Would you like to include a Telegram group link? This link will appear as a clickable ticker (💬 $${token.token_symbol || 'TOKEN'}) in event notifications.\n\n` +
+        `<b>Accepted formats:</b>\n` +
+        `• Full link: https://t.me/mygroup\n` +
+        `• With @: @mygroup\n` +
+        `• Plain text: mygroup\n\n` +
+        `Send your group link now, or tap Skip to continue without a link.`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('⏭️ Skip (No Group Link)', 'trending_skip_group_link')],
+        [Markup.button.callback('◀️ Back', 'buy_trending')]
+      ]);
+
+      // Set state to expect group link input
+      this.setFlowState(userId, this.STATE_EXPECTING_GROUP_LINK);
+      logger.info(`[GROUP_LINK] Set user ${userId} state to: ${this.STATE_EXPECTING_GROUP_LINK}`);
+      logger.info(`[GROUP_LINK] Verification - Current state for user ${userId}: ${this.getFlowState(userId)}`);
+
+      return ctx.replyWithHTML(message, keyboard);
+    } catch (error) {
+      logger.error('Error showing group link input:', error);
+      return ctx.reply('❌ Error loading group link input. Please try again.');
     }
   }
 
@@ -4189,6 +4324,73 @@ Select trending duration:`;
       }
     } catch (error) {
       logger.error('Error handling footer tx hash:', error);
+      this.clearUserState(ctx.from.id);
+      ctx.reply('❌ An error occurred. Please try again.');
+    }
+  }
+
+  parseGroupLink(input) {
+    if (!input) return { link: null, username: null };
+
+    let link = input.trim();
+    let username = null;
+
+    // If starts with @, convert to t.me link
+    if (link.startsWith('@')) {
+      username = link.slice(1);
+      link = `https://t.me/${username}`;
+    }
+    // If it's a full t.me link, extract username
+    else if (link.includes('t.me/')) {
+      const match = link.match(/t\.me\/([^/?]+)/);
+      username = match ? match[1] : null;
+    }
+    // If it's just plain text (username without @)
+    else if (!link.startsWith('http')) {
+      username = link;
+      link = `https://t.me/${username}`;
+    }
+
+    return { link, username };
+  }
+
+  async handleGroupLinkInput(ctx, text) {
+    try {
+      const userId = ctx.from.id;
+
+      // Parse the group link
+      const { link: groupLink, username: groupUsername } = this.parseGroupLink(text);
+
+      if (!groupLink) {
+        return ctx.reply('❌ Invalid link format. Please send a valid Telegram group link or type "cancel" to go back.');
+      }
+
+      // Store in session
+      this.setUserSession(userId, {
+        pendingGroupLink: groupLink,
+        pendingGroupUsername: groupUsername
+      });
+
+      // Get session data
+      const session = this.getUserSession(userId);
+      const tokenId = session.pendingTrendingTokenId;
+      const tier = session.pendingTrendingTier;
+      const chain = session.pendingTrendingChain;
+
+      if (!tokenId) {
+        return ctx.reply('❌ Session expired. Please start again.');
+      }
+
+      // Clear state
+      this.clearUserState(userId);
+
+      // Confirm and proceed to duration selection
+      await ctx.reply(`✅ Group link saved: ${groupLink}`);
+
+      // Proceed to duration selection
+      return this.showTrendingDurationSelection(ctx, tokenId, tier === 'premium', chain);
+    } catch (error) {
+      logger.error('Error handling group link input:', error);
       this.clearUserState(ctx.from.id);
       ctx.reply('❌ An error occurred. Please try again.');
     }
@@ -4838,7 +5040,7 @@ Select trending duration:`;
       ]);
 
       // Set user state and initialize session
-      this.setUserState(ctx.from.id, this.STATE_IMAGE_DURATION_SELECT);
+      this.setFlowState(ctx.from.id, this.STATE_IMAGE_DURATION_SELECT);
       this.setUserSession(ctx.from.id, { flow: 'image_payment' });
 
       try {
@@ -4910,7 +5112,7 @@ Select trending duration:`;
       ]);
 
       // Set user state (preserve existing session with chain)
-      this.setUserState(ctx.from.id, this.STATE_FOOTER_DURATION_SELECT);
+      this.setFlowState(ctx.from.id, this.STATE_FOOTER_DURATION_SELECT);
 
       await this.sendOrEditMenu(ctx, message, keyboard);
     } catch (error) {
@@ -4978,7 +5180,7 @@ Select trending duration:`;
 
       // Update state
       const stateKey = paymentType === 'image' ? this.STATE_IMAGE_CHAIN_SELECT : this.STATE_FOOTER_CHAIN_SELECT;
-      this.setUserState(ctx.from.id, stateKey);
+      this.setFlowState(ctx.from.id, stateKey);
 
       await this.sendOrEditMenu(ctx, message, keyboard);
     } catch (error) {
@@ -5025,7 +5227,7 @@ Select trending duration:`;
 
       // Update state to expect contract input
       const stateKey = paymentType === 'image' ? this.STATE_IMAGE_CONTRACT_INPUT : this.STATE_FOOTER_CONTRACT_INPUT;
-      this.setUserState(ctx.from.id, stateKey);
+      this.setFlowState(ctx.from.id, stateKey);
 
       await this.sendOrEditMenu(ctx, message, keyboard);
     } catch (error) {
@@ -5130,7 +5332,7 @@ Select trending duration:`;
         ]
       ]);
 
-      this.setUserState(ctx.from.id, this.STATE_FOOTER_LINK_INPUT);
+      this.setFlowState(ctx.from.id, this.STATE_FOOTER_LINK_INPUT);
       await this.sendOrEditMenu(ctx, message, keyboard);
     } catch (error) {
       logger.error('Error showing link input:', error);
@@ -5153,7 +5355,7 @@ Select trending duration:`;
         ]
       ]);
 
-      this.setUserState(ctx.from.id, this.STATE_FOOTER_TICKER_INPUT);
+      this.setFlowState(ctx.from.id, this.STATE_FOOTER_TICKER_INPUT);
       await this.sendOrEditMenu(ctx, message, keyboard);
     } catch (error) {
       logger.error('Error showing ticker input:', error);

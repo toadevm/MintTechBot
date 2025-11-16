@@ -358,7 +358,21 @@ class WebhookHandlers {
         return false;
       }
 
-      const message = await this.formatActivityMessage(token, activityData);
+      // Query for group link from trending payment
+      let groupLink = null;
+      if (this.db && this.db.getTrendingPaymentForToken) {
+        try {
+          const trendingPayment = await this.db.getTrendingPaymentForToken(token.contract_address);
+          if (trendingPayment && trendingPayment.group_link) {
+            groupLink = trendingPayment.group_link;
+            logger.debug(`Found group link for ${token.contract_address}: ${groupLink}`);
+          }
+        } catch (error) {
+          logger.warn(`Error fetching trending payment group link: ${error.message}`);
+        }
+      }
+
+      const message = await this.formatActivityMessage(token, activityData, groupLink);
       logger.info(`📤 Sending notification to ${subscriptions.length} subscription(s) for ${token.token_name}`);
 
       // Send notifications to users in their specific subscribed contexts
@@ -438,19 +452,29 @@ class WebhookHandlers {
   }
 
   // Secure verification for channel notifications with detailed logging
-  async verifyChannelNotificationPermission(contractAddress, tokenName) {
+  async verifyChannelNotificationPermission(contractAddress, tokenName, channels = null) {
     try {
       logger.info(`🔍 SECURITY CHECK: Verifying channel notification permission for ${tokenName} (${contractAddress})`);
 
-      // Double-check trending payment status
+      // Check if any channels have "All Activity" enabled
+      const hasAllActivityChannel = channels && channels.some(c =>
+        c.show_all_activities === true || c.show_all_activities === 1
+      );
+
+      if (hasAllActivityChannel) {
+        logger.info(`✅ AUTHORIZED: ${tokenName} - All Activity channel present, notifications allowed`);
+        return { authorized: true, reason: 'all-activity channel enabled' };
+      }
+
+      // If no All Activity channel, check trending payment status
       const hasTrendingPayment = await this.isTokenTrending(contractAddress);
 
       if (hasTrendingPayment) {
         logger.info(`✅ AUTHORIZED: ${tokenName} has valid trending payment - channel notifications allowed`);
         return { authorized: true, reason: 'valid trending payment verified' };
       } else {
-        logger.warn(`⚠️ BLOCKED: ${tokenName} has no trending payment - channel notifications denied`);
-        return { authorized: false, reason: 'no trending payment found' };
+        logger.warn(`⚠️ BLOCKED: ${tokenName} has no trending payment and no all-activity channels - channel notifications denied`);
+        return { authorized: false, reason: 'no trending payment and no all-activity channels' };
       }
     } catch (error) {
       logger.error(`🚨 SECURITY ERROR: Failed to verify channel permission for ${contractAddress}:`, error);
@@ -473,41 +497,162 @@ class WebhookHandlers {
       // Check if token has trending payment (secure verification)
       const isTrending = await this.isTokenTrending(contractAddress);
 
-      // SECURITY ENHANCEMENT: Only tokens with trending payments get channel notifications
-      if (!isTrending) {
-        logger.info(`🔒 Channel notification blocked: ${contractAddress} has no active trending payment`);
-        return {
-          notify: false,
-          channels: [],
-          isTrending: false,
-          reason: 'token not trending - channel notifications restricted to paid trending only'
-        };
+      // Get the tier of this trending token
+      let tokenTier = null;
+      if (isTrending) {
+        try {
+          const trendingInfo = await this.db.getTokenTrendingTier(contractAddress);
+          tokenTier = trendingInfo?.tier || null;
+          logger.info(`🎫 [TOKEN TIER] ${contractAddress} - Trending tier: ${tokenTier || 'UNKNOWN/NOT SET'}`);
+          if (trendingInfo) {
+            logger.info(`   Payment valid until: ${trendingInfo.end_time}`);
+          }
+        } catch (error) {
+          logger.warn(`Error fetching token tier for ${contractAddress}: ${error.message}`);
+        }
+      } else {
+        logger.info(`🎫 [TOKEN TIER] ${contractAddress} - NOT trending (no tier filtering will apply)`);
       }
 
-      // If token is trending, find eligible channels
-      const eligibleChannels = allChannels.filter(channel => {
-        // For trending tokens, both show_all_activities and show_trending channels are eligible
-        if (channel.show_all_activities === 1 || channel.show_trending === 1) {
-          return true;
+      // Separate channels by their settings
+      const allActivityChannels = allChannels.filter(c => c.show_all_activities === true || c.show_all_activities === 1);
+      let trendingOnlyChannels = allChannels.filter(c =>
+        (c.show_trending === true || c.show_trending === 1) &&
+        !(c.show_all_activities === true || c.show_all_activities === 1)
+      );
+
+      // TIER FILTERING: Match channel tier preference with token tier
+      if (isTrending && tokenTier && trendingOnlyChannels.length > 0) {
+        const unfilteredCount = trendingOnlyChannels.length;
+        logger.info(`🔍 [TIER FILTER - TRENDING ONLY] Token tier: ${tokenTier}, evaluating ${unfilteredCount} channels...`);
+
+        trendingOnlyChannels.forEach(c => {
+          logger.info(`   Channel: "${c.channel_title}" (ID: ${c.telegram_chat_id}) - trending_tier: ${c.trending_tier || 'NULL (defaults to normal)'}`);
+        });
+
+        trendingOnlyChannels = trendingOnlyChannels.filter(c => {
+          const channelTier = c.trending_tier || 'normal';
+          let match = false;
+          let reason = '';
+
+          // 'both' channels receive everything
+          if (channelTier === 'both') {
+            match = true;
+            reason = 'tier=both (accepts all)';
+          }
+          // 'normal' channels only receive normal tier
+          else if (channelTier === 'normal' && tokenTier === 'normal') {
+            match = true;
+            reason = 'tier=normal matches token=normal';
+          }
+          // 'premium' channels only receive premium tier
+          else if (channelTier === 'premium' && tokenTier === 'premium') {
+            match = true;
+            reason = 'tier=premium matches token=premium';
+          }
+          // 'none' tier or mismatch
+          else {
+            match = false;
+            reason = `tier=${channelTier} does NOT match token=${tokenTier}`;
+          }
+
+          logger.info(`   ${match ? '✅ MATCH' : '❌ SKIP'}: "${c.channel_title}" - ${reason}`);
+          return match;
+        });
+
+        logger.info(`🎯 TIER FILTER RESULT: ${trendingOnlyChannels.length}/${unfilteredCount} channels matched for token tier=${tokenTier}`);
+        if (trendingOnlyChannels.length > 0) {
+          logger.info(`   Matched channels: ${trendingOnlyChannels.map(c => c.channel_title).join(', ')}`);
         }
-        return false;
-      });
+      }
+
+      const eligibleChannels = [];
+
+      // Channels with "All Activity" enabled get notifications for ANY tracked token
+      // BUT must respect tier filtering if token is trending
+      if (allActivityChannels.length > 0) {
+        let filteredActivityChannels = allActivityChannels;
+
+        // Apply tier filtering if token is trending
+        if (isTrending && tokenTier) {
+          const unfilteredCount = allActivityChannels.length;
+          logger.info(`🔍 [TIER FILTER - ALL ACTIVITY] Token tier: ${tokenTier}, evaluating ${unfilteredCount} channels...`);
+
+          allActivityChannels.forEach(c => {
+            logger.info(`   Channel: "${c.channel_title}" (ID: ${c.telegram_chat_id}) - trending_tier: ${c.trending_tier || 'NULL (defaults to normal)'}`);
+          });
+
+          filteredActivityChannels = allActivityChannels.filter(c => {
+            const channelTier = c.trending_tier || 'normal';
+            let match = false;
+            let reason = '';
+
+            // 'both' channels receive everything
+            if (channelTier === 'both') {
+              match = true;
+              reason = 'tier=both (accepts all)';
+            }
+            // 'normal' channels only receive normal tier
+            else if (channelTier === 'normal' && tokenTier === 'normal') {
+              match = true;
+              reason = 'tier=normal matches token=normal';
+            }
+            // 'premium' channels only receive premium tier
+            else if (channelTier === 'premium' && tokenTier === 'premium') {
+              match = true;
+              reason = 'tier=premium matches token=premium';
+            }
+            else {
+              match = false;
+              reason = `tier=${channelTier} does NOT match token=${tokenTier}`;
+            }
+
+            logger.info(`   ${match ? '✅ MATCH' : '❌ SKIP'}: "${c.channel_title}" - ${reason}`);
+            return match;
+          });
+
+          logger.info(`🎯 TIER FILTER RESULT (All-Activity): ${filteredActivityChannels.length}/${unfilteredCount} channels matched for token tier=${tokenTier}`);
+          if (filteredActivityChannels.length > 0) {
+            logger.info(`   Matched channels: ${filteredActivityChannels.map(c => c.channel_title).join(', ')}`);
+          }
+        }
+
+        eligibleChannels.push(...filteredActivityChannels);
+        logger.info(`📊 All Activity channels (${filteredActivityChannels.length}) will receive notification for ${contractAddress}`);
+      }
+
+      // Channels with only "Trending" enabled ONLY get notifications if token has paid trending AND tier matches
+      if (isTrending && trendingOnlyChannels.length > 0) {
+        eligibleChannels.push(...trendingOnlyChannels);
+        logger.info(`🔥 Trending (${tokenTier || 'unknown'} tier) channels (${trendingOnlyChannels.length}) will receive notification for ${contractAddress}`);
+      }
+
+      // FINAL SUMMARY
+      if (eligibleChannels.length > 0) {
+        logger.info(`📢 [FINAL] Total ${eligibleChannels.length} channel(s) will receive notification for ${contractAddress}:`);
+        eligibleChannels.forEach(c => {
+          logger.info(`   📡 "${c.channel_title}" (tier: ${c.trending_tier || 'NULL'}, show_all: ${c.show_all_activities}, show_trending: ${c.show_trending})`);
+        });
+      }
 
       if (eligibleChannels.length === 0) {
+        if (!isTrending && trendingOnlyChannels.length > 0) {
+          logger.info(`🔒 Channel notification blocked: ${contractAddress} has no trending payment (${trendingOnlyChannels.length} trending-only channels skipped)`);
+        }
         return {
           notify: false,
           channels: [],
-          isTrending: true,
-          reason: 'token is trending but no channels have notifications enabled'
+          isTrending: isTrending,
+          reason: isTrending ? 'no channels enabled' : 'token not trending and no all-activity channels'
         };
       }
 
-      logger.info(`✅ Channel notification authorized: ${contractAddress} has active trending payment`);
+      logger.info(`✅ Channel notification authorized for ${contractAddress}: ${eligibleChannels.length} channels (${allActivityChannels.length} all-activity, ${isTrending ? trendingOnlyChannels.length : 0} trending-only)`);
       return {
         notify: true,
         channels: eligibleChannels,
-        isTrending: true,
-        reason: `token has trending payment (${eligibleChannels.length} eligible channels)`
+        isTrending: isTrending,
+        reason: `${eligibleChannels.length} eligible channels`
       };
     } catch (error) {
       logger.error('Error checking channel notification requirements:', error);
@@ -517,12 +662,7 @@ class WebhookHandlers {
 
   async notifyChannels(token, activityData, channels = null, isTrending = false) {
     try {
-      // SECURITY: Additional verification before sending channel notifications
-      const verification = await this.verifyChannelNotificationPermission(token.contract_address, token.token_name);
-      if (!verification.authorized) {
-        logger.warn(`🔒 BLOCKED CHANNEL NOTIFICATION: ${token.token_name} - ${verification.reason}`);
-        return;
-      }
+      // Authorization already performed by shouldNotifyChannelsForToken() before calling this method
 
       if (!channels) {
         channels = await this.db.all(`
@@ -536,9 +676,22 @@ class WebhookHandlers {
         return;
       }
 
+      // Query for group link from trending payment
+      let groupLink = null;
+      if (this.db && this.db.getTrendingPaymentForToken) {
+        try {
+          const trendingPayment = await this.db.getTrendingPaymentForToken(token.contract_address);
+          if (trendingPayment && trendingPayment.group_link) {
+            groupLink = trendingPayment.group_link;
+          }
+        } catch (error) {
+          logger.warn(`Error fetching trending payment group link for channels: ${error.message}`);
+        }
+      }
+
       const message = isTrending
         ? await this.formatTrendingActivityMessage(token, activityData)
-        : await this.formatActivityMessage(token, activityData);
+        : await this.formatActivityMessage(token, activityData, groupLink);
       let notifiedCount = 0;
       for (const channel of channels) {
         try {
@@ -563,10 +716,11 @@ class WebhookHandlers {
     }
   }
 
-  async formatActivityMessage(token, activityData) {
+  async formatActivityMessage(token, activityData, groupLink = null) {
     const tokenName = token.token_name || 'NFT Collection';
+    const tokenSymbol = token.token_symbol || 'TOKEN';
 
-    const isCandyCollection = tokenName.toLowerCase().includes('candy') || 
+    const isCandyCollection = tokenName.toLowerCase().includes('candy') ||
                              tokenName.toLowerCase() === 'simplenft';
     let message = '';
     if (isCandyCollection) {
@@ -579,6 +733,12 @@ class WebhookHandlers {
       const activityEmoji = this.getActivityEmoji(activityData.activityType);
       message = `${activityEmoji} *${tokenName}* Activity\n\n`;
     }
+
+    // Add clickable ticker link if group link is available
+    if (groupLink && tokenSymbol) {
+      message += `[💬 $${tokenSymbol}](${groupLink}) `;
+    }
+
     message += `🔹 **Action:** ${this.formatActivityType(activityData.activityType)}\n`;
     const ethPrice = this.formatEthAmount(activityData.price) || '0.001 ETH';
     message += `💰 **Amount:** ${ethPrice}\n`;
@@ -653,7 +813,21 @@ class WebhookHandlers {
 
   async formatTrendingActivityMessage(token, activityData) {
     let message = `🔥 **TRENDING:** ${token.token_name || 'NFT Collection'}\n\n`;
-    message += await this.formatActivityMessage(token, activityData);
+
+    // Query for group link from trending payment
+    let groupLink = null;
+    if (this.db && this.db.getTrendingPaymentForToken) {
+      try {
+        const trendingPayment = await this.db.getTrendingPaymentForToken(token.contract_address);
+        if (trendingPayment && trendingPayment.group_link) {
+          groupLink = trendingPayment.group_link;
+        }
+      } catch (error) {
+        logger.warn(`Error fetching trending payment group link: ${error.message}`);
+      }
+    }
+
+    message += await this.formatActivityMessage(token, activityData, groupLink);
     return message;
   }
 
@@ -1206,11 +1380,15 @@ class WebhookHandlers {
       }
 
       // Get users with their subscription context (chat_id)
+      // EXCLUDE channels - they should only receive notifications via notifyChannelsOpenSea with tier filtering
       const subscriptions = await this.db.all(`
         SELECT u.telegram_id, u.username, us.notification_enabled, us.chat_id
         FROM users u
         JOIN user_subscriptions us ON u.id = us.user_id
-        WHERE us.token_id = $1 AND us.notification_enabled = true AND u.is_active = true
+        WHERE us.token_id = $1
+          AND us.notification_enabled = true
+          AND u.is_active = true
+          AND us.chat_id NOT IN (SELECT telegram_chat_id FROM channels)
       `, [token.id]);
 
       if (!subscriptions || subscriptions.length === 0) {
@@ -1255,20 +1433,28 @@ class WebhookHandlers {
 
   async notifyChannelsOpenSea(token, eventType, eventData, activityData, channels, isTrending = false) {
     try {
-      // SECURITY: Additional verification before sending OpenSea channel notifications
-      const verification = await this.verifyChannelNotificationPermission(token.contract_address, token.token_name);
-      if (!verification.authorized) {
-        logger.warn(`🔒 BLOCKED OPENSEA CHANNEL NOTIFICATION: ${token.token_name} - ${verification.reason}`);
-        return false;
-      }
+      // Authorization already performed by shouldNotifyChannelsForToken() before calling this method
 
       if (!channels || channels.length === 0) {
         return false;
       }
 
+      // Query for group link from trending payment
+      let groupLink = null;
+      if (this.db && this.db.getTrendingPaymentForToken) {
+        try {
+          const trendingPayment = await this.db.getTrendingPaymentForToken(token.contract_address);
+          if (trendingPayment && trendingPayment.group_link) {
+            groupLink = trendingPayment.group_link;
+          }
+        } catch (error) {
+          logger.warn(`Error fetching group link for OpenSea channels: ${error.message}`);
+        }
+      }
+
       const message = isTrending
-        ? await this.formatTrendingOpenSeaMessage(eventType, eventData, token)
-        : await this.formatOpenSeaActivityMessage(eventType, eventData, token);
+        ? await this.formatTrendingOpenSeaMessage(eventType, eventData, token, groupLink)
+        : await this.formatOpenSeaActivityMessage(eventType, eventData, token, groupLink);
 
       let notifiedCount = 0;
       for (const channel of channels) {
@@ -1300,14 +1486,20 @@ class WebhookHandlers {
     }
   }
 
-  async formatOpenSeaActivityMessage(eventType, eventData, token) {
+  async formatOpenSeaActivityMessage(eventType, eventData, token, groupLink = null) {
     const collectionName = eventData.collectionName || token.token_name || 'NFT Collection';
     const nftName = eventData.nftName || `#${eventData.tokenId || 'Unknown'}`;
+    const tokenSymbol = token.token_symbol || 'TOKEN';
 
     // Get event-specific emoji and action
     const eventInfo = this.getOpenSeaEventInfo(eventType);
 
     let message = `${eventInfo.emoji} **${collectionName}** ${eventInfo.action}\n\n`;
+
+    // Add clickable ticker link if group link is available
+    if (groupLink && tokenSymbol) {
+      message += `[💬 $${tokenSymbol}](${groupLink}) `;
+    }
 
     // NFT details
     message += `🖼️ **NFT:** ${nftName}\n`;
@@ -1424,14 +1616,14 @@ class WebhookHandlers {
     return message;
   }
 
-  async formatTrendingOpenSeaMessage(eventType, eventData, token) {
+  async formatTrendingOpenSeaMessage(eventType, eventData, token, groupLink = null) {
     const collectionName = eventData.collectionName || token.token_name || 'NFT Collection';
     const eventInfo = this.getOpenSeaEventInfo(eventType);
 
     let message = `🔥 **TRENDING:** ${collectionName} ${eventInfo.action}\n\n`;
 
-    // Add rest of the message using the regular formatter
-    const regularMessage = await this.formatOpenSeaActivityMessage(eventType, eventData, token);
+    // Add rest of the message using the regular formatter (with group link)
+    const regularMessage = await this.formatOpenSeaActivityMessage(eventType, eventData, token, groupLink);
     // Remove the first line and add to trending message
     const lines = regularMessage.split('\n');
     message += lines.slice(1).join('\n');
@@ -2000,12 +2192,7 @@ class WebhookHandlers {
    */
   async notifyChannelsMagicEden(token, saleData, activityData, channels, isTrending = false) {
     try {
-      // Security check
-      const verification = await this.verifyChannelNotificationPermission(token.contract_address, token.token_name);
-      if (!verification.authorized) {
-        logger.warn(`🔒 BLOCKED MAGIC EDEN CHANNEL NOTIFICATION: ${token.token_name} - ${verification.reason}`);
-        return false;
-      }
+      // Authorization already performed by shouldNotifyChannelsForToken() before calling this method
 
       if (!channels || channels.length === 0) {
         return false;
@@ -2926,12 +3113,7 @@ class WebhookHandlers {
    */
   async notifyChannelsOrdinals(token, transferData, activityData, channels, isTrending = false) {
     try {
-      // Security check
-      const verification = await this.verifyChannelNotificationPermission(token.contract_address, token.token_name);
-      if (!verification.authorized) {
-        logger.warn(`🔒 BLOCKED BITCOIN ORDINALS CHANNEL NOTIFICATION: ${token.token_name} - ${verification.reason}`);
-        return false;
-      }
+      // Authorization already performed by shouldNotifyChannelsForToken() before calling this method
 
       if (!channels || channels.length === 0) {
         return false;

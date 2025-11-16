@@ -124,13 +124,14 @@ Use /channel_settings to configure alerts.`;
 
   async updateChannelSettings(telegramChatId, settings) {
     try {
-      const { show_trending, show_all_activities } = settings;
+      const { show_trending, show_all_activities, trending_tier } = settings;
       const result = await this.db.run(`
-        UPDATE channels 
-        SET show_trending = COALESCE(?, show_trending),
-            show_all_activities = COALESCE(?, show_all_activities)
-        WHERE telegram_chat_id = $1 AND is_active = true
-      `, [show_trending, show_all_activities, telegramChatId]);
+        UPDATE channels
+        SET show_trending = COALESCE($1, show_trending),
+            show_all_activities = COALESCE($2, show_all_activities),
+            trending_tier = COALESCE($3, trending_tier)
+        WHERE telegram_chat_id = $4 AND is_active = true
+      `, [show_trending, show_all_activities, trending_tier, telegramChatId]);
 
       if (result.changes > 0) {
         logger.info(`Channel settings updated: ${telegramChatId}`);
@@ -170,8 +171,9 @@ Use /channel_settings to configure alerts.`;
       return {
         success: true,
         settings: {
-          show_trending: channel.show_trending === 1,
-          show_all_activities: channel.show_all_activities === 1,
+          show_trending: !!channel.show_trending,
+          show_all_activities: !!channel.show_all_activities,
+          trending_tier: channel.trending_tier || 'normal',
           channel_title: channel.channel_title,
           added_date: channel.created_at
         }
@@ -262,69 +264,153 @@ Use /channel_settings to configure alerts.`;
 
   async sendTrendingUpdate() {
     try {
-      // Check both trending services for tokens
-      let trendingTokens = [];
-      
-      // First try secure trending service (preferred)
-      if (this.secureTrending) {
-        try {
-          const secureTrendingTokens = await this.secureTrending.getTrendingTokens();
-          trendingTokens = trendingTokens.concat(secureTrendingTokens);
-          logger.debug(`Found ${secureTrendingTokens.length} secure trending tokens`);
-        } catch (error) {
-          logger.error('Error getting secure trending tokens:', error);
-        }
-      }
-      
-      // Then try old trending service (fallback)
-      if (this.trending) {
-        try {
-          const oldTrendingTokens = await this.trending.getTrendingTokens();
-          trendingTokens = trendingTokens.concat(oldTrendingTokens);
-          logger.debug(`Found ${oldTrendingTokens.length} old trending tokens`);
-        } catch (error) {
-          logger.error('Error getting old trending tokens:', error);
-        }
-      }
+      // Get channels grouped by tier preference (exclude 'none' tier and 'all_activities' mode)
+      const channels = await this.db.all(`
+        SELECT * FROM channels
+        WHERE is_active = true
+          AND show_all_activities = false
+          AND trending_tier != 'none'
+      `);
 
-      if (trendingTokens.length === 0) {
-        logger.debug('No trending tokens from either service, skipping broadcast');
+      if (channels.length === 0) {
+        logger.debug('No channels configured for trending broadcasts, skipping');
         return;
       }
 
-      // Remove duplicates by contract address
-      const uniqueTrendingTokens = trendingTokens.filter((token, index, self) =>
-        index === self.findIndex(t => t.contract_address === token.contract_address)
-      );
+      // Log channel tier distribution
+      const tierCounts = channels.reduce((acc, c) => {
+        acc[c.trending_tier] = (acc[c.trending_tier] || 0) + 1;
+        return acc;
+      }, {});
+      logger.info(`Channel tier distribution: ${JSON.stringify(tierCounts)}`);
 
-      const message = this.formatTrendingBroadcast(uniqueTrendingTokens);
-      const result = await this.broadcastToChannels(
-        message, 
-        'show_trending = 1'
-      );
+      // Group channels by tier preference (strict filtering - no 'both' tier)
+      const normalChannels = channels.filter(c => c.trending_tier === 'normal');
+      const premiumChannels = channels.filter(c => c.trending_tier === 'premium');
 
-      logger.info(`Trending broadcast sent to ${result.sent} channels`);
+      logger.info(`Filtered channels - Normal: ${normalChannels.length}, Premium: ${premiumChannels.length}`);
+
+      let totalSent = 0;
+      let totalFailed = 0;
+
+      // Broadcast normal tier tokens
+      if (normalChannels.length > 0) {
+        let normalTokens = [];
+
+        if (this.secureTrending) {
+          try {
+            const secureNormalTokens = await this.secureTrending.getTrendingTokens('normal');
+            normalTokens = normalTokens.concat(secureNormalTokens);
+            logger.debug(`Found ${secureNormalTokens.length} secure normal trending tokens`);
+          } catch (error) {
+            logger.error('Error getting secure normal trending tokens:', error);
+          }
+        }
+
+        // Old trending service removed - it returned ALL tokens without tier filtering
+        // This caused premium tokens to be broadcast to normal channels
+
+        if (normalTokens.length > 0) {
+          const uniqueNormalTokens = normalTokens.filter((token, index, self) =>
+            index === self.findIndex(t => t.contract_address === token.contract_address)
+          );
+
+          logger.info(`Broadcasting ${uniqueNormalTokens.length} normal tier tokens to ${normalChannels.length} channels`);
+          normalChannels.forEach(c => logger.debug(`  - Normal broadcast to: ${c.channel_title} (tier: ${c.trending_tier})`));
+
+          const message = this.formatTrendingBroadcast(uniqueNormalTokens, 'normal');
+          const result = await this.broadcastToChannelList(normalChannels, message);
+          totalSent += result.sent;
+          totalFailed += result.failed;
+          logger.info(`Normal trending broadcast sent to ${result.sent} channels`);
+        }
+      }
+
+      // Broadcast premium tier tokens
+      if (premiumChannels.length > 0 && this.secureTrending) {
+        try {
+          const premiumTokens = await this.secureTrending.getTrendingTokens('premium');
+
+          if (premiumTokens.length > 0) {
+            logger.info(`Broadcasting ${premiumTokens.length} premium tier tokens to ${premiumChannels.length} channels`);
+            premiumChannels.forEach(c => logger.debug(`  - Premium broadcast to: ${c.channel_title} (tier: ${c.trending_tier})`));
+
+            const message = this.formatTrendingBroadcast(premiumTokens, 'premium');
+            const result = await this.broadcastToChannelList(premiumChannels, message);
+            totalSent += result.sent;
+            totalFailed += result.failed;
+            logger.info(`Premium trending broadcast sent to ${result.sent} channels`);
+          } else {
+            logger.debug('No premium trending tokens found');
+          }
+        } catch (error) {
+          logger.error('Error getting premium trending tokens:', error);
+        }
+      } else if (premiumChannels.length > 0) {
+        logger.debug('Premium channels exist but secureTrending service not available');
+      }
+
+      logger.info(`Total trending broadcast: ${totalSent} sent, ${totalFailed} failed`);
     } catch (error) {
       logger.error('Error sending trending update:', error);
     }
   }
 
-  formatTrendingBroadcast(trendingTokens) {
-    let message = '🔥 **TRENDING NFT COLLECTIONS** 🔥\n\n';
+  async broadcastToChannelList(channels, message) {
+    let sent = 0;
+    let failed = 0;
+
+    for (const channel of channels) {
+      try {
+        await this.bot.telegram.sendMessage(
+          channel.telegram_chat_id,
+          message,
+          {
+            parse_mode: 'HTML',
+            disable_web_page_preview: true
+          }
+        );
+        sent++;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        failed++;
+        logger.error(`Failed to send broadcast to channel ${channel.telegram_chat_id}:`, error);
+
+        if (error.response?.error_code === 403) {
+          await this.db.run(
+            'UPDATE channels SET is_active = false WHERE telegram_chat_id = $1',
+            [channel.telegram_chat_id]
+          );
+          logger.info(`Deactivated channel ${channel.telegram_chat_id} - bot removed`);
+        }
+      }
+    }
+
+    return { sent, failed };
+  }
+
+  formatTrendingBroadcast(trendingTokens, tier = 'normal') {
+    // Tier header
+    const tierBadge = tier === 'premium' ? '⭐ PREMIUM' : '🔵 STANDARD';
+    const tierEmoji = tier === 'premium' ? '⭐' : '🔵';
+
+    let message = `🔥 <b>${tierBadge} TRENDING NFT COLLECTIONS</b> 🔥\n\n`;
+
     trendingTokens.slice(0, 5).forEach((token, index) => {
       const endTime = new Date(token.trending_end_time);
       const now = new Date();
       const hoursLeft = Math.max(0, Math.ceil((endTime - now) / (1000 * 60 * 60)));
-      message += `**${index + 1}. ${token.token_name || 'Unknown Collection'}**\n`;
+
+      message += `${tierEmoji} <b>${index + 1}. ${token.token_name || 'Unknown Collection'}</b>\n`;
       message += `⏱️ ${hoursLeft}h remaining\n`;
       message += `💰 ${(parseFloat(token.payment_amount) / 1e18).toFixed(3)} ETH promoted\n`;
+
       if (token.floor_price && parseFloat(token.floor_price) > 0) {
         message += `📊 Floor: ${(parseFloat(token.floor_price) / 1e18).toFixed(3)} ETH\n`;
       }
-      message += `📮 \`${token.contract_address}\`\n\n`;
-    });
 
-    message += '💡 *Want to promote your NFT? Contact @YourBotUsername*';
+      message += `📮 <code>${token.contract_address}</code>\n\n`;
+    });
     return message;
   }
 

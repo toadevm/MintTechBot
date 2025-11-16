@@ -213,7 +213,7 @@ class MintyRushBot {
       // Launch bot in long-polling mode with pending updates dropped (non-blocking)
       this.bot.launch({
         dropPendingUpdates: true,
-        allowedUpdates: ['message', 'callback_query']
+        allowedUpdates: ['message', 'callback_query', 'channel_post', 'my_chat_member']
       }).then(() => {
         logger.info('✅ Telegram bot launched successfully');
       }).catch(error => {

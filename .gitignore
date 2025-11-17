@@ -6,6 +6,7 @@ database.sqlite
 dist/
 build/
 .claude/
+scripts/
 
 # Hardhat
 cache/

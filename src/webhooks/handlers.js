@@ -358,21 +358,7 @@ class WebhookHandlers {
         return false;
       }
 
-      // Query for group link from trending payment
-      let groupLink = null;
-      if (this.db && this.db.getTrendingPaymentForToken) {
-        try {
-          const trendingPayment = await this.db.getTrendingPaymentForToken(token.contract_address);
-          if (trendingPayment && trendingPayment.group_link) {
-            groupLink = trendingPayment.group_link;
-            logger.debug(`Found group link for ${token.contract_address}: ${groupLink}`);
-          }
-        } catch (error) {
-          logger.warn(`Error fetching trending payment group link: ${error.message}`);
-        }
-      }
-
-      const message = await this.formatActivityMessage(token, activityData, groupLink);
+      const message = await this.formatActivityMessage(token, activityData);
       logger.info(`📤 Sending notification to ${subscriptions.length} subscription(s) for ${token.token_name}`);
 
       // Send notifications to users in their specific subscribed contexts
@@ -676,22 +662,9 @@ class WebhookHandlers {
         return;
       }
 
-      // Query for group link from trending payment
-      let groupLink = null;
-      if (this.db && this.db.getTrendingPaymentForToken) {
-        try {
-          const trendingPayment = await this.db.getTrendingPaymentForToken(token.contract_address);
-          if (trendingPayment && trendingPayment.group_link) {
-            groupLink = trendingPayment.group_link;
-          }
-        } catch (error) {
-          logger.warn(`Error fetching trending payment group link for channels: ${error.message}`);
-        }
-      }
-
       const message = isTrending
         ? await this.formatTrendingActivityMessage(token, activityData)
-        : await this.formatActivityMessage(token, activityData, groupLink);
+        : await this.formatActivityMessage(token, activityData);
       let notifiedCount = 0;
       for (const channel of channels) {
         try {
@@ -716,7 +689,7 @@ class WebhookHandlers {
     }
   }
 
-  async formatActivityMessage(token, activityData, groupLink = null) {
+  async formatActivityMessage(token, activityData) {
     const tokenName = token.token_name || 'NFT Collection';
     const tokenSymbol = token.token_symbol || 'TOKEN';
 
@@ -732,11 +705,6 @@ class WebhookHandlers {
     } else {
       const activityEmoji = this.getActivityEmoji(activityData.activityType);
       message = `${activityEmoji} *${tokenName}* Activity\n\n`;
-    }
-
-    // Add clickable ticker link if group link is available
-    if (groupLink && tokenSymbol) {
-      message += `[💬 $${tokenSymbol}](${groupLink}) `;
     }
 
     message += `🔹 **Action:** ${this.formatActivityType(activityData.activityType)}\n`;
@@ -813,21 +781,7 @@ class WebhookHandlers {
 
   async formatTrendingActivityMessage(token, activityData) {
     let message = `🔥 **TRENDING:** ${token.token_name || 'NFT Collection'}\n\n`;
-
-    // Query for group link from trending payment
-    let groupLink = null;
-    if (this.db && this.db.getTrendingPaymentForToken) {
-      try {
-        const trendingPayment = await this.db.getTrendingPaymentForToken(token.contract_address);
-        if (trendingPayment && trendingPayment.group_link) {
-          groupLink = trendingPayment.group_link;
-        }
-      } catch (error) {
-        logger.warn(`Error fetching trending payment group link: ${error.message}`);
-      }
-    }
-
-    message += await this.formatActivityMessage(token, activityData, groupLink);
+    message += await this.formatActivityMessage(token, activityData);
     return message;
   }
 
@@ -1439,22 +1393,9 @@ class WebhookHandlers {
         return false;
       }
 
-      // Query for group link from trending payment
-      let groupLink = null;
-      if (this.db && this.db.getTrendingPaymentForToken) {
-        try {
-          const trendingPayment = await this.db.getTrendingPaymentForToken(token.contract_address);
-          if (trendingPayment && trendingPayment.group_link) {
-            groupLink = trendingPayment.group_link;
-          }
-        } catch (error) {
-          logger.warn(`Error fetching group link for OpenSea channels: ${error.message}`);
-        }
-      }
-
       const message = isTrending
-        ? await this.formatTrendingOpenSeaMessage(eventType, eventData, token, groupLink)
-        : await this.formatOpenSeaActivityMessage(eventType, eventData, token, groupLink);
+        ? await this.formatTrendingOpenSeaMessage(eventType, eventData, token)
+        : await this.formatOpenSeaActivityMessage(eventType, eventData, token);
 
       let notifiedCount = 0;
       for (const channel of channels) {
@@ -1486,7 +1427,7 @@ class WebhookHandlers {
     }
   }
 
-  async formatOpenSeaActivityMessage(eventType, eventData, token, groupLink = null) {
+  async formatOpenSeaActivityMessage(eventType, eventData, token) {
     const collectionName = eventData.collectionName || token.token_name || 'NFT Collection';
     const nftName = eventData.nftName || `#${eventData.tokenId || 'Unknown'}`;
     const tokenSymbol = token.token_symbol || 'TOKEN';
@@ -1495,11 +1436,6 @@ class WebhookHandlers {
     const eventInfo = this.getOpenSeaEventInfo(eventType);
 
     let message = `${eventInfo.emoji} **${collectionName}** ${eventInfo.action}\n\n`;
-
-    // Add clickable ticker link if group link is available
-    if (groupLink && tokenSymbol) {
-      message += `[💬 $${tokenSymbol}](${groupLink}) `;
-    }
 
     // NFT details
     message += `🖼️ **NFT:** ${nftName}\n`;
@@ -1616,14 +1552,14 @@ class WebhookHandlers {
     return message;
   }
 
-  async formatTrendingOpenSeaMessage(eventType, eventData, token, groupLink = null) {
+  async formatTrendingOpenSeaMessage(eventType, eventData, token) {
     const collectionName = eventData.collectionName || token.token_name || 'NFT Collection';
     const eventInfo = this.getOpenSeaEventInfo(eventType);
 
     let message = `🔥 **TRENDING:** ${collectionName} ${eventInfo.action}\n\n`;
 
-    // Add rest of the message using the regular formatter (with group link)
-    const regularMessage = await this.formatOpenSeaActivityMessage(eventType, eventData, token, groupLink);
+    // Add rest of the message using the regular formatter
+    const regularMessage = await this.formatOpenSeaActivityMessage(eventType, eventData, token);
     // Remove the first line and add to trending message
     const lines = regularMessage.split('\n');
     message += lines.slice(1).join('\n');

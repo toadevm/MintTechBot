@@ -1072,7 +1072,8 @@ class Database {
   }
 
   async getTrendingTokensByTier(tier = null) {
-    let sql = `SELECT tt.*, tp.end_time as trending_end_time, tp.payment_amount, tp.tier
+    let sql = `SELECT tt.*, tp.end_time as trending_end_time, tp.payment_amount, tp.tier,
+               tp.group_link, tp.group_username
                FROM tracked_tokens tt
                JOIN trending_payments tp ON tt.id = tp.token_id
                WHERE tp.is_active = true AND tp.end_time > NOW()`;
